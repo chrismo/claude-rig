@@ -1,0 +1,138 @@
+#!/bin/bash
+
+# Set tab status for the current worktree
+#
+# Usage:
+#   tab-status waiting   # 🟡 waiting on external (data team, PR review, etc.)
+#   tab-status active    # 🟢 actively working
+#   tab-status paused    # 🔵 paused, will return later
+#   tab-status blocked   # 🔴 blocked, needs attention
+#   tab-status clear     # remove status (and manual hold)
+#   tab-status           # show current status
+#   tab-status --hook active  # hook mode: skips if manual hold is set
+#   tab-status --title        # output OSC title escape sequence for current status
+#
+# Status is stored per-worktree in ~/.claude/tab-status/<worktree>
+# The set-title.sh script reads this and prepends emoji to tab title.
+#
+# Manual vs hook mode:
+#   Manual calls (no --hook) set a .manual marker that prevents hooks
+#   from overwriting the status. Use "clear" to release the hold.
+
+STATUS_DIR="$HOME/.claude/tab-status"
+
+# Get worktree name (directory name)
+get_worktree() {
+  basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+}
+
+# Map status to emoji
+status_emoji() {
+  case "$1" in
+    waiting) echo "🟡" ;;
+    active)  echo "🟢" ;;
+    idle)    echo "⚪" ;;
+    paused)  echo "🔵" ;;
+    blocked) echo "🔴" ;;
+    *)       echo "" ;;
+  esac
+}
+
+build_title() {
+  local worktree dir_name branch emoji prefix title
+  worktree=$(get_worktree)
+  local status_file="$STATUS_DIR/$worktree"
+
+  if [[ -f "$status_file" ]]; then
+    emoji=$(status_emoji "$(cat "$status_file")")
+    [[ -n "$emoji" ]] && prefix="$emoji "
+  fi
+
+  dir_name="$worktree"
+  if git rev-parse --is-inside-work-tree &>/dev/null; then
+    branch=$(git symbolic-ref --short HEAD 2>/dev/null || git rev-parse --short HEAD 2>/dev/null)
+    title="${prefix}${dir_name} (${branch})"
+  else
+    title="${prefix}${dir_name}"
+  fi
+
+  printf '\e]0;%s\a' "$title"
+}
+
+main() {
+  local worktree wt_status status_file manual_file hook_mode=false
+
+  # Output OSC title escape sequence for current status
+  if [[ "${1:-}" == "--title" ]]; then
+    build_title
+    return
+  fi
+
+  # Check for --hook flag
+  if [[ "${1:-}" == "--hook" ]]; then
+    hook_mode=true
+    shift
+  fi
+
+  worktree=$(get_worktree)
+  status_file="$STATUS_DIR/$worktree"
+  manual_file="$STATUS_DIR/$worktree.manual"
+
+  mkdir -p "$STATUS_DIR"
+
+  case "${1:-}" in
+    "")
+      # Show current status
+      if [[ -f "$status_file" ]]; then
+        local current
+        current=$(cat "$status_file")
+        local suffix=""
+        [[ -f "$manual_file" ]] && suffix=" (manual hold)"
+        echo "$(status_emoji "$current") $current$suffix"
+      else
+        echo "(no status set)"
+      fi
+      ;;
+    clear)
+      rm -f "$status_file" "$manual_file"
+      echo "Status cleared for $worktree"
+      ;;
+    waiting|active|idle|paused|blocked)
+      # In hook mode, respect manual hold
+      if [[ "$hook_mode" == true ]] && [[ -f "$manual_file" ]]; then
+        return 1
+      fi
+
+      echo "$1" > "$status_file"
+
+      # Manual calls set the hold, hook calls clear it
+      if [[ "$hook_mode" == true ]]; then
+        rm -f "$manual_file"
+      else
+        touch "$manual_file"
+      fi
+
+      echo "$(status_emoji "$1") $worktree → $1"
+      ;;
+    *)
+      echo "Usage: tab-status [--hook] [waiting|active|paused|blocked|clear]"
+      echo ""
+      echo "  waiting  🟡  permission prompt / urgent input needed"
+      echo "  active   🟢  actively working"
+      echo "  idle     ⚪  your turn, no rush"
+      echo "  paused   🔵  parked, will return later"
+      echo "  blocked  🔴  can't proceed, external dependency"
+      echo "  clear       remove status and manual hold"
+      echo ""
+      echo "  --hook      hook mode: skip if manual hold is set"
+      exit 1
+      ;;
+  esac
+
+  # Trigger title refresh (calls ghostty_title if available)
+  if type ghostty_title &>/dev/null; then
+    ghostty_title
+  fi
+}
+
+main "$@"
