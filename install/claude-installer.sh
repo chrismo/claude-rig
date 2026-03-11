@@ -4,9 +4,10 @@ set -euo pipefail
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-STATUSLINE_SCRIPT="$SCRIPT_DIR/statusline-command.sh"
-COMMANDS_SRC="$SCRIPT_DIR/skills"
-AGENTS_SRC="$SCRIPT_DIR/agents"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+STATUSLINE_SCRIPT="$REPO_DIR/statusline/statusline-command.sh"
+COMMANDS_SRC="$REPO_DIR/skills"
+AGENTS_SRC="$REPO_DIR/agents"
 CLAUDE_DIR="$HOME/.claude"
 SETTINGS_FILE="$CLAUDE_DIR/settings.json"
 COMMANDS_DEST="$CLAUDE_DIR/commands"

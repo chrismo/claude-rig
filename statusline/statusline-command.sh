@@ -18,25 +18,16 @@ color_reset="\033[2;37m"  # dim white (Claude's default)
 # TODO: Plan usage limits (session %, weekly %) not yet in statusline payload.
 # Tracking issue: https://github.com/anthropics/claude-code/issues/28999
 
-# Install with ~/.claude/settings.json
+# Install via the claude-rig installer:
+#   bash /path/to/claude-rig/install/claude-installer.sh
 #
-# ... but don't overwrite existing settings.json
-#
+# Or manually in ~/.claude/settings.json:
 # {
-#   ...
 #   "statusLine": {
 #     "type": "command",
-#     "command": "bash ~/.claude/statusline-command.sh"
+#     "command": "bash /path/to/claude-rig/statusline/statusline-command.sh"
 #   }
 # }
-
-# install with this:
-#   new_settings=$(
-#     super -J -c "statusLine:={type:'command',command:'bash $(pwd)/statusline-command.sh'}" \
-#       ~/.claude/settings.json
-#   )
-#   mv -v ~/.claude/settings.json ~/.claude/settings-bak.json
-#   echo "$new_settings" >~/.claude/settings.json
 
 # Read Claude Code input from stdin and save to temp file
 function read_claude_input() {

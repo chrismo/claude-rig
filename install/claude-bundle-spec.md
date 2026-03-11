@@ -10,21 +10,21 @@ missing:
 - Project-level settings (sandbox, permissions)
 - Common CLAUDE.md preferences (git commit format, etc.)
 
-## Current Setup (brain repo)
+## Current Setup (claude-rig repo)
 
 | Component | Location | Scope |
 |-----------|----------|-------|
-| `statusline-command.sh` | `ai-agents/claude/` | Global (settings.json) |
-| `claude-installer.sh` | `ai-agents/claude/` | One-time global setup |
-| Custom commands | `ai-agents/claude/commands/*.md` | Global (symlinked) |
-| Custom agents | `.claude/agents/` | Project-level |
-| settings.local.json | `.claude/` | Project-level |
-| CLAUDE.md | repo root | Project-level |
+| `statusline-command.sh` | `statusline/` | Global (settings.json) |
+| `claude-installer.sh` | `install/` | One-time global setup |
+| Custom skills | `skills/*.md` | Global (symlinked) |
+| Custom agents | `agents/*.md` | Global (symlinked) |
+| settings.local.json | per-project `.claude/` | Project-level |
+| CLAUDE.md | per-project repo root | Project-level |
 
 ## Design Decisions
 
-1. **Symlinks back to brain repo are acceptable** - centralized updates, brain
-   repo must exist
+1. **Symlinks back to claude-rig repo are acceptable** - centralized updates,
+   claude-rig must be cloned
 2. **CLAUDE.md: Include directive approach** - add reference to shared
    preferences file rather than injection
 3. **Profiles (superdb vs web, etc.)**: Future consideration, not v1
@@ -34,8 +34,8 @@ missing:
 ### Directory Structure
 
 ```
-ai-agents/claude/
-  bundle/
+claude-rig/
+  install/
     claude-bundle              # Main CLI script (symlink to ~/bin)
     lib/
       init.sh                  # Initialize new repo
@@ -58,7 +58,7 @@ claude-bundle init [--full]
 
 1. Create `.claude/` directory if needed
 2. Copy `settings.local.json` template (sandbox defaults)
-3. Symlink common agents from brain repo
+3. Symlink common agents from claude-rig repo
 4. Handle CLAUDE.md:
    - If exists: optionally append include directive
    - If not: create from minimal template with include
@@ -69,7 +69,7 @@ claude-bundle init [--full]
 claude-bundle status
 ```
 
-Shows what's installed, symlinks vs copies, brain repo connection status.
+Shows what's installed, symlinks vs copies, claude-rig connection status.
 
 ### CLAUDE.md Include Approach
 
@@ -77,7 +77,7 @@ Instead of injecting content, add a directive at the top of CLAUDE.md:
 
 ```markdown
 For additional preferences, also follow:
-~/modev/brain/ai-agents/claude/bundle/preferences/common.md
+/path/to/claude-rig/install/preferences/common.md
 ```
 
 The `preferences/common.md` file contains things like:
@@ -143,7 +143,7 @@ This allows:
 ## Implementation Steps
 
 ### Phase 1: Template Library
-- [ ] Create `ai-agents/claude/bundle/` directory structure
+- [ ] Create `install/` directory structure (templates, preferences, lib)
 - [ ] Create `templates/settings.local.json` with common baseline
 - [ ] Create minimal `CLAUDE.md` template
 - [ ] Create `preferences/common.md` with shared preferences
@@ -160,7 +160,7 @@ This allows:
 - [ ] Add to PATH (update claude-installer.sh or document manual step)
 
 ### Phase 4: Agent Symlinks
-- [ ] Add agent symlinking to init (link brain repo agents)
+- [ ] Add agent symlinking to init (link claude-rig agents)
 - [ ] Handle case where agent already exists
 
 ### Phase 5: Documentation
@@ -181,10 +181,10 @@ This allows:
 
 ## Files to Create
 
-- `ai-agents/claude/bundle/claude-bundle` (main CLI)
-- `ai-agents/claude/bundle/lib/init.sh`
-- `ai-agents/claude/bundle/lib/status.sh`
-- `ai-agents/claude/bundle/lib/merge-settings.sh`
-- `ai-agents/claude/bundle/templates/settings.local.json`
-- `ai-agents/claude/bundle/templates/CLAUDE.md`
-- `ai-agents/claude/bundle/preferences/common.md`
+- `install/claude-bundle` (main CLI)
+- `install/lib/init.sh`
+- `install/lib/status.sh`
+- `install/lib/merge-settings.sh`
+- `install/templates/settings.local.json`
+- `install/templates/CLAUDE.md`
+- `install/preferences/common.md`

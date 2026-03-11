@@ -1,14 +1,14 @@
 {
   "session_id": "6b72d2d1-d7d3-4fe4-b171-d7ebb920037f",
-  "transcript_path": "/Users/chrismo/.claude/projects/-Users-chrismo-modev-brain/6b72d2d1-d7d3-4fe4-b171-d7ebb920037f.jsonl",
-  "cwd": "/Users/chrismo/modev/brain",
+  "transcript_path": "/Users/demo/.claude/projects/-Users-demo-projects-myapp/6b72d2d1-d7d3-4fe4-b171-d7ebb920037f.jsonl",
+  "cwd": "/Users/demo/projects/myapp",
   "model": {
     "id": "claude-sonnet-4-5-20250929",
     "display_name": "Sonnet 4.5"
   },
   "workspace": {
-    "current_dir": "/Users/chrismo/modev/brain/ai-agents/claude",
-    "project_dir": "/Users/chrismo/modev/brain"
+    "current_dir": "/Users/demo/projects/myapp/src",
+    "project_dir": "/Users/demo/projects/myapp"
   },
   "version": "2.0.14",
   "output_style": {
