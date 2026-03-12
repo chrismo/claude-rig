@@ -30,9 +30,20 @@ A two-line statusline for Claude Code, powered by [SuperDB](https://superdb.org)
 
 **Line 1:** project name | git branch+status | relative dir | Claude version | model + effort level | sandbox status
 
-**Line 2:** hud bar | cost + duration | lines +/-  | context window %
+**Line 2:** plugin-driven — assembled from executable scripts in `statusline/plugins.d/`:
 
-Requires `super` (`brew install superdb/tap/super`). Line 2 also calls [`hud`](https://github.com/chrismo/hud) for an external status bar.
+| Plugin | Segment |
+|--------|---------|
+| `10-hud` | [`hud`](https://github.com/chrismo/hud) status bar (optional, skipped if hud not installed) |
+| `50-cost` | session cost + wall/API duration |
+| `60-lines` | lines added/removed |
+| `70-context` | context window usage % |
+
+Drop any executable into `plugins.d/` to add a segment. Numeric prefix controls ordering. The script receives `CLAUDE_STATUS_INPUT` env var pointing to the session JSON. Output a string on stdout; empty output = segment skipped.
+
+Override the plugin directory with `STATUSLINE_PLUGIN_DIR` env var.
+
+Requires `super` (`brew install superdb/tap/super`).
 
 ### `tab-status/`
 

@@ -1,0 +1,24 @@
+#!/bin/bash
+# Segment: context window usage percentage
+input="${CLAUDE_STATUS_INPUT:-/tmp/claude-status-input.json}"
+
+muted_green="\033[2;32m"
+muted_yellow="\033[2;33m"
+muted_red="\033[2;31m"
+color_reset="\033[2;37m"
+
+input_tokens=$(super -f line -c 'coalesce(context_window.total_input_tokens, 0)' "$input")
+output_tokens=$(super -f line -c 'coalesce(context_window.total_output_tokens, 0)' "$input")
+window_size=$(super -f line -c 'coalesce(context_window.context_window_size, 200000)' "$input")
+
+total=$((input_tokens + output_tokens))
+percent=$((total * 100 / window_size))
+
+color="$muted_green"
+if [[ $percent -ge 90 ]]; then
+  color="$muted_red"
+elif [[ $percent -ge 80 ]]; then
+  color="$muted_yellow"
+fi
+
+echo -e "${color}ctx: ${percent}%${color_reset}"

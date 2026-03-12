@@ -6,4 +6,4 @@ function _script_dir() {
   dirname "${BASH_SOURCE[0]}"
 }
 
-cat "$(_script_dir)/.sample.json" | bash "$(_script_dir)/statusline-command.sh"
+cat "$(_script_dir)/sample-input.json" | bash "$(_script_dir)/statusline-command.sh"

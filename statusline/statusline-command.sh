@@ -74,18 +74,6 @@ function relative_dir() {
 }
 
 
-# Get cost information formatted with duration
-function cost_info() {
-  local cost_usd=$(super -f line -c 'coalesce(cost.total_cost_usd, 0)' /tmp/claude-status-input.json)
-  local duration_ms=$(super -f line -c 'coalesce(cost.total_duration_ms, 0)' /tmp/claude-status-input.json)
-  local api_duration_ms=$(super -f line -c 'coalesce(cost.total_api_duration_ms, 0)' /tmp/claude-status-input.json)
-
-  # Convert milliseconds to duration - SuperDB handles formatting automatically
-  local formatted_duration=$(super -f line -c "values $duration_ms / 1000 | f'{this}s'::duration")
-  local formatted_api_duration=$(super -f line -c "values $api_duration_ms / 1000 | f'{this}s'::duration")
-
-  printf "\$%.2f | %s (api: %s)" "$cost_usd" "$formatted_duration" "$formatted_api_duration"
-}
 
 # Get model information from Claude input
 function model_name() {
@@ -191,40 +179,46 @@ function git_status() {
   echo "git: ${branch}${status_flags}"
 }
 
-# Get lines added/removed stats
-function lines_changed() {
-  local added=$(super -f line -c 'coalesce(cost.total_lines_added, 0)' /tmp/claude-status-input.json)
-  local removed=$(super -f line -c 'coalesce(cost.total_lines_removed, 0)' /tmp/claude-status-input.json)
 
-  echo -e "${muted_green}+${added}${color_reset}/${muted_red}-${removed}${color_reset}"
-}
+# Run line 2 plugins from plugins.d/ directory.
+# Each plugin is an executable that outputs a single segment.
+# Empty output = segment skipped. Sorted by filename (use numeric prefixes).
+# Plugins receive CLAUDE_STATUS_INPUT env var pointing to the session JSON.
+function run_plugins() {
+  local plugin_dir="${STATUSLINE_PLUGIN_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/plugins.d}"
+  local segments=()
 
-# Get context window usage as percentage
-function context_usage() {
-  local input_tokens=$(super -f line -c 'coalesce(context_window.total_input_tokens, 0)' /tmp/claude-status-input.json)
-  local output_tokens=$(super -f line -c 'coalesce(context_window.total_output_tokens, 0)' /tmp/claude-status-input.json)
-  local window_size=$(super -f line -c 'coalesce(context_window.context_window_size, 200000)' /tmp/claude-status-input.json)
-
-  local total=$((input_tokens + output_tokens))
-  local percent=$((total * 100 / window_size))
-
-  local color="$muted_green"
-  if [[ $percent -ge 90 ]]; then
-    color="$muted_red"
-  elif [[ $percent -ge 80 ]]; then
-    color="$muted_yellow"
+  if [[ -d "$plugin_dir" ]]; then
+    for plugin in "$plugin_dir"/*; do
+      [[ -x "$plugin" ]] || continue
+      local output
+      output=$("$plugin" 2>/dev/null)
+      if [[ -n "$output" ]]; then
+        segments+=("$output")
+      fi
+    done
   fi
 
-  echo -e "${color}ctx: ${percent}%${color_reset}"
+  # Join segments with " | "
+  local line=""
+  for seg in "${segments[@]}"; do
+    if [[ -n "$line" ]]; then
+      line+=" | $seg"
+    else
+      line="$seg"
+    fi
+  done
+  printf "%s" "$line"
 }
 
 # Main execution
 read_claude_input
+export CLAUDE_STATUS_INPUT="/tmp/claude-status-input.json"
 
 cd "$(current_dir)" 2>/dev/null || true
 
+# Line 1: core session info (project, git, dir, version, model, sandbox)
 printf "%s | %s | %s | Claude %s | %s | %s\n" "$(project_name)" "$(git_status)" "$(relative_dir)" "$(claude_version)" "$(model_name)" "$(sandbox_status)"
-printf "%s | %s | %s | %s\n" "$($HOME/.local/bin/hud bar 2>/dev/null)" "$(cost_info)" "$(lines_changed)" "$(context_usage)"
-# MAX WIDTH ON LAPTOP ------------------------> ... keep going off the right edge ----->                                                                          --------->|"
-# keep in mind, Claude will sometimes use the right side to put its own messages, so that can interfere with The Perfect Layout
+# Line 2: assembled from plugins.d/ scripts (cost, lines, context, etc.)
+printf "%s\n" "$(run_plugins)"
 

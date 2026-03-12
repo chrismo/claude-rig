@@ -1,0 +1,4 @@
+#!/bin/bash
+# Segment: hud status bar (https://github.com/chrismo/hud)
+# Outputs nothing if hud is not installed — segment gets skipped.
+$HOME/.local/bin/hud bar 2>/dev/null
