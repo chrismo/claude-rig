@@ -4,8 +4,9 @@ set -euo pipefail
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_DIR="$SCRIPT_DIR"
 STATUSLINE_SCRIPT="$REPO_DIR/statusline/statusline-command.sh"
+DEDICATED_TOOLS_HOOK="$REPO_DIR/hooks/use-dedicated-tools.sh"
 COMMANDS_SRC="$REPO_DIR/skills"
 AGENTS_SRC="$REPO_DIR/agents"
 CLAUDE_DIR="$HOME/.claude"
@@ -87,13 +88,20 @@ new_settings=$(
         type: 'command',
         command: '${HOOK_CMD_PREFIX} idle > /dev/null; ${TITLE_CMD}'
       }]
+    }],
+    PreToolUse: [{
+      matcher: 'Bash',
+      hooks: [{
+        type: 'command',
+        command: '${DEDICATED_TOOLS_HOOK}'
+      }]
     }]
   }" "$SETTINGS_FILE"
 )
 
 echo "$new_settings" > "$SETTINGS_FILE"
 
-echo "✓ Installed tab-status hooks (UserPromptSubmit, PostToolUse, PermissionRequest, Stop)"
+echo "✓ Installed hooks (UserPromptSubmit, PostToolUse, PermissionRequest, Stop, PreToolUse)"
 echo ""
 
 # Install skill scripts to ~/.local/bin
