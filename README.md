@@ -45,6 +45,28 @@ Override the plugin directory with `STATUSLINE_PLUGIN_DIR` env var.
 
 Requires `super` (`brew install superdb/tap/super`).
 
+### `hooks/`
+
+A `PreToolUse` hook that intercepts Bash tool calls and denies commands that should use Claude Code's dedicated tools instead. This keeps Claude using the right tool for the job and avoids unnecessary permission prompts.
+
+**Dedicated tool enforcement** — denies CLI commands that have better built-in equivalents:
+
+| Denied command | Use instead |
+|----------------|-------------|
+| `grep`, `rg` | Grep tool |
+| `find` | Glob tool |
+| `cat`, `head`, `tail` | Read tool |
+| `sed`, `awk` | Edit tool |
+| `echo`/`printf` with `>` redirect | Write tool |
+| `super` CLI | SuperDB MCP tools |
+| `python`/`python3` with json ops | SuperDB MCP tools |
+
+**Compound command blocking** — denies pipes (`|`), chains (`&&`, `||`), and semicolons (`;`), which typically trigger permission prompts and can be broken into separate tool calls.
+
+**Trade-off:** Both of these increase token usage — denied commands cost a round-trip, and splitting compound commands into separate tool calls means more calls (and more tokens) than a single one-liner would have used. The bet is that fewer permission prompts and better tool usage are worth the extra tokens.
+
+Denied commands get a JSON response telling Claude which tool to use instead. Logs decisions to `~/.claude/logs/dedicated-tools-hook.sup`. Includes a bats test suite.
+
 ### `tab-status/`
 
 Visual status indicators in Ghostty terminal tab titles for multi-Claude workflows. Colored circle emojis show what each Claude session is doing:
@@ -63,7 +85,7 @@ See `tab-status/tab-status.md` for detailed flow diagrams.
 
 ### `install/`
 
-- **`claude-installer.sh`** — one-time setup that symlinks agents, skills, and configures `~/.claude/settings.json` with the statusline command and tab-status hooks
+- **`claude-installer.sh`** — one-time setup that symlinks agents, skills, and configures `~/.claude/settings.json` with the statusline command, tab-status hooks, and the dedicated-tools PreToolUse hook
 - **`claude-bundle-spec.md`** — design spec for a future `claude-bundle init` CLI that sets up new repos with common settings, templates, and preferences
 
 ### `docs/`
@@ -90,8 +112,9 @@ bash install/claude-installer.sh
 The installer:
 1. Configures `~/.claude/settings.json` with the statusline command
 2. Installs Claude hooks for tab-status (Ghostty tab colors)
-3. Symlinks skills into `~/.claude/commands/`
-4. Symlinks agents into `~/.claude/agents/`
+3. Installs the `PreToolUse` hook to enforce dedicated tools and block compound Bash commands
+4. Symlinks skills into `~/.claude/commands/`
+5. Symlinks agents into `~/.claude/agents/`
 
 For tab-status to update your Ghostty tab titles, source `tab-status/set-title.sh` from your `.zshrc` and ensure `tab-status` is on your PATH (the installer links it to `~/.local/bin/`).
 
