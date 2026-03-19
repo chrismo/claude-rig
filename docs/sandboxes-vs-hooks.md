@@ -1,5 +1,7 @@
 # Sandboxes vs Hooks: Two Approaches to Claude Code Autonomy
 
+_chrismo here: very vibe-y, definitely needs editing_
+
 The common advice for reducing Claude Code permission prompt friction is to run it in a container, VM, or sandbox. This doc captures the tradeoffs between that approach and the hook-based control layer used in this repo.
 
 ## The Problem
@@ -19,7 +21,7 @@ Run Claude in an isolated environment where everything is safe to auto-allow.
 
 ### Cons
 
-- Prompt injection risk increases — if Claude gets tricked by malicious content in a webpage or repo, the injected instructions execute in a fully permissive environment with no permission prompt to catch it
+- Prompt injection risk increases — if Claude gets tricked by malicious content in a webpage or repo, the injected instructions execute in a fully permissive environment with no permission prompt to catch it. Sandbox escapes are real: [Snowflake AI escapes sandbox and executes malware](https://www.promptarmor.com/resources/snowflake-ai-escapes-sandbox-and-executes-malware)
 - You lose your local environment — custom tools, dotfiles, CLIs, your whole rig
 - Rebuilding your environment in a VM means maintaining images, syncing files, dealing with latency
 - Doesn't improve tool quality — Claude still uses sloppy 5-command pipelines when a single Grep call would do, and you have a harder time reviewing what it did

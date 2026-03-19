@@ -39,6 +39,14 @@ if [[ "$command_str" =~ \||(\&\&)|\; ]]; then
   exit 0
 fi
 
+# Deny process substitution <(...) and >(...) — these embed hidden commands
+# that bypass the compound command check above.
+if [[ "$command_str" =~ \<\(|\>\( ]]; then
+  log "deny" "process-substitution" "$command_str"
+  deny_tool "Process substitution (<(...) and >(...)) is not allowed. Break this into separate tool calls."
+  exit 0
+fi
+
 # Get the first word (the primary command)
 first_word="${command_str%% *}"
 # Strip any leading path components (e.g. /usr/bin/grep -> grep, ~/.asdf/.../super -> super)
@@ -74,6 +82,21 @@ case "$base_cmd" in
     ;;
   super)
     message="Use the SuperDB MCP tools instead of the \`super\` CLI in Bash."
+    ;;
+  eval)
+    message="\`eval\` is not allowed — it executes arbitrary strings and is never needed for normal tasks."
+    ;;
+  exec)
+    message="\`exec\` is not allowed — it replaces the current process."
+    ;;
+  source)
+    message="\`source\` is not allowed — use the Read tool to inspect files instead."
+    ;;
+  bash|sh|zsh)
+    # Plain `bash script.sh` is fine; `bash -c "..."` is a compound command escape hatch.
+    if [[ "$command_str" =~ \ -c\  ]]; then
+      message="\`$base_cmd -c\` is not allowed — it bypasses compound command restrictions. Run the command directly."
+    fi
     ;;
 esac
 

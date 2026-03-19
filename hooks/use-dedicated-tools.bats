@@ -126,6 +126,38 @@ assert_allow() {
   assert_deny "SuperDB MCP"
 }
 
+# ── Deny: dangerous shell commands ─────────────────────────────────────────────
+
+@test "deny: eval echo hello → eval blocked" {
+  run_hook 'eval echo hello'
+  assert_deny "eval"
+}
+
+@test "deny: exec /bin/sh → exec blocked" {
+  run_hook "exec /bin/sh"
+  assert_deny "exec"
+}
+
+@test "deny: source ~/.bashrc → source blocked" {
+  run_hook "source ~/.bashrc"
+  assert_deny "source"
+}
+
+@test "deny: bash -c 'rm -rf /' → bash -c blocked" {
+  run_hook "bash -c rm -rf /"
+  assert_deny "bash -c"
+}
+
+@test "deny: sh -c 'whoami' → sh -c blocked" {
+  run_hook "sh -c whoami"
+  assert_deny "sh -c"
+}
+
+@test "allow: bash script.sh (no -c flag)" {
+  run_hook "bash script.sh"
+  assert_allow
+}
+
 # ── Deny: full path commands ────────────────────────────────────────────────────
 
 @test "deny: /usr/bin/grep foo → Grep tool (full path stripped)" {
@@ -163,6 +195,18 @@ assert_allow() {
 @test "deny: cmd1 | cmd2 | awk '{print}' → compound (deep pipeline)" {
   run_hook "cmd1 | cmd2 | awk {print}"
   assert_deny "Compound"
+}
+
+# ── Deny: process substitution <(...) and >(...) ─────────────────────────────
+
+@test "deny: diff <(cmd1) <(cmd2) → process substitution" {
+  run_hook "diff <(sort file1) <(sort file2)"
+  assert_deny "Process substitution"
+}
+
+@test "deny: cmd >(tee log) → process substitution (output)" {
+  run_hook "cmd >(tee log.txt)"
+  assert_deny "Process substitution"
 }
 
 # ── Allow: commands without dedicated tools ─────────────────────────────────────
