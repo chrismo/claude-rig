@@ -23,12 +23,13 @@ User-level skills (slash commands) symlinked into `~/.claude/commands/`:
 - **/plan** — spawn pre-implementation architecture and design review agents
 - **/review** — spawn quality review agents before committing
 - **/prove-it** — verify facts and assumptions before responding
+- **/permission-mode** — toggle Claude Code permission mode (default, acceptEdits, plan, dontAsk, bypassPermissions)
 
 ### `statusline/`
 
 A two-line statusline for Claude Code, powered by [SuperDB](https://superdb.org) (`super` CLI):
 
-**Line 1:** project name | git branch+status | relative dir | Claude version | model + effort level | sandbox status
+**Line 1:** project name | git branch+status | relative dir | Claude version | model + effort level | permission mode | sandbox status
 
 **Line 2:** plugin-driven — assembled from executable scripts in `statusline/plugins.d/`:
 
@@ -66,6 +67,12 @@ A `PreToolUse` hook that intercepts Bash tool calls and denies commands that sho
 **Trade-off:** Both of these increase token usage — denied commands cost a round-trip, and splitting compound commands into separate tool calls means more calls (and more tokens) than a single one-liner would have used. The bet is that fewer permission prompts and better tool usage are worth the extra tokens.
 
 Denied commands get a JSON response telling Claude which tool to use instead. Logs decisions to `~/.claude/logs/dedicated-tools-hook.sup`. Includes a bats test suite.
+
+Monitor the log in a separate terminal:
+
+```bash
+watch -n1 tail -n 20 ~/.claude/logs/dedicated-tools-hook.sup
+```
 
 ### `tab-status/`
 

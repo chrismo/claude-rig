@@ -111,6 +111,43 @@ function model_name() {
 }
 
 
+function permission_mode() {
+  local mode=""
+
+  # Check project-local settings first (higher precedence)
+  local local_settings="$(get_project_dir)/.claude/settings.local.json"
+  if [[ -f "$local_settings" ]]; then
+    mode=$(super -f line -c 'coalesce(permissions.defaultMode, "")' "$local_settings" 2>/dev/null)
+  fi
+
+  # Fall back to shared project settings
+  if [[ -z "$mode" ]]; then
+    local project_settings="$(get_project_dir)/.claude/settings.json"
+    if [[ -f "$project_settings" ]]; then
+      mode=$(super -f line -c 'coalesce(permissions.defaultMode, "")' "$project_settings" 2>/dev/null)
+    fi
+  fi
+
+  # Fall back to user settings
+  if [[ -z "$mode" ]]; then
+    mode=$(super -f line -c 'coalesce(permissions.defaultMode, "")' "$HOME/.claude/settings.json" 2>/dev/null)
+  fi
+
+  # Default to "default" if not set anywhere
+  if [[ -z "$mode" ]]; then
+    mode="default"
+  fi
+
+  case "$mode" in
+    default)     echo "mode: default" ;;
+    acceptEdits) echo "${muted_green}mode: acceptEdits${color_reset}" ;;
+    plan)        echo "${muted_yellow}mode: plan${color_reset}" ;;
+    dontAsk)     echo "${muted_green}mode: dontAsk${color_reset}" ;;
+    bypassPermissions) echo "${muted_red}mode: BYPASS${color_reset}" ;;
+    *)           echo "mode: $mode" ;;
+  esac
+}
+
 function sandbox_status() {
   # this file is actually local to the dir launched in, but ... I always launch
   # from project root
@@ -217,8 +254,8 @@ export CLAUDE_STATUS_INPUT="/tmp/claude-status-input.json"
 
 cd "$(current_dir)" 2>/dev/null || true
 
-# Line 1: core session info (project, git, dir, version, model, sandbox)
-printf "%s | %s | %s | Claude %s | %s | %s\n" "$(project_name)" "$(git_status)" "$(relative_dir)" "$(claude_version)" "$(model_name)" "$(sandbox_status)"
+# Line 1: core session info (project, git, dir, version, model, mode, sandbox)
+printf "%s | %s | %s | Claude %s | %s | %s | %s\n" "$(project_name)" "$(git_status)" "$(relative_dir)" "$(claude_version)" "$(model_name)" "$(permission_mode)" "$(sandbox_status)"
 # Line 2: assembled from plugins.d/ scripts (cost, lines, context, etc.)
 printf "%s\n" "$(run_plugins)"
 
