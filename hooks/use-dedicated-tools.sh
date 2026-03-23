@@ -29,7 +29,8 @@ log() {
 input=$(cat)
 
 # Extract the command string from the hook JSON
-command_str=$(super -f line -c 'this.tool_input.command' - <<< "$input")
+# Note: use pipe instead of <<< here-string — bash 3.2 (macOS default) mangles <<<
+command_str=$(echo "$input" | super -f line -c 'this.tool_input.command' -)
 
 # Deny any compound command (pipes, chains, semicolons) — these almost always
 # trigger permission prompts, which defeats the goal of keeping things flowing.
