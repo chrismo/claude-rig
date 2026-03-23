@@ -23,13 +23,13 @@ User-level skills (slash commands) symlinked into `~/.claude/commands/`:
 - **/plan** — spawn pre-implementation architecture and design review agents
 - **/review** — spawn quality review agents before committing
 - **/prove-it** — verify facts and assumptions before responding
-- **/permission-mode** — toggle Claude Code permission mode (default, acceptEdits, plan, dontAsk, bypassPermissions)
+
 
 ### `statusline/`
 
 A two-line statusline for Claude Code, powered by [SuperDB](https://superdb.org) (`super` CLI):
 
-**Line 1:** project name | git branch+status | relative dir | Claude version | model + effort level | permission mode | sandbox status
+**Line 1:** project name | git branch+status | relative dir | Claude version | model + effort level | sandbox status
 
 **Line 2:** plugin-driven — assembled from executable scripts in `statusline/plugins.d/`:
 
