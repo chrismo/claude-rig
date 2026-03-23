@@ -7,6 +7,8 @@
 muted_green="\033[2;32m"
 muted_yellow="\033[2;33m"
 muted_red="\033[2;31m"
+muted_blue="\033[2;34m"
+muted_purple="\033[2;35m"
 color_reset="\033[2;37m"  # dim white (Claude's default)
 
 # TODO: • Added context_window.used_percentage and
@@ -140,10 +142,10 @@ function permission_mode() {
 
   case "$mode" in
     default)     echo "mode: default" ;;
-    acceptEdits) echo "${muted_green}mode: acceptEdits${color_reset}" ;;
-    plan)        echo "${muted_yellow}mode: plan${color_reset}" ;;
-    dontAsk)     echo "${muted_green}mode: dontAsk${color_reset}" ;;
-    bypassPermissions) echo "${muted_red}mode: BYPASS${color_reset}" ;;
+    acceptEdits) echo -e "${muted_purple}mode: acceptEdits${color_reset}" ;;
+    plan)        echo -e "${muted_green}mode: plan${color_reset}" ;;
+    dontAsk)     echo -e "${muted_blue}mode: dontAsk${color_reset}" ;;
+    bypassPermissions) echo -e "${muted_red}mode: BYPASS${color_reset}" ;;
     *)           echo "mode: $mode" ;;
   esac
 }
