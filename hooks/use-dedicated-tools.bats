@@ -158,6 +158,28 @@ assert_allow() {
   assert_allow
 }
 
+# ── Deny: git -C ───────────────────────────────────────────────────────────────
+
+@test "deny: git -C /other/path status → git -C blocked" {
+  run_hook "git -C /other/path status"
+  assert_deny "git -C"
+}
+
+@test "allow: git status (no -C flag)" {
+  run_hook "git status"
+  assert_allow
+}
+
+@test "allow: git commit -m message" {
+  run_hook "git commit -m message"
+  assert_allow
+}
+
+@test "allow: git commit with -C in message body" {
+  run_hook "git commit -m Block git -C in hook"
+  assert_allow
+}
+
 # ── Deny: full path commands ────────────────────────────────────────────────────
 
 @test "deny: /usr/bin/grep foo → Grep tool (full path stripped)" {

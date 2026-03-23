@@ -93,6 +93,12 @@ case "$base_cmd" in
   source)
     message="\`source\` is not allowed — use the Read tool to inspect files instead."
     ;;
+  git)
+    # Match git -C only as the first flag (not buried in commit messages etc.)
+    if [[ "$command_str" =~ ^git\ -C\  ]]; then
+      message="\`git -C\` is not allowed — run git commands from the correct directory instead."
+    fi
+    ;;
   bash|sh|zsh)
     # Plain `bash script.sh` is fine; `bash -c "..."` is a compound command escape hatch.
     if [[ "$command_str" =~ \ -c\  ]]; then
