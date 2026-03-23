@@ -104,19 +104,21 @@ echo "$new_settings" > "$SETTINGS_FILE"
 echo "✓ Installed hooks (UserPromptSubmit, PostToolUse, PermissionRequest, Stop, PreToolUse)"
 echo ""
 
-# Install skill scripts to ~/.local/bin
+# Install CLI scripts to ~/.local/bin
 LOCAL_BIN="$HOME/.local/bin"
 mkdir -p "$LOCAL_BIN"
-for script in "$COMMANDS_SRC"/*.sh; do
-  if [[ -f "$script" ]]; then
-    name=$(basename "$script" .sh)
-    dest="$LOCAL_BIN/$name"
-    if [[ -L "$dest" ]] || [[ -f "$dest" ]]; then
-      rm "$dest"
+for dir in "$COMMANDS_SRC" "$REPO_DIR/bin"; do
+  for script in "$dir"/*.sh; do
+    if [[ -f "$script" ]]; then
+      name=$(basename "$script" .sh)
+      dest="$LOCAL_BIN/$name"
+      if [[ -L "$dest" ]] || [[ -f "$dest" ]]; then
+        rm "$dest"
+      fi
+      ln -s "$script" "$dest"
+      echo "✓ Linked $name -> ~/.local/bin/"
     fi
-    ln -s "$script" "$dest"
-    echo "✓ Linked $name -> ~/.local/bin/"
-  fi
+  done
 done
 echo ""
 

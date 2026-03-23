@@ -16,6 +16,12 @@ Custom agent definitions (`.md` files) that get symlinked into `~/.claude/agents
 - **superdb-expert** — SuperDB query specialist
 - **test-expert** — test design, debugging failures, coverage
 
+### `bin/`
+
+CLI tools symlinked into `~/.local/bin/`:
+
+- **permissions-audit** — consolidate allow/deny permission rules across git worktrees and global settings. Run from a repo root to discover `.claude/settings.local.json` in all worktrees plus `~/.claude/settings.json`. Flags: `--local-only` (skip global), `--sup` (structured output for piping into `super`).
+
 ### `skills/`
 
 User-level skills (slash commands) symlinked into `~/.claude/commands/`:
