@@ -180,6 +180,23 @@ assert_allow() {
   assert_allow
 }
 
+# ── Deny: absolute paths under working directory ──────────────────────────────
+
+@test "deny: absolute path under cwd → use relative path" {
+  run_hook "$(pwd)/scripts/deploy.sh config"
+  assert_deny "relative path"
+}
+
+@test "allow: relative path to script" {
+  run_hook "./scripts/deploy.sh config"
+  assert_allow
+}
+
+@test "allow: absolute path outside cwd (e.g. /usr/bin/ls)" {
+  run_hook "/usr/bin/ls -la"
+  assert_allow
+}
+
 # ── Deny: full path commands ────────────────────────────────────────────────────
 
 @test "deny: /usr/bin/grep foo → Grep tool (full path stripped)" {

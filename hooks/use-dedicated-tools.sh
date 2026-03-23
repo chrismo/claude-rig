@@ -48,6 +48,15 @@ if [[ "$command_str" =~ \<\(|\>\( ]]; then
   exit 0
 fi
 
+# Deny scripts invoked by absolute path when they're under the working directory —
+# absolute paths trigger per-worktree approval prompts; relative paths don't.
+cwd=$(pwd)
+if [[ "$command_str" == "$cwd"/* ]]; then
+  log "deny" "absolute-path" "$command_str"
+  deny_tool "Use a relative path instead of an absolute path for scripts under the working directory."
+  exit 0
+fi
+
 # Get the first word (the primary command)
 first_word="${command_str%% *}"
 # Strip any leading path components (e.g. /usr/bin/grep -> grep, ~/.asdf/.../super -> super)
