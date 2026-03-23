@@ -32,6 +32,14 @@ input=$(cat)
 # Note: use pipe instead of <<< here-string — bash 3.2 (macOS default) mangles <<<
 command_str=$(echo "$input" | super -f line -c 'this.tool_input.command' -)
 
+# Always allow commands targeting .claude/tmp — a safe temp directory within the
+# project. This must come before all deny checks so it isn't caught by the
+# absolute-path or compound-command rules.
+if [[ "$command_str" =~ \.claude/tmp ]]; then
+  log "allow" "claude-tmp" "$command_str"
+  exit 0
+fi
+
 # Deny any compound command (pipes, chains, semicolons) — these almost always
 # trigger permission prompts, which defeats the goal of keeping things flowing.
 if [[ "$command_str" =~ \||(\&\&)|\; ]]; then
@@ -57,6 +65,14 @@ if [[ "$command_str" == "$cwd"/* ]]; then
   exit 0
 fi
 
+# Deny commands that reference /tmp — these always trigger permission prompts
+# because /tmp is outside the project directory. Use .claude/tmp within the repo instead.
+if [[ "$command_str" =~ /tmp(/|$) ]]; then
+  log "deny" "tmp-redirect" "$command_str"
+  deny_tool "Do not use /tmp — it is outside the project and triggers permission prompts. Use .claude/tmp/ instead (mkdir -p .claude/tmp first if needed)."
+  exit 0
+fi
+
 # Get the first word (the primary command)
 first_word="${command_str%% *}"
 # Strip any leading path components (e.g. /usr/bin/grep -> grep, ~/.asdf/.../super -> super)
@@ -68,8 +84,8 @@ case "$base_cmd" in
   grep|rg)
     message="Use the Grep tool instead of \`$base_cmd\` in Bash."
     ;;
-  find)
-    message="Use the Glob tool instead of \`find\` in Bash."
+  find|ls)
+    message="Use the Glob tool instead of \`$base_cmd\` in Bash."
     ;;
   cat|head|tail)
     message="Use the Read tool instead of \`$base_cmd\` in Bash."

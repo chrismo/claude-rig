@@ -192,8 +192,13 @@ assert_allow() {
   assert_allow
 }
 
-@test "allow: absolute path outside cwd (e.g. /usr/bin/ls)" {
+@test "deny: /usr/bin/ls → Glob tool (full path stripped)" {
   run_hook "/usr/bin/ls -la"
+  assert_deny "Glob tool"
+}
+
+@test "allow: absolute path outside cwd (e.g. /usr/bin/env)" {
+  run_hook "/usr/bin/env FOO=bar"
   assert_allow
 }
 
@@ -260,9 +265,9 @@ assert_allow() {
   assert_allow
 }
 
-@test "allow: ls -la" {
+@test "deny: ls -la → Glob tool" {
   run_hook "ls -la"
-  assert_allow
+  assert_deny "Glob tool"
 }
 
 @test "allow: echo 'hello' (no redirect)" {
@@ -280,8 +285,32 @@ assert_allow() {
   assert_allow
 }
 
-@test "allow: mkdir -p /tmp/foo" {
+# ── Deny: /tmp → use .claude/tmp ──────────────────────────────────────────────
+
+@test "deny: cmd > /tmp/output.txt → use .claude/tmp" {
+  run_hook "blah-blerg > /tmp/blerg-output.txt"
+  assert_deny ".claude/tmp"
+}
+
+@test "deny: mkdir -p /tmp/foo → use .claude/tmp" {
   run_hook "mkdir -p /tmp/foo"
+  assert_deny ".claude/tmp"
+}
+
+@test "deny: ls /tmp (bare, no trailing slash) → use .claude/tmp" {
+  run_hook "ls /tmp"
+  assert_deny ".claude/tmp"
+}
+
+# ── Allow: .claude/tmp ────────────────────────────────────────────────────────
+
+@test "allow: mkdir -p .claude/tmp" {
+  run_hook "mkdir -p .claude/tmp"
+  assert_allow
+}
+
+@test "allow: cmd > .claude/tmp/output.txt" {
+  run_hook "blah-blerg > .claude/tmp/output.txt"
   assert_allow
 }
 
