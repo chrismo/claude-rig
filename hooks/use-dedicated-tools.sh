@@ -56,6 +56,14 @@ if [[ "$command_str" =~ \<\(|\>\( ]]; then
   exit 0
 fi
 
+# Deny command substitution $(...) — these always trigger permission prompts.
+# Run the inner command separately and use the result.
+if [[ "$command_str" =~ \$\( ]]; then
+  log "deny" "command-substitution" "$command_str"
+  deny_tool "Command substitution (\$(...)) is not allowed. Run the inner command separately, then use the result."
+  exit 0
+fi
+
 # Deny scripts invoked by absolute path when they're under the working directory —
 # absolute paths trigger per-worktree approval prompts; relative paths don't.
 cwd=$(pwd)

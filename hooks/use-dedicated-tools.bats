@@ -253,6 +253,18 @@ assert_allow() {
   assert_deny "Process substitution"
 }
 
+# ── Deny: command substitution $(...) and backticks ──────────────────────────
+
+@test "deny: echo \$(date) → command substitution" {
+  run_hook 'echo $(date)'
+  assert_deny "Command substitution"
+}
+
+@test "deny: git log --since=\$(date) → command substitution" {
+  run_hook 'git log --since=$(date -d yesterday)'
+  assert_deny "Command substitution"
+}
+
 # ── Allow: commands without dedicated tools ─────────────────────────────────────
 
 @test "allow: git status" {
