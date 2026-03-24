@@ -88,11 +88,15 @@ In `default` mode, you approve Edit/Write once per session and forget about it. 
 - Headless/CI pipelines where you know exactly which tools are needed and pre-configure them all (including Edit and Write)
 - Sessions where you only need Claude to read, search, and run specific pre-approved commands
 
-### When it doesn't work
+### When it doesn't work (out of the box)
 
 - Interactive development — too many tools are session-approved by default and don't show up in allow lists
 - Any workflow that creates new files (Write) unless you've added `Write` to your allow list
 - You can't combine `dontAsk` (deny unapproved) with `acceptEdits` (auto-approve file tools) — it's one mode, not a composition
+
+### Next steps
+
+Don't give up on `dontAsk` yet. The gaps are knowable and fixable — adding `Edit` and `Write` to the allow list is straightforward, and the `permissions-audit` script can surface what else is missing. The real question is whether a well-curated allow list + `dontAsk` can eliminate enough prompts to be worth the setup effort. Needs more hands-on time to find out.
 
 ## Bottom Line
 
