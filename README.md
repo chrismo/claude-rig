@@ -16,6 +16,12 @@ Custom agent definitions (`.md` files) that get symlinked into `~/.claude/agents
 - **superdb-expert** — SuperDB query specialist
 - **test-expert** — test design, debugging failures, coverage
 
+### `rules/`
+
+User-level rules (`.md` files) symlinked into `~/.claude/rules/`. Loaded at the start of every Claude Code session across all projects.
+
+- **verify-before-closing** — don't assume a task is done after a PR merge; validate in production and close out remaining work
+
 ### `bin/`
 
 CLI tools symlinked into `~/.local/bin/`:

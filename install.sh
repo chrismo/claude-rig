@@ -13,6 +13,8 @@ CLAUDE_DIR="$HOME/.claude"
 SETTINGS_FILE="$CLAUDE_DIR/settings.json"
 COMMANDS_DEST="$CLAUDE_DIR/commands"
 AGENTS_DEST="$CLAUDE_DIR/agents"
+RULES_SRC="$REPO_DIR/rules"
+RULES_DEST="$CLAUDE_DIR/rules"
 
 # Ensure .claude directory exists
 mkdir -p "$CLAUDE_DIR"
@@ -190,6 +192,37 @@ if [[ -d "$AGENTS_SRC" ]]; then
     for agent_file in "$AGENTS_DEST"/*.md; do
       if [[ -L "$agent_file" ]]; then
         name=$(basename "$agent_file" .md)
+        echo "  $name"
+      fi
+    done
+    echo ""
+  fi
+fi
+
+# Install user-level rules
+if [[ -d "$RULES_SRC" ]]; then
+  mkdir -p "$RULES_DEST"
+  count=0
+
+  for rule_file in "$RULES_SRC"/*.md; do
+    if [[ -f "$rule_file" ]]; then
+      filename=$(basename "$rule_file")
+      dest_file="$RULES_DEST/$filename"
+
+      if [[ -L "$dest_file" ]] || [[ -f "$dest_file" ]]; then
+        rm "$dest_file"
+      fi
+
+      ln -s "$rule_file" "$dest_file"
+      count=$((count + 1))
+    fi
+  done
+
+  if [[ $count -gt 0 ]]; then
+    echo "✓ Installed $count user-level rule(s):"
+    for rule_file in "$RULES_DEST"/*.md; do
+      if [[ -L "$rule_file" ]]; then
+        name=$(basename "$rule_file" .md)
         echo "  $name"
       fi
     done
