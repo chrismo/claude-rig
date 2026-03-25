@@ -20,6 +20,7 @@ Custom agent definitions (`.md` files) that get symlinked into `~/.claude/agents
 
 User-level rules (`.md` files) symlinked into `~/.claude/rules/`. Loaded at the start of every Claude Code session across all projects.
 
+- **theory-vs-fact** — distinguish unproven theories from observed facts; don't present assumptions as conclusions
 - **verify-before-closing** — don't assume a task is done after a PR merge; validate in production and close out remaining work
 
 ### `bin/`
