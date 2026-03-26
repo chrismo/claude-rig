@@ -61,7 +61,7 @@ fi
 if [[ "$command_str" =~ \$\( ]]; then
   log "deny" "command-substitution" "$command_str"
   if [[ "$command_str" =~ ^git\ commit ]]; then
-    deny_tool "Command substitution (\$(...)) is not allowed. For multiline commit messages, use multiple -m flags (each adds a paragraph). Wrap lines at 72 columns — use more -m flags to break long paragraphs. Example: git commit -m 'Title' -m 'First paragraph wrapped at 72 cols' -m 'Co-Authored-By: ...'"
+    deny_tool "Command substitution (\$(...)) is not allowed. For multiline commit messages, use multiple -m flags (each adds a paragraph separated by a blank line). Title should be 50 chars or less. Wrap body lines at 72 columns. Example: git commit -m 'Short title' -m 'Body paragraph wrapped at 72 cols' -m 'Co-Authored-By: ...'"
   else
     deny_tool "Command substitution (\$(...)) is not allowed. Run the inner command separately, then use the result."
   fi
