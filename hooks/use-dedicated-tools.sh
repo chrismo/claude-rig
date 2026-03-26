@@ -60,7 +60,11 @@ fi
 # Run the inner command separately and use the result.
 if [[ "$command_str" =~ \$\( ]]; then
   log "deny" "command-substitution" "$command_str"
-  deny_tool "Command substitution (\$(...)) is not allowed. Run the inner command separately, then use the result."
+  if [[ "$command_str" =~ ^git\ commit ]]; then
+    deny_tool "Command substitution (\$(...)) is not allowed. For multiline commit messages, use multiple -m flags (each adds a paragraph): git commit -m 'Title' -m 'Body' -m 'Co-Authored-By: ...'"
+  else
+    deny_tool "Command substitution (\$(...)) is not allowed. Run the inner command separately, then use the result."
+  fi
   exit 0
 fi
 
@@ -75,7 +79,7 @@ fi
 
 # Deny commands that reference /tmp — these always trigger permission prompts
 # because /tmp is outside the project directory. Use .claude/tmp within the repo instead.
-if [[ "$command_str" =~ /tmp(/|$) ]]; then
+if [[ "$command_str" =~ (^|[[:space:]\"\'=])/tmp(/|$) ]]; then
   log "deny" "tmp-redirect" "$command_str"
   deny_tool "Do not use /tmp — it is outside the project and triggers permission prompts. Use .claude/tmp/ instead (mkdir -p .claude/tmp first if needed)."
   exit 0

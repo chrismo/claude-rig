@@ -265,6 +265,11 @@ assert_allow() {
   assert_deny "Command substitution"
 }
 
+@test "deny: git commit with \$() → suggests multiple -m flags" {
+  run_hook 'git commit -m "$(echo test)"'
+  assert_deny "multiple -m"
+}
+
 # ── Allow: commands without dedicated tools ─────────────────────────────────────
 
 @test "allow: git status" {

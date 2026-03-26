@@ -37,6 +37,7 @@ User-level skills (slash commands) symlinked into `~/.claude/commands/`:
 - **/review** — spawn quality review agents before committing
 - **/prove-it** — verify facts and assumptions before responding
 
+**Tip:** Skills support inline shell execution with `` !`command` `` syntax in the markdown body. The command runs at invocation time and its output is injected as context before Claude sees the prompt. The built-in `/commit` skill uses this to pre-load `git status`, `git diff HEAD`, etc. Useful for building skills that need live system state.
 
 ### `statusline/`
 
