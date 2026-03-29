@@ -7,6 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$SCRIPT_DIR"
 STATUSLINE_SCRIPT="$REPO_DIR/statusline/statusline-command.sh"
 DEDICATED_TOOLS_HOOK="$REPO_DIR/hooks/use-dedicated-tools.sh"
+ENSURE_SANDBOX_HOOK="$REPO_DIR/hooks/ensure-sandbox.sh"
 COMMANDS_SRC="$REPO_DIR/skills"
 AGENTS_SRC="$REPO_DIR/agents"
 CLAUDE_DIR="$HOME/.claude"
@@ -97,13 +98,32 @@ new_settings=$(
         type: 'command',
         command: '${DEDICATED_TOOLS_HOOK}'
       }]
+    }],
+    SessionStart: [{
+      matcher: 'startup',
+      hooks: [{
+        type: 'command',
+        command: '${ENSURE_SANDBOX_HOOK}'
+      }]
+    }, {
+      matcher: 'resume',
+      hooks: [{
+        type: 'command',
+        command: '${ENSURE_SANDBOX_HOOK}'
+      }]
+    }, {
+      matcher: 'clear',
+      hooks: [{
+        type: 'command',
+        command: '${ENSURE_SANDBOX_HOOK}'
+      }]
     }]
   }" "$SETTINGS_FILE"
 )
 
 echo "$new_settings" > "$SETTINGS_FILE"
 
-echo "✓ Installed hooks (UserPromptSubmit, PostToolUse, PermissionRequest, Stop, PreToolUse)"
+echo "✓ Installed hooks (UserPromptSubmit, PostToolUse, PermissionRequest, Stop, PreToolUse, SessionStart)"
 echo ""
 
 # Install CLI scripts to ~/.local/bin
