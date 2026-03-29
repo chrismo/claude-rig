@@ -62,9 +62,11 @@ Requires `super` (`brew install superdb/tap/super`).
 
 ### `hooks/`
 
-A `PreToolUse` hook that intercepts Bash tool calls and denies commands that should use Claude Code's dedicated tools instead. This keeps Claude using the right tool for the job and avoids unnecessary permission prompts.
+**Auto-sandbox** (`ensure-sandbox.sh`) — a `SessionStart` hook that ensures sandbox mode is enabled on every new session, resume, and clear. Merges `sandbox.enabled: true` into `.claude/settings.local.json` using `super`. This is necessary because sandbox config only takes effect from `settings.local.json` — user-level and project-level `settings.json` are ignored.
 
-**Dedicated tool enforcement** — denies CLI commands that have better built-in equivalents:
+**Dedicated tool enforcement** (`use-dedicated-tools.sh`) — a `PreToolUse` hook that intercepts Bash tool calls and denies commands that should use Claude Code's dedicated tools instead. This keeps Claude using the right tool for the job and avoids unnecessary permission prompts.
+
+Denies CLI commands that have better built-in equivalents:
 
 | Denied command | Use instead |
 |----------------|-------------|
@@ -106,7 +108,6 @@ See `tab-status/tab-status.md` for detailed flow diagrams.
 
 ### `install/`
 
-- **`claude-installer.sh`** — one-time setup that symlinks agents, skills, and configures `~/.claude/settings.json` with the statusline command, tab-status hooks, and the dedicated-tools PreToolUse hook
 - **`claude-bundle-spec.md`** — design spec for a future `claude-bundle init` CLI that sets up new repos with common settings, templates, and preferences
 
 ### `docs/`
@@ -127,15 +128,17 @@ brew install superdb/tap/super
 # Clone and run the installer
 git clone https://github.com/chrismo/claude-rig.git
 cd claude-rig
-bash install/claude-installer.sh
+./install.sh
 ```
 
 The installer:
 1. Configures `~/.claude/settings.json` with the statusline command
 2. Installs Claude hooks for tab-status (Ghostty tab colors)
 3. Installs the `PreToolUse` hook to enforce dedicated tools and block compound Bash commands
-4. Symlinks skills into `~/.claude/commands/`
-5. Symlinks agents into `~/.claude/agents/`
+4. Installs `SessionStart` hooks to auto-enable sandbox on startup, resume, and clear
+5. Symlinks skills into `~/.claude/commands/`
+6. Symlinks agents into `~/.claude/agents/`
+7. Symlinks rules into `~/.claude/rules/`
 
 For tab-status to update your Ghostty tab titles, source `tab-status/set-title.sh` from your `.zshrc` and ensure `tab-status` is on your PATH (the installer links it to `~/.local/bin/`).
 

@@ -16,7 +16,9 @@ Claude Code has a built-in sandbox mode that restricts Bash commands at the OS l
 
 **What it doesn't do:** Eliminate permission prompts. You still get prompted for Edit/Write (session-scoped approval) and for Bash commands not in your allow list. With `sandbox.autoAllowBashIfSandboxed: true`, Bash prompts go away since the sandbox contains the blast radius — but file tool prompts remain.
 
-**Gotcha:** If set in `~/.claude/settings.json` (global), it applies to all sessions across all projects. Project-level `.claude/settings.local.json` is more appropriate for per-repo control.
+**Gotcha: sandbox config only works from `.claude/settings.local.json`.** Tested 2026-03-28: setting `sandbox.enabled: true` in `~/.claude/settings.json` (user-level) or `.claude/settings.json` (project-level) has no effect. Only `.claude/settings.local.json` activates sandbox. This was confirmed across 6 test iterations varying which files contained the setting.
+
+**Workaround:** This repo uses a `SessionStart` hook (`hooks/ensure-sandbox.sh`) that merges sandbox config into `.claude/settings.local.json` on every startup, resume, and clear. This ensures sandbox is always on without manual `/sandbox` each session. The hook is installed globally via `~/.claude/settings.json` so it fires in every project.
 
 This is complementary to external sandboxes and hooks — it's another layer, not a replacement for either.
 
