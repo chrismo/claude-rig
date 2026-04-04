@@ -153,8 +153,23 @@ assert_allow() {
   assert_deny "sh -c"
 }
 
-@test "allow: bash script.sh (no -c flag)" {
+@test "deny: bash script.sh → run directly" {
   run_hook "bash script.sh"
+  assert_deny "directly"
+}
+
+@test "deny: sh install.sh → run directly" {
+  run_hook "sh install.sh"
+  assert_deny "directly"
+}
+
+@test "deny: bash install.sh arg1 arg2 → run directly" {
+  run_hook "bash install.sh --verbose --dry-run"
+  assert_deny "directly"
+}
+
+@test "allow: bash --version (flag, not script)" {
+  run_hook "bash --version"
   assert_allow
 }
 
@@ -316,6 +331,21 @@ assert_allow() {
 
 @test "deny: ls /tmp (bare, no trailing slash) → use .claude/tmp" {
   run_hook "ls /tmp"
+  assert_deny ".claude/tmp"
+}
+
+@test "deny: ../../../tmp/foo (relative traversal) → use .claude/tmp" {
+  run_hook "mkdir -p ../../../tmp/foo"
+  assert_deny ".claude/tmp"
+}
+
+@test "deny: ../../tmp/out.txt (relative traversal) → use .claude/tmp" {
+  run_hook "blah-blerg > ../../tmp/out.txt"
+  assert_deny ".claude/tmp"
+}
+
+@test "deny: ../tmp/x (single parent traversal) → use .claude/tmp" {
+  run_hook "TMPDIR=../tmp/x cmd"
   assert_deny ".claude/tmp"
 }
 

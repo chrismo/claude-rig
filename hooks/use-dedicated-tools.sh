@@ -79,7 +79,8 @@ fi
 
 # Deny commands that reference /tmp — these always trigger permission prompts
 # because /tmp is outside the project directory. Use .claude/tmp within the repo instead.
-if [[ "$command_str" =~ (^|[[:space:]\"\'=])/tmp(/|$) ]]; then
+# Also catch relative traversals like ../../../tmp that resolve to /tmp.
+if [[ "$command_str" =~ (^|[[:space:]\"\'=])/tmp(/|$) ]] || [[ "$command_str" =~ (\.\./)+tmp(/|$) ]]; then
   log "deny" "tmp-redirect" "$command_str"
   deny_tool "Do not use /tmp — it is outside the project and triggers permission prompts. Use .claude/tmp/ instead (mkdir -p .claude/tmp first if needed)."
   exit 0
@@ -137,9 +138,15 @@ case "$base_cmd" in
     fi
     ;;
   bash|sh|zsh)
-    # Plain `bash script.sh` is fine; `bash -c "..."` is a compound command escape hatch.
     if [[ "$command_str" =~ \ -c\  ]]; then
       message="\`$base_cmd -c\` is not allowed — it bypasses compound command restrictions. Run the command directly."
+    else
+      # Deny `bash script.sh` — run scripts directly so allow rules can match.
+      args="${command_str#* }"
+      first_arg="${args%% *}"
+      if [[ -n "$first_arg" ]] && [[ "$first_arg" != "$command_str" ]] && [[ "$first_arg" != -* ]]; then
+        message="Do not invoke scripts via \`$base_cmd\` — run directly (e.g., ./$first_arg instead of $base_cmd $first_arg). Ensure the script has a shebang (#!/usr/bin/env bash) and is executable (chmod +x). Direct invocation allows pre-approved allow rules to match."
+      fi
     fi
     ;;
 esac

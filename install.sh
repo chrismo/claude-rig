@@ -10,12 +10,13 @@ DEDICATED_TOOLS_HOOK="$REPO_DIR/hooks/use-dedicated-tools.sh"
 ENSURE_SANDBOX_HOOK="$REPO_DIR/hooks/ensure-sandbox.sh"
 COMMANDS_SRC="$REPO_DIR/skills"
 AGENTS_SRC="$REPO_DIR/agents"
-CLAUDE_DIR="$HOME/.claude"
+CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
 SETTINGS_FILE="$CLAUDE_DIR/settings.json"
 COMMANDS_DEST="$CLAUDE_DIR/commands"
 AGENTS_DEST="$CLAUDE_DIR/agents"
 RULES_SRC="$REPO_DIR/rules"
 RULES_DEST="$CLAUDE_DIR/rules"
+PERMISSIONS_ALLOW="$REPO_DIR/permissions/allow.sup"
 
 # Ensure .claude directory exists
 mkdir -p "$CLAUDE_DIR"
@@ -126,8 +127,41 @@ echo "$new_settings" > "$SETTINGS_FILE"
 echo "✓ Installed hooks (UserPromptSubmit, PostToolUse, PermissionRequest, Stop, PreToolUse, SessionStart)"
 echo ""
 
+# Merge permissions/allow.sup into settings.json (idempotent via sort | uniq)
+if [[ -f "$PERMISSIONS_ALLOW" ]]; then
+  if grep -q '"permissions"' "$SETTINGS_FILE"; then
+    new_settings=$(
+      super -J -c 'values {
+        ...this,
+        permissions: {
+          ...this.permissions,
+          allow: (
+            unnest [...this.permissions.allow, ...(from "'"$PERMISSIONS_ALLOW"'" | collect(this))]
+            | sort this | uniq | collect(this)
+          )
+        }
+      }' "$SETTINGS_FILE"
+    )
+  else
+    new_settings=$(
+      super -J -c 'values {
+        ...this,
+        permissions: {
+          allow: (
+            unnest (from "'"$PERMISSIONS_ALLOW"'" | collect(this))
+            | sort this | uniq | collect(this)
+          )
+        }
+      }' "$SETTINGS_FILE"
+    )
+  fi
+  echo "$new_settings" > "$SETTINGS_FILE"
+  echo "✓ Merged permissions from allow.sup"
+  echo ""
+fi
+
 # Install CLI scripts to ~/.local/bin
-LOCAL_BIN="$HOME/.local/bin"
+LOCAL_BIN="${LOCAL_BIN:-$HOME/.local/bin}"
 mkdir -p "$LOCAL_BIN"
 for dir in "$COMMANDS_SRC" "$REPO_DIR/bin"; do
   for script in "$dir"/*.sh; do
