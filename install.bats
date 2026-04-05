@@ -218,6 +218,74 @@ EOF
 
 # ── Existing user settings ────────────────────────────────────────────────────
 
+@test "permissions: deny.sup entries are merged when non-empty" {
+  echo '"Bash(rm -rf:*)"' > "$BATS_TEST_DIRNAME/permissions/deny.sup.test"
+  # Temporarily swap deny.sup
+  cp "$BATS_TEST_DIRNAME/permissions/deny.sup" "$BATS_TEST_DIRNAME/permissions/deny.sup.orig"
+  cp "$BATS_TEST_DIRNAME/permissions/deny.sup.test" "$BATS_TEST_DIRNAME/permissions/deny.sup"
+  run_installer
+  cp "$BATS_TEST_DIRNAME/permissions/deny.sup.orig" "$BATS_TEST_DIRNAME/permissions/deny.sup"
+  rm -f "$BATS_TEST_DIRNAME/permissions/deny.sup.test" "$BATS_TEST_DIRNAME/permissions/deny.sup.orig"
+  [ "$status" -eq 0 ]
+  local denys
+  denys=$(settings_get 'this.permissions.deny')
+  [[ "$denys" == *"Bash(rm -rf:*)"* ]]
+}
+
+@test "permissions: empty deny.sup does not add deny key" {
+  run_installer
+  [ "$status" -eq 0 ]
+  # deny key should not exist since deny.sup is empty
+  run settings_get 'this.permissions.deny'
+  [ "$status" -ne 0 ] || [ -z "$output" ]
+}
+
+@test "permissions: existing deny rules are preserved" {
+  cat > "$CLAUDE_DIR/settings.json" <<'EOF'
+{
+  "permissions": {
+    "allow": ["Bash(git add:*)"],
+    "deny": ["Bash(sudo:*)"],
+    "defaultMode": "default"
+  }
+}
+EOF
+  echo '"Bash(rm -rf:*)"' > "$BATS_TEST_DIRNAME/permissions/deny.sup.test"
+  cp "$BATS_TEST_DIRNAME/permissions/deny.sup" "$BATS_TEST_DIRNAME/permissions/deny.sup.orig"
+  cp "$BATS_TEST_DIRNAME/permissions/deny.sup.test" "$BATS_TEST_DIRNAME/permissions/deny.sup"
+  run_installer
+  cp "$BATS_TEST_DIRNAME/permissions/deny.sup.orig" "$BATS_TEST_DIRNAME/permissions/deny.sup"
+  rm -f "$BATS_TEST_DIRNAME/permissions/deny.sup.test" "$BATS_TEST_DIRNAME/permissions/deny.sup.orig"
+  [ "$status" -eq 0 ]
+  local denys
+  denys=$(settings_get 'this.permissions.deny')
+  [[ "$denys" == *"Bash(sudo:*)"* ]]
+  [[ "$denys" == *"Bash(rm -rf:*)"* ]]
+}
+
+# ── cc-audit rules ───────────────────────────────────────────────────────────
+
+@test "cc-audit-rules: not installed when no json files" {
+  run_installer
+  [ "$status" -eq 0 ]
+  [ ! -e "${CC_AUDIT_DIR:-$TEST_DIR/.cc-audit}/rules" ]
+}
+
+@test "cc-audit-rules: symlinked when json files present" {
+  export CC_AUDIT_DIR="$TEST_DIR/.cc-audit"
+  mkdir -p "$BATS_TEST_DIRNAME/cc-audit-rules"
+  echo '{"safe":[]}' > "$BATS_TEST_DIRNAME/cc-audit-rules/test-rule.json"
+  run_installer
+  rm -f "$BATS_TEST_DIRNAME/cc-audit-rules/test-rule.json"
+  [ "$status" -eq 0 ]
+  [ -L "$CC_AUDIT_DIR/rules" ]
+  local target
+  target=$(readlink "$CC_AUDIT_DIR/rules")
+  [[ "$target" == "$BATS_TEST_DIRNAME/cc-audit-rules" ]]
+}
+
+# ── Existing user settings ────────────────────────────────────────────────────
+
 @test "existing settings: non-installer keys are preserved" {
   cat > "$CLAUDE_DIR/settings.json" <<'EOF'
 {
@@ -233,4 +301,82 @@ EOF
   local verb
   verb=$(settings_get 'this.spinnerVerbs.verbs[0]')
   [ "$verb" = "Jamming" ]
+}
+
+# ── Harvest ──────────────────────────────────────────────────────────────────
+
+HARVESTER="$BATS_TEST_DIRNAME/bin/harvest.sh"
+
+# Save and restore .sup files around harvest tests
+harvest_setup() {
+  cp "$BATS_TEST_DIRNAME/permissions/allow.sup" "$TEST_DIR/allow.sup.orig"
+  cp "$BATS_TEST_DIRNAME/permissions/deny.sup" "$TEST_DIR/deny.sup.orig"
+}
+
+harvest_teardown() {
+  cp "$TEST_DIR/allow.sup.orig" "$BATS_TEST_DIRNAME/permissions/allow.sup"
+  cp "$TEST_DIR/deny.sup.orig" "$BATS_TEST_DIRNAME/permissions/deny.sup"
+}
+
+@test "harvest: extracts allow rules from settings.json" {
+  harvest_setup
+  cat > "$CLAUDE_DIR/settings.json" <<'EOF'
+{
+  "permissions": {
+    "allow": ["Write(.claude/tmp/*)", "Bash(git add:*)", "Edit(.claude/tmp/*)"]
+  }
+}
+EOF
+  run bash "$HARVESTER"
+  harvest_teardown
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"3 allow rules"* ]]
+}
+
+@test "harvest: extracts deny rules from settings.json" {
+  harvest_setup
+  cat > "$CLAUDE_DIR/settings.json" <<'EOF'
+{
+  "permissions": {
+    "allow": ["Write(.claude/tmp/*)"],
+    "deny": ["Bash(sudo:*)", "Bash(rm -rf:*)"]
+  }
+}
+EOF
+  run bash "$HARVESTER"
+  harvest_teardown
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"2 deny rules"* ]]
+}
+
+@test "harvest: dry-run does not modify files" {
+  harvest_setup
+  cat > "$CLAUDE_DIR/settings.json" <<'EOF'
+{
+  "permissions": {
+    "allow": ["Bash(git add:*)", "Write(.claude/tmp/*)"]
+  }
+}
+EOF
+  run bash "$HARVESTER" --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"=== permissions/allow.sup"* ]]
+  # File should be unchanged
+  diff "$BATS_TEST_DIRNAME/permissions/allow.sup" "$TEST_DIR/allow.sup.orig"
+  harvest_teardown
+}
+
+@test "harvest: handles missing deny gracefully" {
+  harvest_setup
+  cat > "$CLAUDE_DIR/settings.json" <<'EOF'
+{
+  "permissions": {
+    "allow": ["Write(.claude/tmp/*)"]
+  }
+}
+EOF
+  run bash "$HARVESTER"
+  harvest_teardown
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"No deny rules"* ]]
 }

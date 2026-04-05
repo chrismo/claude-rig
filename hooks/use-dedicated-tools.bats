@@ -126,6 +126,11 @@ assert_allow() {
   assert_deny "SuperDB MCP"
 }
 
+@test "deny: super -c with pipe in query → SuperDB MCP (not compound)" {
+  run_hook "super -c from settings.json | permissions.deny"
+  assert_deny "SuperDB MCP"
+}
+
 # ── Deny: dangerous shell commands ─────────────────────────────────────────────
 
 @test "deny: eval echo hello → eval blocked" {

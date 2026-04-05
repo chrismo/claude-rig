@@ -40,6 +40,16 @@ if [[ "$command_str" =~ \.claude/tmp ]]; then
   exit 0
 fi
 
+# Catch super CLI early — super queries often contain pipes/semicolons in their
+# expression syntax, which would hit the compound-command denial below with a
+# misleading message. Redirect to SuperDB MCP tools instead.
+_first="${command_str%% *}"
+if [[ "${_first##*/}" == "super" ]]; then
+  log "deny" "super" "$command_str"
+  deny_tool "Use the SuperDB MCP tools instead of the \`super\` CLI in Bash."
+  exit 0
+fi
+
 # Deny any compound command (pipes, chains, semicolons) — these almost always
 # trigger permission prompts, which defeats the goal of keeping things flowing.
 if [[ "$command_str" =~ \||(\&\&)|\; ]]; then
@@ -118,9 +128,6 @@ case "$base_cmd" in
     if [[ "$command_str" =~ json ]]; then
       message="Use the SuperDB MCP tools instead of Python for JSON operations."
     fi
-    ;;
-  super)
-    message="Use the SuperDB MCP tools instead of the \`super\` CLI in Bash."
     ;;
   eval)
     message="\`eval\` is not allowed — it executes arbitrary strings and is never needed for normal tasks."

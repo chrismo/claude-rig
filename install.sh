@@ -2,21 +2,9 @@
 
 set -euo pipefail
 
-# Get the directory where this script is located
+# Load shared config
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="$SCRIPT_DIR"
-STATUSLINE_SCRIPT="$REPO_DIR/statusline/statusline-command.sh"
-DEDICATED_TOOLS_HOOK="$REPO_DIR/hooks/use-dedicated-tools.sh"
-ENSURE_SANDBOX_HOOK="$REPO_DIR/hooks/ensure-sandbox.sh"
-COMMANDS_SRC="$REPO_DIR/skills"
-AGENTS_SRC="$REPO_DIR/agents"
-CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
-SETTINGS_FILE="$CLAUDE_DIR/settings.json"
-COMMANDS_DEST="$CLAUDE_DIR/commands"
-AGENTS_DEST="$CLAUDE_DIR/agents"
-RULES_SRC="$REPO_DIR/rules"
-RULES_DEST="$CLAUDE_DIR/rules"
-PERMISSIONS_ALLOW="$REPO_DIR/permissions/allow.sup"
+source "$SCRIPT_DIR/lib/config.sh"
 
 # Ensure .claude directory exists
 mkdir -p "$CLAUDE_DIR"
@@ -160,8 +148,41 @@ if [[ -f "$PERMISSIONS_ALLOW" ]]; then
   echo ""
 fi
 
+# Merge permissions/deny.sup into settings.json (idempotent via sort | uniq)
+if [[ -f "$PERMISSIONS_DENY" ]] && grep -q '[^[:space:]]' "$PERMISSIONS_DENY"; then
+  if grep -q '"deny"' "$SETTINGS_FILE"; then
+    new_settings=$(
+      super -J -c 'values {
+        ...this,
+        permissions: {
+          ...this.permissions,
+          deny: (
+            unnest [...this.permissions.deny, ...(from "'"$PERMISSIONS_DENY"'" | collect(this))]
+            | sort this | uniq | collect(this)
+          )
+        }
+      }' "$SETTINGS_FILE"
+    )
+  else
+    new_settings=$(
+      super -J -c 'values {
+        ...this,
+        permissions: {
+          ...this.permissions,
+          deny: (
+            unnest (from "'"$PERMISSIONS_DENY"'" | collect(this))
+            | sort this | uniq | collect(this)
+          )
+        }
+      }' "$SETTINGS_FILE"
+    )
+  fi
+  echo "$new_settings" > "$SETTINGS_FILE"
+  echo "✓ Merged permissions from deny.sup"
+  echo ""
+fi
+
 # Install CLI scripts to ~/.local/bin
-LOCAL_BIN="${LOCAL_BIN:-$HOME/.local/bin}"
 mkdir -p "$LOCAL_BIN"
 for dir in "$COMMANDS_SRC" "$REPO_DIR/bin"; do
   for script in "$dir"/*.sh; do
@@ -280,6 +301,22 @@ if [[ -d "$RULES_SRC" ]]; then
         echo "  $name"
       fi
     done
+    echo ""
+  fi
+fi
+
+# Install cc-audit personalized rules
+if [[ -d "$CC_AUDIT_RULES_SRC" ]]; then
+  json_count=$(find "$CC_AUDIT_RULES_SRC" -maxdepth 1 -name "*.json" | wc -l | tr -d ' ')
+  if [[ "$json_count" -gt 0 ]]; then
+    mkdir -p "$(dirname "$CC_AUDIT_RULES_DEST")"
+
+    if [[ -L "$CC_AUDIT_RULES_DEST" ]] || [[ -d "$CC_AUDIT_RULES_DEST" ]]; then
+      rm -rf "$CC_AUDIT_RULES_DEST"
+    fi
+
+    ln -s "$CC_AUDIT_RULES_SRC" "$CC_AUDIT_RULES_DEST"
+    echo "✓ Installed cc-audit rules -> $CC_AUDIT_RULES_DEST ($json_count rule files)"
     echo ""
   fi
 fi
