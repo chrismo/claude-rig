@@ -322,48 +322,53 @@ assert_allow() {
   assert_allow
 }
 
-# ── Deny: /tmp → use .claude/tmp ──────────────────────────────────────────────
+# ── Deny: /tmp → use repo tmp/ ────────────────────────────────────────────────
 
-@test "deny: cmd > /tmp/output.txt → use .claude/tmp" {
+@test "deny: cmd > /tmp/output.txt → use repo tmp/" {
   run_hook "blah-blerg > /tmp/blerg-output.txt"
-  assert_deny ".claude/tmp"
+  assert_deny "Use tmp/"
 }
 
-@test "deny: mkdir -p /tmp/foo → use .claude/tmp" {
+@test "deny: mkdir -p /tmp/foo → use repo tmp/" {
   run_hook "mkdir -p /tmp/foo"
-  assert_deny ".claude/tmp"
+  assert_deny "Use tmp/"
 }
 
-@test "deny: ls /tmp (bare, no trailing slash) → use .claude/tmp" {
+@test "deny: ls /tmp (bare, no trailing slash) → use repo tmp/" {
   run_hook "ls /tmp"
-  assert_deny ".claude/tmp"
+  assert_deny "Use tmp/"
 }
 
-@test "deny: ../../../tmp/foo (relative traversal) → use .claude/tmp" {
+@test "deny: ../../../tmp/foo (relative traversal) → use repo tmp/" {
   run_hook "mkdir -p ../../../tmp/foo"
-  assert_deny ".claude/tmp"
+  assert_deny "Use tmp/"
 }
 
-@test "deny: ../../tmp/out.txt (relative traversal) → use .claude/tmp" {
+@test "deny: ../../tmp/out.txt (relative traversal) → use repo tmp/" {
   run_hook "blah-blerg > ../../tmp/out.txt"
-  assert_deny ".claude/tmp"
+  assert_deny "Use tmp/"
 }
 
-@test "deny: ../tmp/x (single parent traversal) → use .claude/tmp" {
+@test "deny: ../tmp/x (single parent traversal) → use repo tmp/" {
   run_hook "TMPDIR=../tmp/x cmd"
-  assert_deny ".claude/tmp"
+  assert_deny "Use tmp/"
 }
 
-# ── Allow: .claude/tmp ────────────────────────────────────────────────────────
+# ── Allow: repo tmp/ ─────────────────────────────────────────────────────────
 
-@test "allow: mkdir -p .claude/tmp" {
-  run_hook "mkdir -p .claude/tmp"
+@test "allow: mkdir -p tmp" {
+  run_hook "mkdir -p tmp"
   assert_allow
 }
 
-@test "allow: cmd > .claude/tmp/output.txt" {
-  run_hook "blah-blerg > .claude/tmp/output.txt"
+@test "allow: cmd > tmp/output.txt" {
+  run_hook "blah-blerg > tmp/output.txt"
   assert_allow
+}
+
+@test "deny: /tmp message suggests .gitignore" {
+  run_hook "mkdir -p /tmp/foo"
+  assert_deny ".gitignore"
 }
 
 # ── Output validation ──────────────────────────────────────────────────────────

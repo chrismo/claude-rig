@@ -32,11 +32,10 @@ input=$(cat)
 # Note: use pipe instead of <<< here-string — bash 3.2 (macOS default) mangles <<<
 command_str=$(echo "$input" | super -f line -c 'this.tool_input.command' -)
 
-# Always allow commands targeting .claude/tmp — a safe temp directory within the
-# project. This must come before all deny checks so it isn't caught by the
-# absolute-path or compound-command rules.
-if [[ "$command_str" =~ \.claude/tmp ]]; then
-  log "allow" "claude-tmp" "$command_str"
+# Always allow commands targeting the repo-level tmp/ directory. This must come
+# before all deny checks so it isn't caught by other rules.
+if [[ "$command_str" =~ (^|[[:space:]])tmp(/|$) ]]; then
+  log "allow" "repo-tmp" "$command_str"
   exit 0
 fi
 
@@ -88,11 +87,11 @@ if [[ "$command_str" == "$cwd"/* ]]; then
 fi
 
 # Deny commands that reference /tmp — these always trigger permission prompts
-# because /tmp is outside the project directory. Use .claude/tmp within the repo instead.
+# because /tmp is outside the project directory. Use a repo-level tmp/ instead.
 # Also catch relative traversals like ../../../tmp that resolve to /tmp.
 if [[ "$command_str" =~ (^|[[:space:]\"\'=])/tmp(/|$) ]] || [[ "$command_str" =~ (\.\./)+tmp(/|$) ]]; then
   log "deny" "tmp-redirect" "$command_str"
-  deny_tool "Do not use /tmp — it is outside the project and triggers permission prompts. Use .claude/tmp/ instead (mkdir -p .claude/tmp first if needed)."
+  deny_tool "Do not use /tmp — it is outside the project and triggers permission prompts. Use tmp/ in the repo root instead (mkdir -p tmp first if needed, and add tmp/ to .gitignore)."
   exit 0
 fi
 
