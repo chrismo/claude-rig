@@ -70,7 +70,7 @@ fi
 if [[ "$command_str" =~ \$\( ]]; then
   log "deny" "command-substitution" "$command_str"
   if [[ "$command_str" =~ ^git\ commit ]]; then
-    deny_tool "Command substitution (\$(...)) is not allowed. For multiline commit messages, use multiple -m flags (each adds a paragraph separated by a blank line). Title should be 50 chars or less. Wrap body lines at 72 columns. Example: git commit -m 'Short title' -m 'Body paragraph wrapped at 72 cols' -m 'Co-Authored-By: ...'"
+    deny_tool "Command substitution (\$(...)) is not allowed. Write the commit message to .claude/tmp/commit-msg.txt using the Write tool (title ≤50 chars, body wrapped at 72 cols, blank line between title and body), then run: git commit -F .claude/tmp/commit-msg.txt"
   else
     deny_tool "Command substitution (\$(...)) is not allowed. Run the inner command separately, then use the result."
   fi

@@ -5,6 +5,11 @@
 # The hook reads JSON from stdin with structure {"tool_input":{"command":"..."}},
 # checks the command against a mapping of CLI tools that have dedicated Claude Code
 # tool equivalents, and either denies with a JSON reason or allows silently.
+#
+# NOTE: The hook writes logs to ~/.claude/logs/, which is outside the sandbox
+# write-allow list. These tests must run with sandbox disabled
+# (dangerouslyDisableSandbox: true) or every test will fail because the hook
+# crashes on the blocked log writes.
 
 HOOK="$BATS_TEST_DIRNAME/use-dedicated-tools.sh"
 
@@ -285,9 +290,9 @@ assert_allow() {
   assert_deny "Command substitution"
 }
 
-@test "deny: git commit with \$() → suggests multiple -m flags" {
+@test "deny: git commit with \$() → suggests temp file approach" {
   run_hook 'git commit -m "$(echo test)"'
-  assert_deny "multiple -m"
+  assert_deny ".claude/tmp/commit-msg.txt"
 }
 
 # ── Allow: commands without dedicated tools ─────────────────────────────────────
