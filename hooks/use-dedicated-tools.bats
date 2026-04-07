@@ -292,7 +292,7 @@ assert_allow() {
 
 @test "deny: git commit with \$() → suggests temp file approach" {
   run_hook 'git commit -m "$(echo test)"'
-  assert_deny ".claude/tmp/commit-msg.txt"
+  assert_deny "tmp/commit-msg.txt"
 }
 
 # ── Allow: commands without dedicated tools ─────────────────────────────────────

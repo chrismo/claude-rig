@@ -70,7 +70,7 @@ fi
 if [[ "$command_str" =~ \$\( ]]; then
   log "deny" "command-substitution" "$command_str"
   if [[ "$command_str" =~ ^git\ commit ]]; then
-    deny_tool "Command substitution (\$(...)) is not allowed. Write the commit message to .claude/tmp/commit-msg.txt using the Write tool (title ≤50 chars, body wrapped at 72 cols, blank line between title and body), then run: git commit -F .claude/tmp/commit-msg.txt"
+    deny_tool "Command substitution (\$(...)) is not allowed. Write the commit message to tmp/commit-msg.txt using the Write tool (title ≤50 chars, body wrapped at 72 cols, blank line between title and body), then run: git commit -F tmp/commit-msg.txt — if tmp/ does not exist, run 'mkdir -p tmp' and ensure tmp/ is in .gitignore."
   else
     deny_tool "Command substitution (\$(...)) is not allowed. Run the inner command separately, then use the result."
   fi
