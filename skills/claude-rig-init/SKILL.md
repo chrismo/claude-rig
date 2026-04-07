@@ -5,9 +5,30 @@ disable-model-invocation: true
 allowed-tools: Bash
 ---
 
-Run [init.sh](scripts/init.sh) to set up tmp/ and .gitignore.
+```!
+mkdir -p tmp
 
-If `.claude/settings.json` is MISSING in the output, create it:
+touch .gitignore
+for entry in ".claude/settings.local.json" ".claude/tmp/" "tmp/"; do
+  grep -qxF "$entry" .gitignore || echo "$entry" >> .gitignore
+done
+
+echo "=== tmp/ ==="
+echo "EXISTS"
+echo ""
+echo "=== .gitignore ==="
+cat .gitignore
+echo ""
+echo "=== .claude/settings.json ==="
+if [ -f .claude/settings.json ]; then
+  echo "EXISTS"
+  cat .claude/settings.json
+else
+  echo "MISSING"
+fi
+```
+
+If `.claude/settings.json` is MISSING above, create it:
 run `mkdir -p .claude` then `touch .claude/settings.json`.
 This requires user approval because the sandbox protects `.claude/`.
 
