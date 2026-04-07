@@ -183,12 +183,33 @@ if [[ -f "$PERMISSIONS_DENY" ]] && grep -q '[^[:space:]]' "$PERMISSIONS_DENY"; t
 fi
 
 
-# Clean up deprecated ~/.claude/commands/ (migrated to ~/.claude/skills/)
+# Clean up deprecated ~/.claude/commands/ entries that claude-rig installed
+# (only remove entries matching our skill names, not other tools' files)
 LEGACY_COMMANDS_DIR="$CLAUDE_DIR/commands"
-if [[ -d "$LEGACY_COMMANDS_DIR" ]]; then
-  rm -rf "$LEGACY_COMMANDS_DIR"
-  echo "✓ Removed deprecated ~/.claude/commands/ (migrated to skills/)"
-  echo ""
+if [[ -d "$LEGACY_COMMANDS_DIR" ]] && [[ -d "$SKILLS_SRC" ]]; then
+  legacy_count=0
+  for cmd_file in "$SKILLS_SRC"/*.md; do
+    if [[ -f "$cmd_file" ]]; then
+      legacy="$LEGACY_COMMANDS_DIR/$(basename "$cmd_file")"
+      if [[ -L "$legacy" ]] || [[ -f "$legacy" ]]; then
+        rm "$legacy"
+        legacy_count=$((legacy_count + 1))
+      fi
+    fi
+  done
+  for subdir in "$SKILLS_SRC"/*/; do
+    if [[ -d "$subdir" ]]; then
+      legacy="$LEGACY_COMMANDS_DIR/$(basename "$subdir")"
+      if [[ -L "$legacy" ]] || [[ -d "$legacy" ]]; then
+        rm -rf "$legacy"
+        legacy_count=$((legacy_count + 1))
+      fi
+    fi
+  done
+  if [[ $legacy_count -gt 0 ]]; then
+    echo "✓ Cleaned up $legacy_count entry(s) from deprecated ~/.claude/commands/"
+    echo ""
+  fi
 fi
 
 # Install user-level skills
