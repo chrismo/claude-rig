@@ -19,19 +19,26 @@ echo ""
 echo "=== .gitignore ==="
 cat .gitignore
 echo ""
-echo "=== .claude/settings.json ==="
+echo "=== .claude/ ==="
+if [ -d .claude/tmp ]; then
+  echo ".claude/tmp/ EXISTS"
+else
+  echo ".claude/tmp/ MISSING"
+fi
 if [ -f .claude/settings.json ]; then
-  echo "EXISTS"
+  echo ".claude/settings.json EXISTS"
   cat .claude/settings.json
 else
-  echo "MISSING"
+  echo ".claude/settings.json MISSING"
 fi
 ```
 
-If `.claude/settings.json` is MISSING above, create it:
-run `mkdir -p .claude` then `touch .claude/settings.json`.
-This requires user approval because the sandbox protects `.claude/`.
+After the above runs, you MUST create anything reported as MISSING:
+1. `mkdir -p .claude/tmp` (if .claude/tmp/ MISSING)
+2. `touch .claude/settings.json` (if .claude/settings.json MISSING)
 
-Summarize what was set up. If `.claude/settings.json` was empty or
-just created, mention that the user can run `install.sh` from their
-claude-rig repo to populate hooks and permissions.
+The sandbox blocks writes to `.claude/`. Run these with
+`dangerouslyDisableSandbox: true` so they succeed (the user
+will be prompted to approve).
+
+Summarize what was set up or already existed.
