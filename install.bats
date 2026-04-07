@@ -320,6 +320,8 @@ harvest_teardown() {
 
 @test "harvest: extracts allow rules from settings.json" {
   harvest_setup
+  # Start with empty allow.sup so count is predictable
+  : > "$BATS_TEST_DIRNAME/permissions/allow.sup"
   cat > "$CLAUDE_DIR/settings.json" <<'EOF'
 {
   "permissions": {
@@ -379,4 +381,67 @@ EOF
   harvest_teardown
   [ "$status" -eq 0 ]
   [[ "$output" == *"No deny rules"* ]]
+}
+
+@test "harvest: merges with existing allow.sup entries" {
+  harvest_setup
+  # Seed allow.sup with an entry NOT in settings.json
+  echo '"Bash(launchctl load:*)"' > "$BATS_TEST_DIRNAME/permissions/allow.sup"
+  cat > "$CLAUDE_DIR/settings.json" <<'EOF'
+{
+  "permissions": {
+    "allow": ["Write(.claude/tmp/*)"]
+  }
+}
+EOF
+  run bash "$HARVESTER"
+  local result
+  result=$(cat "$BATS_TEST_DIRNAME/permissions/allow.sup")
+  harvest_teardown
+  [ "$status" -eq 0 ]
+  # Both the existing entry and the harvested entry should be present
+  [[ "$result" == *'"Bash(launchctl load:*)"'* ]]
+  [[ "$result" == *'"Write(.claude/tmp/*)"'* ]]
+}
+
+@test "harvest: merges with existing deny.sup entries" {
+  harvest_setup
+  # Seed deny.sup with an entry NOT in settings.json
+  echo '"Bash(sudo:*)"' > "$BATS_TEST_DIRNAME/permissions/deny.sup"
+  cat > "$CLAUDE_DIR/settings.json" <<'EOF'
+{
+  "permissions": {
+    "deny": ["Bash(rm -rf:*)"]
+  }
+}
+EOF
+  run bash "$HARVESTER"
+  local result
+  result=$(cat "$BATS_TEST_DIRNAME/permissions/deny.sup")
+  harvest_teardown
+  [ "$status" -eq 0 ]
+  [[ "$result" == *'"Bash(sudo:*)"'* ]]
+  [[ "$result" == *'"Bash(rm -rf:*)"'* ]]
+}
+
+@test "harvest: deduplicates entries" {
+  harvest_setup
+  # Seed allow.sup with an entry that's also in settings.json
+  echo '"Write(.claude/tmp/*)"' > "$BATS_TEST_DIRNAME/permissions/allow.sup"
+  cat > "$CLAUDE_DIR/settings.json" <<'EOF'
+{
+  "permissions": {
+    "allow": ["Write(.claude/tmp/*)", "Bash(git add:*)"]
+  }
+}
+EOF
+  run bash "$HARVESTER"
+  local result
+  result=$(cat "$BATS_TEST_DIRNAME/permissions/allow.sup")
+  harvest_teardown
+  [ "$status" -eq 0 ]
+  # Write(.claude/tmp/*) should appear exactly once
+  local count
+  count=$(echo "$result" | grep -c 'Write(.claude/tmp/\*)')
+  [ "$count" -eq 1 ]
 }
