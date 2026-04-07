@@ -59,9 +59,9 @@ assert_allow() {
   assert_deny "Grep tool"
 }
 
-@test "deny: rg pattern file → Grep tool" {
+@test "allow: rg pattern file" {
   run_hook "rg pattern file"
-  assert_deny "Grep tool"
+  assert_allow
 }
 
 # ── Deny: find → Glob tool ─────────────────────────────────────────────────────
@@ -217,9 +217,9 @@ assert_allow() {
   assert_allow
 }
 
-@test "deny: /usr/bin/ls → Glob tool (full path stripped)" {
+@test "allow: /usr/bin/ls -la (full path stripped, ls allowed)" {
   run_hook "/usr/bin/ls -la"
-  assert_deny "Glob tool"
+  assert_allow
 }
 
 @test "allow: absolute path outside cwd (e.g. /usr/bin/env)" {
@@ -307,9 +307,9 @@ assert_allow() {
   assert_allow
 }
 
-@test "deny: ls -la → Glob tool" {
+@test "allow: ls -la" {
   run_hook "ls -la"
-  assert_deny "Glob tool"
+  assert_allow
 }
 
 @test "allow: echo 'hello' (no redirect)" {

@@ -103,10 +103,10 @@ base_cmd="${first_word##*/}"
 message=""
 
 case "$base_cmd" in
-  grep|rg)
+  grep)
     message="Use the Grep tool instead of \`$base_cmd\` in Bash."
     ;;
-  find|ls)
+  find)
     message="Use the Glob tool instead of \`$base_cmd\` in Bash."
     ;;
   cat|head|tail)
