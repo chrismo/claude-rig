@@ -2,10 +2,6 @@
 
 set -euo pipefail
 
-# Create .claude/settings.json (no-op if exists)
-mkdir -p .claude
-touch .claude/settings.json
-
 # Create tmp/
 mkdir -p tmp
 
@@ -15,9 +11,17 @@ for entry in ".claude/settings.local.json" ".claude/tmp/" "tmp/"; do
   grep -qxF "$entry" .gitignore || echo "$entry" >> .gitignore
 done
 
-# Report what we have now
-echo "=== .claude/settings.json ==="
-cat .claude/settings.json
+# Report state
+echo "=== tmp/ ==="
+echo "EXISTS"
 echo ""
 echo "=== .gitignore ==="
 cat .gitignore
+echo ""
+echo "=== .claude/settings.json ==="
+if [ -f .claude/settings.json ]; then
+  echo "EXISTS"
+  cat .claude/settings.json
+else
+  echo "MISSING"
+fi
