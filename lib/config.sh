@@ -19,11 +19,9 @@ STATUSLINE_SCRIPT="$REPO_DIR/statusline/statusline-command.sh"
 DEDICATED_TOOLS_HOOK="$REPO_DIR/hooks/use-dedicated-tools.sh"
 ENSURE_SANDBOX_HOOK="$REPO_DIR/hooks/ensure-sandbox.sh"
 
-COMMANDS_SRC="$REPO_DIR/skills"
+SKILLS_SRC="$REPO_DIR/skills"
 AGENTS_SRC="$REPO_DIR/agents"
-COMMANDS_DEST="$CLAUDE_DIR/commands"
+SKILLS_DEST="$CLAUDE_DIR/skills"
 AGENTS_DEST="$CLAUDE_DIR/agents"
 RULES_SRC="$REPO_DIR/rules"
 RULES_DEST="$CLAUDE_DIR/rules"
-
-LOCAL_BIN="${LOCAL_BIN:-$HOME/.local/bin}"

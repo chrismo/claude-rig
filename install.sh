@@ -182,33 +182,25 @@ if [[ -f "$PERMISSIONS_DENY" ]] && grep -q '[^[:space:]]' "$PERMISSIONS_DENY"; t
   echo ""
 fi
 
-# Install CLI scripts to ~/.local/bin
-mkdir -p "$LOCAL_BIN"
-for dir in "$COMMANDS_SRC" "$REPO_DIR/bin"; do
-  for script in "$dir"/*.sh; do
-    if [[ -f "$script" ]]; then
-      name=$(basename "$script" .sh)
-      dest="$LOCAL_BIN/$name"
-      if [[ -L "$dest" ]] || [[ -f "$dest" ]]; then
-        rm "$dest"
-      fi
-      ln -s "$script" "$dest"
-      echo "✓ Linked $name -> ~/.local/bin/"
-    fi
-  done
-done
-echo ""
+
+# Clean up deprecated ~/.claude/commands/ (migrated to ~/.claude/skills/)
+LEGACY_COMMANDS_DIR="$CLAUDE_DIR/commands"
+if [[ -d "$LEGACY_COMMANDS_DIR" ]]; then
+  rm -rf "$LEGACY_COMMANDS_DIR"
+  echo "✓ Removed deprecated ~/.claude/commands/ (migrated to skills/)"
+  echo ""
+fi
 
 # Install user-level skills
-if [[ -d "$COMMANDS_SRC" ]]; then
-  mkdir -p "$COMMANDS_DEST"
+if [[ -d "$SKILLS_SRC" ]]; then
+  mkdir -p "$SKILLS_DEST"
   count=0
 
   # Install top-level skills (*.md -> /user:<name>)
-  for cmd_file in "$COMMANDS_SRC"/*.md; do
+  for cmd_file in "$SKILLS_SRC"/*.md; do
     if [[ -f "$cmd_file" ]]; then
       filename=$(basename "$cmd_file")
-      dest_file="$COMMANDS_DEST/$filename"
+      dest_file="$SKILLS_DEST/$filename"
 
       if [[ -L "$dest_file" ]] || [[ -f "$dest_file" ]]; then
         rm "$dest_file"
@@ -220,10 +212,10 @@ if [[ -d "$COMMANDS_SRC" ]]; then
   done
 
   # Install namespaced skills by symlinking subdirectories
-  for subdir in "$COMMANDS_SRC"/*/; do
+  for subdir in "$SKILLS_SRC"/*/; do
     if [[ -d "$subdir" ]]; then
       namespace=$(basename "$subdir")
-      dest_subdir="$COMMANDS_DEST/$namespace"
+      dest_subdir="$SKILLS_DEST/$namespace"
 
       if [[ -L "$dest_subdir" ]] || [[ -d "$dest_subdir" ]]; then
         rm -rf "$dest_subdir"
