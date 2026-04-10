@@ -1,0 +1,56 @@
+#!/bin/bash
+# Segment: rate limit usage (5-hour and 7-day windows)
+input="${CLAUDE_STATUS_INPUT:-/tmp/claude-status-input.json}"
+
+muted_green="\033[2;32m"
+muted_yellow="\033[2;33m"
+muted_red="\033[2;31m"
+color_reset="\033[2;37m"
+
+five_hour=$(super -f line -c 'coalesce(rate_limits.five_hour.used_percentage, "")' "$input" 2>/dev/null)
+seven_day=$(super -f line -c 'coalesce(rate_limits.seven_day.used_percentage, "")' "$input" 2>/dev/null)
+
+# Skip entirely if no rate limit data
+if [[ -z "$five_hour" && -z "$seven_day" ]]; then
+  exit 0
+fi
+
+colorize() {
+  local pct=$1
+  if [[ $pct -ge 90 ]]; then
+    echo "$muted_red"
+  elif [[ $pct -ge 70 ]]; then
+    echo "$muted_yellow"
+  else
+    echo "$muted_green"
+  fi
+}
+
+# Use SuperDB to compute remaining duration from resets_at timestamp
+format_remaining() {
+  local field=$1
+  local dur
+  dur=$(super -f line -c "values cast(bucket(cast(${field}.resets_at * 1000000000, <time>) - now(), 1m), <string>)" "$input" 2>/dev/null)
+  if [[ -z "$dur" || "$dur" == -* ]]; then
+    echo "now"
+  else
+    echo "$dur"
+  fi
+}
+
+segments=""
+if [[ -n "$five_hour" ]]; then
+  c=$(colorize "$five_hour")
+  remaining=$(format_remaining "rate_limits.five_hour")
+  segments="${c}5h: ${five_hour}% (${remaining})${color_reset}"
+fi
+if [[ -n "$seven_day" ]]; then
+  c=$(colorize "$seven_day")
+  remaining=$(format_remaining "rate_limits.seven_day")
+  if [[ -n "$segments" ]]; then
+    segments+=" | "
+  fi
+  segments+="${c}7d: ${seven_day}% (${remaining})${color_reset}"
+fi
+
+echo -e "$segments"

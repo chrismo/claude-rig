@@ -7,12 +7,16 @@ muted_yellow="\033[2;33m"
 muted_red="\033[2;31m"
 color_reset="\033[2;37m"
 
-input_tokens=$(super -f line -c 'coalesce(context_window.total_input_tokens, 0)' "$input")
-output_tokens=$(super -f line -c 'coalesce(context_window.total_output_tokens, 0)' "$input")
-window_size=$(super -f line -c 'coalesce(context_window.context_window_size, 200000)' "$input")
+percent=$(super -f line -c 'coalesce(context_window.used_percentage, 0)' "$input")
 
-total=$((input_tokens + output_tokens))
-percent=$((total * 100 / window_size))
+# Fallback: calculate from tokens if used_percentage not available (older Claude Code)
+if [[ "$percent" == "0" || -z "$percent" ]]; then
+  input_tokens=$(super -f line -c 'coalesce(context_window.total_input_tokens, 0)' "$input")
+  output_tokens=$(super -f line -c 'coalesce(context_window.total_output_tokens, 0)' "$input")
+  window_size=$(super -f line -c 'coalesce(context_window.context_window_size, 200000)' "$input")
+  total=$((input_tokens + output_tokens))
+  percent=$((total * 100 / window_size))
+fi
 
 color="$muted_green"
 if [[ $percent -ge 90 ]]; then

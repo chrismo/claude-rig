@@ -21,5 +21,28 @@
     "total_lines_added": 224,
     "total_lines_removed": 101
   },
-  "exceeds_200k_tokens": false
+  "context_window": {
+    "total_input_tokens": 85,
+    "total_output_tokens": 22326,
+    "context_window_size": 200000,
+    "current_usage": {
+      "input_tokens": 3,
+      "output_tokens": 38,
+      "cache_creation_input_tokens": 73972,
+      "cache_read_input_tokens": 12451
+    },
+    "used_percentage": 11,
+    "remaining_percentage": 89
+  },
+  "exceeds_200k_tokens": false,
+  "rate_limits": {
+    "five_hour": {
+      "used_percentage": 39,
+      "resets_at": 1775797200
+    },
+    "seven_day": {
+      "used_percentage": 24,
+      "resets_at": 1775926800
+    }
+  }
 }

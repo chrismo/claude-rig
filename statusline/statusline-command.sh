@@ -9,14 +9,8 @@ muted_yellow="\033[2;33m"
 muted_red="\033[2;31m"
 color_reset="\033[2;37m"  # dim white (Claude's default)
 
-# TODO: • Added context_window.used_percentage and
-#  context_window.remaining_percentage fields to status line input for
-#  easier context window display
-#
-# claude 2.1.6 or .7
-
-# TODO: Plan usage limits (session %, weekly %) not yet in statusline payload.
-# Tracking issue: https://github.com/anthropics/claude-code/issues/28999
+# context_window.used_percentage — now used by 70-context plugin
+# rate_limits (five_hour, seven_day) — now used by 75-rate-limits plugin
 
 # Install via the claude-rig installer:
 #   bash /path/to/claude-rig/install/claude-installer.sh
@@ -218,7 +212,7 @@ export CLAUDE_STATUS_INPUT="/tmp/claude-status-input.json"
 cd "$(current_dir)" 2>/dev/null || true
 
 # Line 1: core session info (project, git, dir, version, model, sandbox)
-printf "%s | %s | %s | Claude %s | %s | %s\n" "$(project_name)" "$(git_status)" "$(relative_dir)" "$(claude_version)" "$(model_name)" "$(sandbox_status)"
+printf "%s | %s | %s | %s | %s | %s\n" "$(project_name)" "$(git_status)" "$(relative_dir)" "$(claude_version)" "$(model_name)" "$(sandbox_status)"
 # Line 2: assembled from plugins.d/ scripts (cost, lines, context, etc.)
 printf "%s\n" "$(run_plugins)"
 
