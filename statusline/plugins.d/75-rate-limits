@@ -7,8 +7,8 @@ muted_yellow="\033[2;33m"
 muted_red="\033[2;31m"
 color_reset="\033[2;37m"
 
-five_hour=$(super -f line -c 'coalesce(rate_limits.five_hour.used_percentage, "")' "$input" 2>/dev/null)
-seven_day=$(super -f line -c 'coalesce(rate_limits.seven_day.used_percentage, "")' "$input" 2>/dev/null)
+five_hour=$(super -f line -c 'coalesce(cast(rate_limits.five_hour.used_percentage, <int64>), "")' "$input" 2>/dev/null)
+seven_day=$(super -f line -c 'coalesce(cast(rate_limits.seven_day.used_percentage, <int64>), "")' "$input" 2>/dev/null)
 
 # Skip entirely if no rate limit data
 if [[ -z "$five_hour" && -z "$seven_day" ]]; then
