@@ -37,8 +37,8 @@ After the above runs, you MUST create anything reported as MISSING:
 1. `mkdir -p .claude/tmp` (if .claude/tmp/ MISSING)
 2. `touch .claude/settings.json` (if .claude/settings.json MISSING)
 
-The sandbox blocks writes to `.claude/`. Run these with
-`dangerouslyDisableSandbox: true` so they succeed (the user
-will be prompted to approve).
+Note: The ensure-sandbox SessionStart hook adds `.claude/tmp` and `tmp`
+to `sandbox.filesystem.allowWrite` in settings.local.json, so bash
+commands can write to these directories without sandbox violations.
 
 Summarize what was set up or already existed.

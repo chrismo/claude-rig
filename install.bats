@@ -284,6 +284,45 @@ EOF
   [[ "$target" == "$BATS_TEST_DIRNAME/cc-audit-rules" ]]
 }
 
+# ── Sandbox allowWrite merge ──────────────────────────────────────────────────
+
+@test "sandbox: allowWrite paths are merged" {
+  run_installer
+  [ "$status" -eq 0 ]
+  local paths
+  paths=$(settings_get 'join(this.sandbox.filesystem.allowWrite, ",")')
+  [[ "$paths" == *"~/.claude/logs"* ]]
+  [[ "$paths" == *"~/.claude/contexts"* ]]
+}
+
+@test "sandbox: existing allowWrite paths are preserved" {
+  cat > "$CLAUDE_DIR/settings.json" <<'EOF'
+{
+  "sandbox": {
+    "filesystem": {
+      "allowWrite": ["~/.custom/path"]
+    }
+  }
+}
+EOF
+  run_installer
+  [ "$status" -eq 0 ]
+  local paths
+  paths=$(settings_get 'join(this.sandbox.filesystem.allowWrite, ",")')
+  [[ "$paths" == *"~/.custom/path"* ]]
+  [[ "$paths" == *"~/.claude/logs"* ]]
+}
+
+@test "sandbox: allowWrite not duplicated on re-run" {
+  run_installer
+  [ "$status" -eq 0 ]
+  run_installer
+  [ "$status" -eq 0 ]
+  local count
+  count=$(settings_get 'unnest this.sandbox.filesystem.allowWrite | where this == "~/.claude/logs" | count()')
+  [ "$count" -eq 1 ]
+}
+
 # ── Existing user settings ────────────────────────────────────────────────────
 
 @test "existing settings: non-installer keys are preserved" {

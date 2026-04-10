@@ -9,5 +9,5 @@ if [ ! -f "$SETTINGS" ]; then
   echo '{}' > "$SETTINGS"
 fi
 
-super -J -c 'values {...this, sandbox:{enabled:true, autoAllowBashIfSandboxed:true}}' "$SETTINGS" > "$SETTINGS.tmp" \
+super -J -c 'values {...this, sandbox:{enabled:true, autoAllowBashIfSandboxed:true, filesystem:{allowWrite:[".claude/tmp","tmp"]}}}' "$SETTINGS" > "$SETTINGS.tmp" \
   && mv "$SETTINGS.tmp" "$SETTINGS"

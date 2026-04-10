@@ -183,6 +183,44 @@ if [[ -f "$PERMISSIONS_DENY" ]] && grep -q '[^[:space:]]' "$PERMISSIONS_DENY"; t
 fi
 
 
+# Merge sandbox/allow-write.sup into settings.json (idempotent via sort | uniq)
+if [[ -f "$SANDBOX_ALLOW_WRITE" ]]; then
+  if grep -q '"sandbox"' "$SETTINGS_FILE"; then
+    new_settings=$(
+      super -J -c 'values {
+        ...this,
+        sandbox: {
+          ...this.sandbox,
+          filesystem: {
+            ...this.sandbox.filesystem,
+            allowWrite: (
+              unnest [...coalesce(this.sandbox.filesystem.allowWrite, []), ...(from "'"$SANDBOX_ALLOW_WRITE"'" | collect(this))]
+              | sort this | uniq | collect(this)
+            )
+          }
+        }
+      }' "$SETTINGS_FILE"
+    )
+  else
+    new_settings=$(
+      super -J -c 'values {
+        ...this,
+        sandbox: {
+          filesystem: {
+            allowWrite: (
+              unnest (from "'"$SANDBOX_ALLOW_WRITE"'" | collect(this))
+              | sort this | uniq | collect(this)
+            )
+          }
+        }
+      }' "$SETTINGS_FILE"
+    )
+  fi
+  echo "$new_settings" > "$SETTINGS_FILE"
+  echo "✓ Merged sandbox allowWrite from allow-write.sup"
+  echo ""
+fi
+
 # Clean up deprecated ~/.claude/commands/ entries that claude-rig installed
 # (only remove entries matching our skill names, not other tools' files)
 LEGACY_COMMANDS_DIR="$CLAUDE_DIR/commands"

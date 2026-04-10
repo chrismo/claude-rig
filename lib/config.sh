@@ -12,6 +12,8 @@ SETTINGS_FILE="$CLAUDE_DIR/settings.json"
 PERMISSIONS_ALLOW="$REPO_DIR/permissions/allow.sup"
 PERMISSIONS_DENY="$REPO_DIR/permissions/deny.sup"
 
+SANDBOX_ALLOW_WRITE="$REPO_DIR/sandbox/allow-write.sup"
+
 CC_AUDIT_RULES_SRC="$REPO_DIR/cc-audit-rules"
 CC_AUDIT_RULES_DEST="${CC_AUDIT_DIR:-$HOME/.cc-audit}/rules"
 
