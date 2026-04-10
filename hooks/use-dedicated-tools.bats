@@ -290,10 +290,10 @@ assert_allow() {
   assert_deny "Command substitution"
 }
 
-@test "deny: git commit with \$() → suggests temp file approach" {
+@test "deny: git commit with \$() → suggests .claude/tmp approach" {
   run_hook 'git commit -m "$(echo test)"'
-  assert_deny "tmp/commit-msg.txt"
-  assert_deny "Read tmp/commit-msg.txt first"
+  assert_deny ".claude/tmp/"
+  assert_deny "git commit -F"
 }
 
 # ── Allow: commands without dedicated tools ─────────────────────────────────────
