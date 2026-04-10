@@ -80,6 +80,13 @@ new_settings=$(
         type: 'command',
         command: '${HOOK_CMD_PREFIX} idle > /dev/null; ${TITLE_CMD}'
       }]
+    }, {
+      matcher: '',
+      hooks: [{
+        type: 'command',
+        command: 'claude-tabs save > /dev/null 2>&1 || true',
+        timeout: 5000
+      }]
     }],
     PreToolUse: [{
       matcher: 'Bash',

@@ -70,6 +70,16 @@ settings_get() {
   done
 }
 
+@test "fresh install: Stop hook includes claude-tabs save" {
+  run_installer
+  [ "$status" -eq 0 ]
+  local count cmd
+  count=$(settings_get 'len(this.hooks.Stop)')
+  [ "$count" -eq 2 ]
+  cmd=$(settings_get 'this.hooks.Stop[1].hooks[0].command')
+  [[ "$cmd" == *"claude-tabs save"* ]]
+}
+
 # ── Permissions merge ──────────────────────────────────────────────────────────
 
 @test "permissions: allow.sup entries are merged" {
