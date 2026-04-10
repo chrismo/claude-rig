@@ -2,7 +2,7 @@
 
 # Test suite for install.sh
 #
-# Overrides CLAUDE_DIR and LOCAL_BIN to a temp directory so tests
+# Overrides CLAUDE_DIR to a temp directory so tests
 # don't touch real ~/.claude/ settings. Each test gets a fresh dir.
 
 INSTALLER="$BATS_TEST_DIRNAME/install.sh"
@@ -10,7 +10,6 @@ INSTALLER="$BATS_TEST_DIRNAME/install.sh"
 setup() {
   TEST_DIR="$(mktemp -d "$TMPDIR/install-test.XXXXXX")"
   export CLAUDE_DIR="$TEST_DIR/.claude"
-  export LOCAL_BIN="$TEST_DIR/.local/bin"
   mkdir -p "$CLAUDE_DIR"
 }
 
@@ -157,14 +156,14 @@ EOF
   [ "$status" -eq 0 ]
   # Check that at least one skill was installed
   local count
-  count=$(find "$CLAUDE_DIR/commands" -maxdepth 1 -name "*.md" -type l | wc -l | tr -d ' ')
+  count=$(find "$CLAUDE_DIR/skills" -maxdepth 1 -name "*.md" -type l | wc -l | tr -d ' ')
   [ "$count" -gt 0 ]
 }
 
 @test "skills: symlinks point to repo source" {
   run_installer
   [ "$status" -eq 0 ]
-  for link in "$CLAUDE_DIR/commands"/*.md; do
+  for link in "$CLAUDE_DIR/skills"/*.md; do
     if [ -L "$link" ]; then
       local target
       target=$(readlink "$link")
@@ -202,16 +201,6 @@ EOF
   [ "$status" -eq 0 ]
   local count
   count=$(find "$CLAUDE_DIR/rules" -maxdepth 1 -name "*.md" -type l | wc -l | tr -d ' ')
-  [ "$count" -gt 0 ]
-}
-
-# ── Symlinks: bin scripts ─────────────────────────────────────────────────────
-
-@test "bin: scripts are symlinked to ~/.local/bin" {
-  run_installer
-  [ "$status" -eq 0 ]
-  local count
-  count=$(find "$TEST_DIR/.local/bin" -type l | wc -l | tr -d ' ')
   [ "$count" -gt 0 ]
 }
 
