@@ -1,0 +1,8 @@
+#!/bin/bash
+# Segment: project name (basename of project_dir)
+project_dir="${CLAUDE_PROJECT_DIR:-}"
+if [[ -z "$project_dir" ]]; then
+  echo "."
+else
+  basename "$project_dir"
+fi

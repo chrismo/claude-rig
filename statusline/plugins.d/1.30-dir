@@ -1,0 +1,10 @@
+#!/bin/bash
+# Segment: relative subdirectory path from project_dir to current_dir
+project_dir="${CLAUDE_PROJECT_DIR:-}"
+current_dir="${CLAUDE_CURRENT_DIR:-}"
+
+if [[ -z "$project_dir" || -z "$current_dir" || "$current_dir" == "$project_dir" ]]; then
+  echo "."
+else
+  echo "${current_dir#$project_dir/}"
+fi

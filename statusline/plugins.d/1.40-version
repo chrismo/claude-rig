@@ -1,0 +1,4 @@
+#!/bin/bash
+# Segment: Claude Code version
+input="${CLAUDE_STATUS_INPUT:-/tmp/claude-status-input.json}"
+super -f line -c "values version" "$input"

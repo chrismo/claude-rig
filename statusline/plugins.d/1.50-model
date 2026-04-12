@@ -1,0 +1,40 @@
+#!/bin/bash
+# Segment: model name and reasoning effort level
+
+muted_green="\033[2;32m"
+color_reset="\033[2;37m"
+
+input="${CLAUDE_STATUS_INPUT:-/tmp/claude-status-input.json}"
+
+model_name=$(super -f line -c 'coalesce(model.display_name, "")' "$input")
+if [[ -z "$model_name" ]]; then
+  model_name="Claude"
+fi
+
+effort=""
+# Future-proof: check statusline input first (pending feature request #9488)
+effort=$(super -f line -c 'coalesce(model.reasoning_effort, "")' "$input" 2>/dev/null)
+# Env var override
+if [[ -z "$effort" && -n "${CLAUDE_CODE_EFFORT_LEVEL:-}" ]]; then
+  effort="$CLAUDE_CODE_EFFORT_LEVEL"
+fi
+# Fall back to settings.json.
+# HEADS UP: Claude Code only writes effortLevel to settings.json when it's
+# NOT the default. So if the default changes (it moved from high→medium in
+# ~2.1.69), this field will be absent and we fall through to the empty case
+# below. Update the empty-string default in the case statement to match.
+if [[ -z "$effort" ]]; then
+  effort=$(super -f line -c 'coalesce(effortLevel, "")' "$HOME/.claude/settings.json" 2>/dev/null)
+fi
+
+dim="\033[38;5;238m"  # dark grey
+lit="${muted_green}"
+case "$(printf '%s' "$effort" | tr '[:upper:]' '[:lower:]')" in
+  low)    bars="${lit}▌${dim}▌▌${color_reset}" ;;
+  medium) bars="${lit}▌▌${dim}▌${color_reset}" ;;
+  high)   bars="${lit}▌▌▌${color_reset}" ;;
+  "")     bars="${lit}▌▌${dim}▌${color_reset}" ;;  # default: medium
+  *)      bars="$effort" ;;
+esac
+
+printf "%s %b" "$model_name" "$bars"
