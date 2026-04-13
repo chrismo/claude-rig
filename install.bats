@@ -151,25 +151,37 @@ EOF
 
 # ── Symlinks: skills ──────────────────────────────────────────────────────────
 
-@test "skills: top-level .md files are symlinked" {
+@test "skills: directory-based skills are symlinked" {
   run_installer
   [ "$status" -eq 0 ]
-  # Check that at least one skill was installed
+  # Check that at least one skill directory was installed
   local count
-  count=$(find "$CLAUDE_DIR/skills" -maxdepth 1 -name "*.md" -type l | wc -l | tr -d ' ')
+  count=$(find "$CLAUDE_DIR/skills" -maxdepth 1 -type l -not -name ".*" | wc -l | tr -d ' ')
   [ "$count" -gt 0 ]
 }
 
 @test "skills: symlinks point to repo source" {
   run_installer
   [ "$status" -eq 0 ]
-  for link in "$CLAUDE_DIR/skills"/*.md; do
-    if [ -L "$link" ]; then
+  for link in "$CLAUDE_DIR/skills"/*/; do
+    if [ -L "${link%/}" ]; then
       local target
-      target=$(readlink "$link")
+      target=$(readlink "${link%/}")
       [[ "$target" == "$BATS_TEST_DIRNAME/skills/"* ]]
     fi
   done
+}
+
+@test "skills: stale bare-file symlinks are cleaned up" {
+  mkdir -p "$CLAUDE_DIR/skills"
+  # Simulate a stale prove-it.md symlink from before restructuring
+  ln -s "/some/old/path/prove-it.md" "$CLAUDE_DIR/skills/prove-it.md"
+  run_installer
+  [ "$status" -eq 0 ]
+  # Stale .md symlink should be gone
+  [ ! -e "$CLAUDE_DIR/skills/prove-it.md" ]
+  # Directory symlink should exist instead
+  [ -L "$CLAUDE_DIR/skills/prove-it" ]
 }
 
 # ── Symlinks: agents ──────────────────────────────────────────────────────────

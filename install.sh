@@ -283,6 +283,12 @@ if [[ -d "$SKILLS_SRC" ]]; then
       namespace=$(basename "$subdir")
       dest_subdir="$SKILLS_DEST/$namespace"
 
+      # Clean up stale bare-file symlink if skill was restructured into a directory
+      stale_md="$SKILLS_DEST/${namespace}.md"
+      if [[ -L "$stale_md" ]] || [[ -f "$stale_md" ]]; then
+        rm "$stale_md"
+      fi
+
       if [[ -L "$dest_subdir" ]] || [[ -d "$dest_subdir" ]]; then
         rm -rf "$dest_subdir"
       fi
