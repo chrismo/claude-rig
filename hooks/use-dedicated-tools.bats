@@ -290,10 +290,25 @@ assert_allow() {
   assert_deny "Command substitution"
 }
 
-@test "deny: git commit with \$() → suggests .claude/tmp approach" {
+@test "deny: git commit with \$() → suggests tmp/ approach" {
   run_hook 'git commit -m "$(echo test)"'
-  assert_deny ".claude/tmp/"
+  assert_deny "tmp/"
   assert_deny "git commit -F"
+}
+
+@test "allow: git commit -m \"\$(cat <<EOF ...)\" (heredoc carve-out)" {
+  run_hook 'git commit -m "$(cat <<EOF hello EOF )"'
+  assert_allow
+}
+
+@test "allow: git commit with \$(cat <<-EOF (dash variant)" {
+  run_hook 'git commit -m "$(cat <<-EOF body EOF )"'
+  assert_allow
+}
+
+@test "deny: git commit with \$(cat file.txt) (not a heredoc)" {
+  run_hook 'git commit -m "$(cat file.txt)"'
+  assert_deny "Command substitution"
 }
 
 # ── Allow: commands without dedicated tools ─────────────────────────────────────

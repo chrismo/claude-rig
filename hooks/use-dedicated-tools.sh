@@ -65,12 +65,20 @@ if [[ "$command_str" =~ \<\(|\>\( ]]; then
   exit 0
 fi
 
+# Carve-out: allow the canonical `git commit -m "$(cat <<'EOF' ... EOF)"`
+# pattern that Claude Code's system prompt recommends. Narrow to cat-heredoc
+# so we don't open the door to arbitrary $() in commit messages.
+if [[ "$command_str" =~ ^git[[:space:]]+commit ]] && [[ "$command_str" =~ \$\(cat[[:space:]]*\<\< ]]; then
+  log "allow" "git-commit-heredoc" "$command_str"
+  exit 0
+fi
+
 # Deny command substitution $(...) — these always trigger permission prompts.
 # Run the inner command separately and use the result.
 if [[ "$command_str" =~ \$\( ]]; then
   log "deny" "command-substitution" "$command_str"
   if [[ "$command_str" =~ ^git\ commit ]]; then
-    deny_tool "Command substitution (\$(...)) is not allowed. Write the commit message to a new file in .claude/tmp/ using the Write tool (title ≤50 chars, body wrapped at 72 cols, blank line between title and body), then run: git commit -F .claude/tmp/<your-file>"
+    deny_tool "Command substitution (\$(...)) is not allowed. Write the commit message to a new file in tmp/ using the Write tool (title ≤50 chars, body wrapped at 72 cols, blank line between title and body), then run: git commit -F tmp/<your-file>"
   else
     deny_tool "Command substitution (\$(...)) is not allowed. Run the inner command separately, then use the result."
   fi
