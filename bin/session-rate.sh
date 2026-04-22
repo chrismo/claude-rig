@@ -99,6 +99,7 @@ render() {
     | values {bucket: b, sid, turns, ccreate, cread, total}
   " "${files[@]}" | awk -F, -v start_pct="$START_PCT" -v end_pct="$END_PCT" '
     NR == 1 { next }
+    substr($1, 1, 2) != "20" { next }
     {
       cuml += $6 + 0
       n++

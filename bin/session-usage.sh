@@ -100,6 +100,7 @@ render() {
       }
   " "$jsonl" | awk -F, -v start_pct="$START_PCT" -v end_pct="$END_PCT" '
     NR == 1 { next }
+    substr($2, 1, 4) != "req_" { next }
     {
       input = $3 + 0
       ccreate = $4 + 0
