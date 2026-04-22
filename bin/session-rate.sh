@@ -22,6 +22,8 @@ set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/config.sh"
 
+export ASDF_SUPERDB_VERSION="${ASDF_SUPERDB_VERSION:-0.3.0}"
+
 SINCE=""
 BUCKET="5m"
 while [[ $# -gt 0 ]]; do
@@ -78,16 +80,14 @@ render() {
         by b, sid
     | sort b, sid
     | values {bucket: b, sid, turns, ccreate, cread, total}
-  " "${files[@]}" | awk -F, -v OFS=$'\t' '
-    NR == 1 {
-      print $1, $2, $3, $4, $5, $6, "cuml"
-      next
-    }
+  " "${files[@]}" | awk -F, '
+    NR == 1 { next }
     {
       cuml += $6 + 0
-      print $1, $2, $3, $4, $5, $6, cuml
+      printf "{\"bucket\":\"%s\",\"sid\":\"%s\",\"turns\":%d,\"ccreate\":%d,\"cread\":%d,\"total\":%d,\"cuml\":%d}\n", \
+        $1, $2, $3, $4, $5, $6, cuml
     }
-  ' | column -t -s $'\t'
+  ' | grdy
 
   printf '\nLegend (aggregates all sessions under %s/projects/*/*.jsonl):\n' "$CLAUDE_DIR"
   printf '  bucket   start of the time bucket\n'

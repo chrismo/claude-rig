@@ -24,6 +24,8 @@ set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/config.sh"
 
+export ASDF_SUPERDB_VERSION="${ASDF_SUPERDB_VERSION:-0.3.0}"
+
 if [[ $# -ne 1 ]]; then
   echo "Usage: $0 <jsonl-path-or-session-id>" >&2
   exit 1
@@ -68,11 +70,8 @@ render() {
         cread: u.cache_read_input_tokens,
         output: u.output_tokens
       }
-  ' "$jsonl" | awk -F, -v OFS=$'\t' '
-    NR == 1 {
-      print $1, $2, $3, $4, $5, $6, "peak", "cuml", "flag"
-      next
-    }
+  ' "$jsonl" | awk -F, '
+    NR == 1 { next }
     {
       input = $3 + 0
       ccreate = $4 + 0
@@ -83,9 +82,10 @@ render() {
       flag = ""
       if (ccreate >= 20000) flag = flag "+"
       if (peak >= 10000 && cread < peak * 0.5) flag = flag "*"
-      print $1, substr($2, 1, 16), $3, $4, $5, $6, peak, cuml, flag
+      printf "{\"ts\":\"%s\",\"req\":\"%s\",\"input\":%d,\"ccreate\":%d,\"cread\":%d,\"output\":%d,\"peak\":%d,\"cuml\":%d,\"flag\":\"%s\"}\n", \
+        $1, substr($2, 1, 16), input, ccreate, cread, output, peak, cuml, flag
     }
-  ' | column -t -s $'\t'
+  ' | grdy
 
   printf '\nLegend:\n'
   printf '  ts       request timestamp\n'

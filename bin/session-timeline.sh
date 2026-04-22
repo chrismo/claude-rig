@@ -21,6 +21,8 @@ set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/config.sh"
 
+export ASDF_SUPERDB_VERSION="${ASDF_SUPERDB_VERSION:-0.3.0}"
+
 SINCE=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -56,7 +58,7 @@ if [[ -n "$SINCE" ]]; then
 fi
 
 render() {
-  super -f csv -c "
+  super -j -c "
     type == 'assistant' and has(message.usage) and ${since_clause}
     | summarize
         u := any(message.usage),
@@ -84,7 +86,7 @@ render() {
         bloat_turns,
         cwd
       }
-  " "${files[@]}" | column -t -s,
+  " "${files[@]}" | grdy
 
   printf '\nLegend:\n'
   printf '  last_ts       most recent assistant turn\n'
