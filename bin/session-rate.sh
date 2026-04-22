@@ -10,10 +10,12 @@ set -euo pipefail
 #   session-rate.sh [--since=<ISO>] [--until=<ISO>] [--bucket=<duration>]
 #                   [--start-pct=<N> --end-pct=<N>]
 #
+# All timestamps (input and output) are UTC (ISO-8601 with Z).
+#
 # Passing --start-pct and --end-pct frames the window against an
-# observed rate-limit percentage (e.g. 46%→91% over a 5h window)
-# and adds a pct column that interpolates where cuml sat at each
-# bucket relative to the total burn in the frame.
+# observed rate-limit percentage (e.g. 46% -> 91% over a 5h
+# window) and adds a pct column that interpolates where cuml sat
+# at each bucket relative to the total burn in the frame.
 #
 # Example:
 #   session-rate.sh --since=2026-04-22T12:00:00Z --until=2026-04-22T17:00:00Z \
@@ -41,7 +43,7 @@ while [[ $# -gt 0 ]]; do
     --end-pct=*)   END_PCT="${1#--end-pct=}" ;;
     --end-pct)     END_PCT="$2"; shift ;;
     -h|--help)
-      sed -n '2,20p' "$0"
+      awk '/^#!/ {next} /^#/ {in_block=1; print; next} in_block {exit}' "$0"
       exit 0
       ;;
     *)

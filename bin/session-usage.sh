@@ -10,6 +10,8 @@ set -euo pipefail
 #   session-usage.sh <path-or-session-id> [--since=<ISO>] [--until=<ISO>]
 #                    [--start-pct=<N> --end-pct=<N>]
 #
+# All timestamps (input and output) are UTC (ISO-8601 with Z).
+#
 # Passing --start-pct and --end-pct (e.g. 46 -> 91 over a 5h
 # window) adds a pct column that interpolates where cuml sat at
 # each row relative to the total burn in the frame.
@@ -33,7 +35,7 @@ while [[ $# -gt 0 ]]; do
     --start-pct)   START_PCT="$2"; shift ;;
     --end-pct=*)   END_PCT="${1#--end-pct=}" ;;
     --end-pct)     END_PCT="$2"; shift ;;
-    -h|--help)     sed -n '2,20p' "$0"; exit 0 ;;
+    -h|--help)     awk '/^#!/ {next} /^#/ {in_block=1; print; next} in_block {exit}' "$0"; exit 0 ;;
     --*)           echo "Unknown argument: $1" >&2; exit 1 ;;
     *)             POSITIONAL+=("$1") ;;
   esac

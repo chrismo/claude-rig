@@ -6,7 +6,9 @@ set -euo pipefail
 # Useful for spotting sessions that spiked token usage.
 #
 # Usage:
-#   session-timeline.sh [--since=<ISO-timestamp>]
+#   session-timeline.sh [--since=<ISO>] [--until=<ISO>]
+#
+# All timestamps (input and output) are UTC (ISO-8601 with Z).
 #
 # Example:
 #   session-timeline.sh --since=2026-04-22T10:00:00Z
@@ -32,7 +34,7 @@ while [[ $# -gt 0 ]]; do
     --until=*) UNTIL="${1#--until=}" ;;
     --until)   UNTIL="$2"; shift ;;
     -h|--help)
-      sed -n '2,20p' "$0"
+      awk '/^#!/ {next} /^#/ {in_block=1; print; next} in_block {exit}' "$0"
       exit 0
       ;;
     *)
