@@ -20,6 +20,7 @@ Custom agent definitions (`.md` files) that get symlinked into `~/.claude/agents
 
 User-level rules (`.md` files) symlinked into `~/.claude/rules/`. Loaded at the start of every Claude Code session across all projects.
 
+- **tdd-preference** — prefer test-first when modifying code with an existing test suite; flag when coverage is missing
 - **theory-vs-fact** — distinguish unproven theories from observed facts; don't present assumptions as conclusions
 - **verify-before-closing** — don't assume a task is done after a PR merge; validate in production and close out remaining work
 
@@ -31,11 +32,12 @@ CLI tools symlinked into `~/.local/bin/`:
 
 ### `skills/`
 
-User-level skills (slash commands) symlinked into `~/.claude/commands/`:
+User-level skills symlinked into `~/.claude/skills/`:
 
 - **/plan** — spawn pre-implementation architecture and design review agents
 - **/review** — spawn quality review agents before committing
 - **/prove-it** — verify facts and assumptions before responding
+- **/claude-rig-init** — scaffolding helper for new claude-rig setups
 
 **Tip:** Skills support inline shell execution with `` !`command` `` syntax in the markdown body. The command runs at invocation time and its output is injected as context before Claude sees the prompt. The built-in `/commit` skill uses this to pre-load `git status`, `git diff HEAD`, etc. Useful for building skills that need live system state.
 
@@ -43,18 +45,25 @@ User-level skills (slash commands) symlinked into `~/.claude/commands/`:
 
 A two-line statusline for Claude Code, powered by [SuperDB](https://superdb.org) (`super` CLI):
 
-**Line 1:** project name | git branch+status | relative dir | Claude version | model + effort level | sandbox status
-
-**Line 2:** plugin-driven — assembled from executable scripts in `statusline/plugins.d/`:
+Both lines are plugin-driven — assembled from executable scripts in `statusline/plugins.d/`. Filename format is `<line>.<order>-<name>` (e.g. `1.10-project`, `2.50-cost`): the part before the dot selects the line, the part after controls ordering within it.
 
 | Plugin | Segment |
 |--------|---------|
-| `10-hud` | [`hud`](https://github.com/chrismo/hud) status bar (optional, skipped if hud not installed) |
-| `50-cost` | session cost + wall/API duration |
-| `60-lines` | lines added/removed |
-| `70-context` | context window usage % |
+| `1.10-project` | project name |
+| `1.20-git` | git branch + status |
+| `1.25-mta` | active MTA ticket (multi-Claude coordination) |
+| `1.30-dir` | relative directory |
+| `1.40-version` | Claude Code version |
+| `1.50-model` | model + effort-level bars |
+| `1.60-sandbox` | sandbox status |
+| `2.10-hud` | [`hud`](https://github.com/chrismo/hud) status bar (optional, skipped if hud not installed) |
+| `2.50-cost` | session cost + wall/API duration |
+| `2.60-lines` | lines added/removed |
+| `2.70-context` | context window usage % |
+| `2.72-autocompact` | current `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` threshold |
+| `2.75-rate-limits` | 5h / 7d rate-limit usage + reset |
 
-Drop any executable into `plugins.d/` to add a segment. Numeric prefix controls ordering. The script receives `CLAUDE_STATUS_INPUT` env var pointing to the session JSON. Output a string on stdout; empty output = segment skipped.
+Drop any executable into `plugins.d/` to add a segment. The script receives `CLAUDE_STATUS_INPUT` env var pointing to the session JSON. Output a string on stdout; empty output = segment skipped.
 
 Override the plugin directory with `STATUSLINE_PLUGIN_DIR` env var.
 
@@ -136,9 +145,13 @@ The installer:
 2. Installs Claude hooks for tab-status (Ghostty tab colors)
 3. Installs the `PreToolUse` hook to enforce dedicated tools and block compound Bash commands
 4. Installs `SessionStart` hooks to auto-enable sandbox on startup, resume, and clear
-5. Symlinks skills into `~/.claude/commands/`
-6. Symlinks agents into `~/.claude/agents/`
-7. Symlinks rules into `~/.claude/rules/`
+5. Sets `env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=16` (preserves any existing override)
+6. Merges `permissions/{allow,deny}.sup` into `~/.claude/settings.json`
+7. Merges `sandbox/allow-write.sup` into the sandbox allowWrite list
+8. Symlinks skills into `~/.claude/skills/`
+9. Symlinks agents into `~/.claude/agents/`
+10. Symlinks rules into `~/.claude/rules/`
+11. Symlinks `cc-audit-rules/` into `~/.cc-audit/rules` when any `*.json` rules are present
 
 For tab-status to update your Ghostty tab titles, source `tab-status/set-title.sh` from your `.zshrc` and ensure `tab-status` is on your PATH (the installer links it to `~/.local/bin/`).
 
