@@ -18,6 +18,7 @@ set -euo pipefail
 #   cread      cache_read_input_tokens
 #   output     output_tokens
 #   peak       running max of cread
+#   cuml        cumlulative total tokens (input + ccreate + cread + output)
 #   flag       * = cread dropped >=50% below prior peak (possible cache break)
 #              + = ccreate >=20000 on one turn (possible prompt bloat)
 
@@ -68,16 +69,19 @@ super -f csv -c '
     }
 ' "$jsonl" | awk -F, -v OFS=$'\t' '
   NR == 1 {
-    print $1, $2, $3, $4, $5, $6, "peak", "flag"
+    print $1, $2, $3, $4, $5, $6, "peak", "cuml", "flag"
     next
   }
   {
-    cread = $5 + 0
+    input = $3 + 0
     ccreate = $4 + 0
+    cread = $5 + 0
+    output = $6 + 0
     if (cread > peak) peak = cread
+    cuml += input + ccreate + cread + output
     flag = ""
     if (ccreate >= 20000) flag = flag "+"
     if (peak >= 10000 && cread < peak * 0.5) flag = flag "*"
-    print $1, substr($2, 1, 16), $3, $4, $5, $6, peak, flag
+    print $1, substr($2, 1, 16), $3, $4, $5, $6, peak, cuml, flag
   }
 ' | column -t -s $'\t'
