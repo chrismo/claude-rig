@@ -98,6 +98,13 @@ render() {
     | sort b, sid
     | values {bucket: b, sid, turns, ccreate, cread, total}
   " "${files[@]}" | awk -F, -v start_pct="$START_PCT" -v end_pct="$END_PCT" '
+    function pretty(n) {
+      n = n + 0
+      if (n < 10000) return sprintf("%d", n)
+      if (n < 1000000) return sprintf("%.1fK", n/1000)
+      if (n < 1000000000) return sprintf("%.1fM", n/1000000)
+      return sprintf("%.2fG", n/1000000000)
+    }
     NR == 1 { next }
     substr($1, 1, 2) != "20" { next }
     {
@@ -115,13 +122,14 @@ render() {
           pct = start_pct + (cml[i] / total) * (end_pct - start_pct)
           pct_field = sprintf(",\"pct\":%.1f", pct)
         }
-        printf "{\"bucket\":\"%s\",\"sid\":\"%s\",\"turns\":%d,\"ccreate\":%d,\"cread\":%d,\"total\":%d,\"cuml\":%d%s}\n", \
-          bucket[i], sid[i], turns[i], ccr[i], crd[i], tot[i], cml[i], pct_field
+        printf "{\"bucket\":\"%s\",\"sid\":\"%s\",\"turns\":%d,\"ccreate\":\"%s\",\"cread\":\"%s\",\"total\":\"%s\",\"cuml\":\"%s\"%s}\n", \
+          bucket[i], sid[i], turns[i], pretty(ccr[i]), pretty(crd[i]), pretty(tot[i]), pretty(cml[i]), pct_field
       }
     }
   ' | grdy
 
-  printf '\nLegend (all timestamps UTC; aggregates all sessions under %s/projects/*/*.jsonl):\n' "$CLAUDE_DIR"
+  printf '\nLegend (all timestamps UTC; token counts abbreviated as K/M/G, decimal;\n'
+  printf '        aggregates all sessions under %s/projects/*/*.jsonl):\n' "$CLAUDE_DIR"
   printf '  bucket   start of the time bucket.\n'
   printf '  sid      session ID (first 8 chars) contributing to\n'
   printf '           this bucket. Multiple sids per bucket means\n'

@@ -99,6 +99,13 @@ render() {
         output: u.output_tokens
       }
   " "$jsonl" | awk -F, -v start_pct="$START_PCT" -v end_pct="$END_PCT" '
+    function pretty(n) {
+      n = n + 0
+      if (n < 10000) return sprintf("%d", n)
+      if (n < 1000000) return sprintf("%.1fK", n/1000)
+      if (n < 1000000000) return sprintf("%.1fM", n/1000000)
+      return sprintf("%.2fG", n/1000000000)
+    }
     NR == 1 { next }
     substr($2, 1, 4) != "req_" { next }
     {
@@ -125,13 +132,13 @@ render() {
           pct = start_pct + (cm[i] / total) * (end_pct - start_pct)
           pct_field = sprintf(",\"pct\":%.1f", pct)
         }
-        printf "{\"ts\":\"%s\",\"req\":\"%s\",\"input\":%d,\"ccreate\":%d,\"cread\":%d,\"output\":%d,\"peak\":%d,\"cuml\":%d,\"flag\":\"%s\"%s}\n", \
-          ts[i], req[i], ip[i], cc[i], cr[i], op[i], pk[i], cm[i], fg[i], pct_field
+        printf "{\"ts\":\"%s\",\"req\":\"%s\",\"input\":\"%s\",\"ccreate\":\"%s\",\"cread\":\"%s\",\"output\":\"%s\",\"peak\":\"%s\",\"cuml\":\"%s\",\"flag\":\"%s\"%s}\n", \
+          ts[i], req[i], pretty(ip[i]), pretty(cc[i]), pretty(cr[i]), pretty(op[i]), pretty(pk[i]), pretty(cm[i]), fg[i], pct_field
       }
     }
   ' | grdy
 
-  printf '\nLegend (all timestamps UTC):\n'
+  printf '\nLegend (all timestamps UTC; token counts abbreviated as K/M/G, decimal):\n'
   printf '  ts       request timestamp\n'
   printf '  req      requestId (truncated)\n'
   printf '  input    new uncached input tokens. Normal on a warm\n'
