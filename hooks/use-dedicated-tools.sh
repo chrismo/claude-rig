@@ -145,6 +145,9 @@ case "$base_cmd" in
   source)
     message="\`source\` is not allowed — use the Read tool to inspect files instead."
     ;;
+  rm)
+    message="\`rm\` is not allowed — destructive filesystem ops need user confirmation. Ask the user to run the command themselves if the file/directory truly needs to be deleted."
+    ;;
   git)
     # Match git -C only as the first flag (not buried in commit messages etc.)
     if [[ "$command_str" =~ ^git\ -C\  ]]; then

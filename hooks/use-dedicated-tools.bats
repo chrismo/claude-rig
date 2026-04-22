@@ -163,6 +163,28 @@ assert_allow() {
   assert_deny "sh -c"
 }
 
+# ── Deny: rm (destructive filesystem ops) ──────────────────────────────────────
+
+@test "deny: rm -rf data/2026/my-reactions → rm blocked" {
+  run_hook "rm -rf data/2026/my-reactions"
+  assert_deny "rm"
+}
+
+@test "deny: rm -r some/dir → rm blocked" {
+  run_hook "rm -r some/dir"
+  assert_deny "rm"
+}
+
+@test "deny: rm foo.txt → rm blocked" {
+  run_hook "rm foo.txt"
+  assert_deny "rm"
+}
+
+@test "deny: /bin/rm -rf foo → rm blocked (full path stripped)" {
+  run_hook "/bin/rm -rf foo"
+  assert_deny "rm"
+}
+
 @test "deny: bash script.sh → run directly" {
   run_hook "bash script.sh"
   assert_deny "directly"
