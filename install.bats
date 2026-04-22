@@ -334,6 +334,49 @@ EOF
   [ "$count" -eq 1 ]
 }
 
+# ── Env vars ──────────────────────────────────────────────────────────────────
+
+@test "env: fresh install sets CLAUDE_AUTOCOMPACT_PCT_OVERRIDE to 16" {
+  run_installer
+  [ "$status" -eq 0 ]
+  local val
+  val=$(settings_get 'this.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE')
+  [ "$val" = "16" ]
+}
+
+@test "env: existing CLAUDE_AUTOCOMPACT_PCT_OVERRIDE is preserved" {
+  cat > "$CLAUDE_DIR/settings.json" <<'EOF'
+{
+  "env": {
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "25"
+  }
+}
+EOF
+  run_installer
+  [ "$status" -eq 0 ]
+  local val
+  val=$(settings_get 'this.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE')
+  [ "$val" = "25" ]
+}
+
+@test "env: unrelated env keys are preserved" {
+  cat > "$CLAUDE_DIR/settings.json" <<'EOF'
+{
+  "env": {
+    "CLAUDE_CODE_DISABLE_TERMINAL_TITLE": "1"
+  }
+}
+EOF
+  run_installer
+  [ "$status" -eq 0 ]
+  local val
+  val=$(settings_get 'this.env.CLAUDE_CODE_DISABLE_TERMINAL_TITLE')
+  [ "$val" = "1" ]
+  local ac
+  ac=$(settings_get 'this.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE')
+  [ "$ac" = "16" ]
+}
+
 # ── Existing user settings ────────────────────────────────────────────────────
 
 @test "existing settings: non-installer keys are preserved" {

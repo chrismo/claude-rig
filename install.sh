@@ -122,6 +122,34 @@ echo "$new_settings" > "$SETTINGS_FILE"
 echo "✓ Installed hooks (UserPromptSubmit, PostToolUse, PermissionRequest, Stop, PreToolUse, SessionStart)"
 echo ""
 
+# Set CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=16 for Opus 4.7 on the 1M tier.
+# Pre-2.1.117, Claude Code computed /context against 200K for Opus 4.7
+# and auto-compacted at 80% (~160K, i.e. 16% of 1M). 2.1.117 fixed the
+# window calculation, letting context grow to ~800K before compact --
+# which quadruples per-turn cache_read burn. 16 restores the prior
+# feel. Existing user-set value wins so overrides persist.
+if grep -q '"env"' "$SETTINGS_FILE"; then
+  new_settings=$(
+    super -J -c 'values {
+      ...this,
+      env: {
+        CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "16",
+        ...this.env
+      }
+    }' "$SETTINGS_FILE"
+  )
+else
+  new_settings=$(
+    super -J -c 'values {
+      ...this,
+      env: { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "16" }
+    }' "$SETTINGS_FILE"
+  )
+fi
+echo "$new_settings" > "$SETTINGS_FILE"
+echo "✓ Set env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE (default 16, preserves existing)"
+echo ""
+
 # Merge permissions/allow.sup into settings.json (idempotent via sort | uniq)
 if [[ -f "$PERMISSIONS_ALLOW" ]]; then
   if grep -q '"permissions"' "$SETTINGS_FILE"; then
