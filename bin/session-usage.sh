@@ -18,7 +18,7 @@ set -euo pipefail
 #   cread      cache_read_input_tokens
 #   output     output_tokens
 #   peak       running max of cread
-#   cuml        cumlulative total tokens (input + ccreate + cread + output)
+#   cuml       cumulative total tokens (input + ccreate + cread + output)
 #   flag       * = cread dropped >=50% below prior peak (possible cache break)
 #              + = ccreate >=20000 on one turn (possible prompt bloat)
 
@@ -85,3 +85,15 @@ super -f csv -c '
     print $1, substr($2, 1, 16), $3, $4, $5, $6, peak, cuml, flag
   }
 ' | column -t -s $'\t'
+
+printf '\nLegend:\n'
+printf '  ts       request timestamp\n'
+printf '  req      requestId (truncated)\n'
+printf '  input    new (uncached) input tokens\n'
+printf '  ccreate  cache_creation_input_tokens\n'
+printf '  cread    cache_read_input_tokens\n'
+printf '  output   output tokens\n'
+printf '  peak     running max of cread\n'
+printf '  cuml     cumulative total tokens (input + ccreate + cread + output)\n'
+printf '  flag     +  ccreate >=20K on one turn (prompt bloat)\n'
+printf '           *  cread dropped >=50%% below prior peak (possible cache break)\n'

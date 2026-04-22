@@ -84,3 +84,11 @@ super -f csv -c "
       cwd
     }
 " "${files[@]}" | column -t -s,
+
+printf '\nLegend:\n'
+printf '  last_ts       most recent assistant turn\n'
+printf '  sid           session ID (first 8 chars)\n'
+printf '  turns         unique API requests (by requestId)\n'
+printf '  total_tokens  input + ccreate + cread + output, summed across turns\n'
+printf '  bloat_turns   turns with cache_creation_input_tokens >=20K\n'
+printf '  cwd           working directory recorded for the session\n'

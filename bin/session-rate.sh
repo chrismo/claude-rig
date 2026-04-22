@@ -86,3 +86,11 @@ super -f csv -c "
     print $1, $2, $3, $4, $5, cuml
   }
 ' | column -t -s $'\t'
+
+printf '\nLegend:\n'
+printf '  bucket   start of the time bucket\n'
+printf '  turns    API requests in this bucket\n'
+printf '  ccreate  cache_creation tokens (new-context cost)\n'
+printf '  cread    cache_read tokens (cached-context cost)\n'
+printf '  total    input + ccreate + cread + output summed in bucket\n'
+printf '  cuml     running cumulative of total across buckets\n'
