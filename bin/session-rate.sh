@@ -59,38 +59,46 @@ if [[ -n "$SINCE" ]]; then
   since_clause="timestamp >= \"$SINCE\""
 fi
 
-super -f csv -c "
-  type == 'assistant' and has(message.usage) and ${since_clause}
-  | summarize u := any(message.usage), ts := min(timestamp) by requestId
-  | values {
-      b: bucket(cast(ts, <time>), ${BUCKET}),
-      total: u.input_tokens + u.cache_creation_input_tokens + u.cache_read_input_tokens + u.output_tokens,
-      ccreate: u.cache_creation_input_tokens,
-      cread: u.cache_read_input_tokens
+render() {
+  super -f csv -c "
+    type == 'assistant' and has(message.usage) and ${since_clause}
+    | summarize u := any(message.usage), ts := min(timestamp) by requestId
+    | values {
+        b: bucket(cast(ts, <time>), ${BUCKET}),
+        total: u.input_tokens + u.cache_creation_input_tokens + u.cache_read_input_tokens + u.output_tokens,
+        ccreate: u.cache_creation_input_tokens,
+        cread: u.cache_read_input_tokens
+      }
+    | summarize
+        turns := count(),
+        ccreate := sum(ccreate),
+        cread := sum(cread),
+        total := sum(total)
+        by b
+    | sort b
+    | values {bucket: b, turns, ccreate, cread, total}
+  " "${files[@]}" | awk -F, -v OFS=$'\t' '
+    NR == 1 {
+      print $1, $2, $3, $4, $5, "cuml"
+      next
     }
-  | summarize
-      turns := count(),
-      ccreate := sum(ccreate),
-      cread := sum(cread),
-      total := sum(total)
-      by b
-  | sort b
-  | values {bucket: b, turns, ccreate, cread, total}
-" "${files[@]}" | awk -F, -v OFS=$'\t' '
-  NR == 1 {
-    print $1, $2, $3, $4, $5, "cuml"
-    next
-  }
-  {
-    cuml += $5 + 0
-    print $1, $2, $3, $4, $5, cuml
-  }
-' | column -t -s $'\t'
+    {
+      cuml += $5 + 0
+      print $1, $2, $3, $4, $5, cuml
+    }
+  ' | column -t -s $'\t'
 
-printf '\nLegend:\n'
-printf '  bucket   start of the time bucket\n'
-printf '  turns    API requests in this bucket\n'
-printf '  ccreate  cache_creation tokens (new-context cost)\n'
-printf '  cread    cache_read tokens (cached-context cost)\n'
-printf '  total    input + ccreate + cread + output summed in bucket\n'
-printf '  cuml     running cumulative of total across buckets\n'
+  printf '\nLegend:\n'
+  printf '  bucket   start of the time bucket\n'
+  printf '  turns    API requests in this bucket\n'
+  printf '  ccreate  cache_creation tokens (new-context cost)\n'
+  printf '  cread    cache_read tokens (cached-context cost)\n'
+  printf '  total    input + ccreate + cread + output summed in bucket\n'
+  printf '  cuml     running cumulative of total across buckets\n'
+}
+
+if [[ -t 1 ]]; then
+  render | ${PAGER:-less -FRX}
+else
+  render
+fi

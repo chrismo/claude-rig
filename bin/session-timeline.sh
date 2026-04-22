@@ -55,40 +55,48 @@ if [[ -n "$SINCE" ]]; then
   since_clause="timestamp >= \"$SINCE\""
 fi
 
-super -f csv -c "
-  type == 'assistant' and has(message.usage) and ${since_clause}
-  | summarize
-      u := any(message.usage),
-      ts := min(timestamp),
-      sid := any(sessionId),
-      cwd := any(cwd)
-      by requestId
-  | summarize
-      first_ts := min(ts),
-      last_ts := max(ts),
-      turns := count(),
-      tot_input := sum(u.input_tokens),
-      tot_ccreate := sum(u.cache_creation_input_tokens),
-      tot_cread := sum(u.cache_read_input_tokens),
-      tot_output := sum(u.output_tokens),
-      bloat_turns := sum(cast(u.cache_creation_input_tokens >= 20000, <int64>)),
-      cwd := any(cwd)
-      by sid
-  | sort last_ts
-  | values {
-      last_ts,
-      sid: sid[0:8],
-      turns,
-      total_tokens: tot_input + tot_ccreate + tot_cread + tot_output,
-      bloat_turns,
-      cwd
-    }
-" "${files[@]}" | column -t -s,
+render() {
+  super -f csv -c "
+    type == 'assistant' and has(message.usage) and ${since_clause}
+    | summarize
+        u := any(message.usage),
+        ts := min(timestamp),
+        sid := any(sessionId),
+        cwd := any(cwd)
+        by requestId
+    | summarize
+        first_ts := min(ts),
+        last_ts := max(ts),
+        turns := count(),
+        tot_input := sum(u.input_tokens),
+        tot_ccreate := sum(u.cache_creation_input_tokens),
+        tot_cread := sum(u.cache_read_input_tokens),
+        tot_output := sum(u.output_tokens),
+        bloat_turns := sum(cast(u.cache_creation_input_tokens >= 20000, <int64>)),
+        cwd := any(cwd)
+        by sid
+    | sort last_ts
+    | values {
+        last_ts,
+        sid: sid[0:8],
+        turns,
+        total_tokens: tot_input + tot_ccreate + tot_cread + tot_output,
+        bloat_turns,
+        cwd
+      }
+  " "${files[@]}" | column -t -s,
 
-printf '\nLegend:\n'
-printf '  last_ts       most recent assistant turn\n'
-printf '  sid           session ID (first 8 chars)\n'
-printf '  turns         unique API requests (by requestId)\n'
-printf '  total_tokens  input + ccreate + cread + output, summed across turns\n'
-printf '  bloat_turns   turns with cache_creation_input_tokens >=20K\n'
-printf '  cwd           working directory recorded for the session\n'
+  printf '\nLegend:\n'
+  printf '  last_ts       most recent assistant turn\n'
+  printf '  sid           session ID (first 8 chars)\n'
+  printf '  turns         unique API requests (by requestId)\n'
+  printf '  total_tokens  input + ccreate + cread + output, summed across turns\n'
+  printf '  bloat_turns   turns with cache_creation_input_tokens >=20K\n'
+  printf '  cwd           working directory recorded for the session\n'
+}
+
+if [[ -t 1 ]]; then
+  render | ${PAGER:-less -FRX}
+else
+  render
+fi

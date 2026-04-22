@@ -55,45 +55,53 @@ if ! command -v super &>/dev/null; then
   exit 1
 fi
 
-super -f csv -c '
-  type == "assistant" and has(message.usage)
-  | summarize u := any(message.usage), ts := min(timestamp) by requestId
-  | sort ts
-  | values {
-      ts,
-      req: requestId,
-      input: u.input_tokens,
-      ccreate: u.cache_creation_input_tokens,
-      cread: u.cache_read_input_tokens,
-      output: u.output_tokens
+render() {
+  super -f csv -c '
+    type == "assistant" and has(message.usage)
+    | summarize u := any(message.usage), ts := min(timestamp) by requestId
+    | sort ts
+    | values {
+        ts,
+        req: requestId,
+        input: u.input_tokens,
+        ccreate: u.cache_creation_input_tokens,
+        cread: u.cache_read_input_tokens,
+        output: u.output_tokens
+      }
+  ' "$jsonl" | awk -F, -v OFS=$'\t' '
+    NR == 1 {
+      print $1, $2, $3, $4, $5, $6, "peak", "cuml", "flag"
+      next
     }
-' "$jsonl" | awk -F, -v OFS=$'\t' '
-  NR == 1 {
-    print $1, $2, $3, $4, $5, $6, "peak", "cuml", "flag"
-    next
-  }
-  {
-    input = $3 + 0
-    ccreate = $4 + 0
-    cread = $5 + 0
-    output = $6 + 0
-    if (cread > peak) peak = cread
-    cuml += input + ccreate + cread + output
-    flag = ""
-    if (ccreate >= 20000) flag = flag "+"
-    if (peak >= 10000 && cread < peak * 0.5) flag = flag "*"
-    print $1, substr($2, 1, 16), $3, $4, $5, $6, peak, cuml, flag
-  }
-' | column -t -s $'\t'
+    {
+      input = $3 + 0
+      ccreate = $4 + 0
+      cread = $5 + 0
+      output = $6 + 0
+      if (cread > peak) peak = cread
+      cuml += input + ccreate + cread + output
+      flag = ""
+      if (ccreate >= 20000) flag = flag "+"
+      if (peak >= 10000 && cread < peak * 0.5) flag = flag "*"
+      print $1, substr($2, 1, 16), $3, $4, $5, $6, peak, cuml, flag
+    }
+  ' | column -t -s $'\t'
 
-printf '\nLegend:\n'
-printf '  ts       request timestamp\n'
-printf '  req      requestId (truncated)\n'
-printf '  input    new (uncached) input tokens\n'
-printf '  ccreate  cache_creation_input_tokens\n'
-printf '  cread    cache_read_input_tokens\n'
-printf '  output   output tokens\n'
-printf '  peak     running max of cread\n'
-printf '  cuml     cumulative total tokens (input + ccreate + cread + output)\n'
-printf '  flag     +  ccreate >=20K on one turn (prompt bloat)\n'
-printf '           *  cread dropped >=50%% below prior peak (possible cache break)\n'
+  printf '\nLegend:\n'
+  printf '  ts       request timestamp\n'
+  printf '  req      requestId (truncated)\n'
+  printf '  input    new (uncached) input tokens\n'
+  printf '  ccreate  cache_creation_input_tokens\n'
+  printf '  cread    cache_read_input_tokens\n'
+  printf '  output   output tokens\n'
+  printf '  peak     running max of cread\n'
+  printf '  cuml     cumulative total tokens (input + ccreate + cread + output)\n'
+  printf '  flag     +  ccreate >=20K on one turn (prompt bloat)\n'
+  printf '           *  cread dropped >=50%% below prior peak (possible cache break)\n'
+}
+
+if [[ -t 1 ]]; then
+  render | ${PAGER:-less -FRX}
+else
+  render
+fi
