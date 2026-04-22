@@ -33,11 +33,17 @@ arg="$1"
 if [[ -f "$arg" ]]; then
   jsonl="$arg"
 else
-  jsonl=$(find "$CLAUDE_DIR/projects" -maxdepth 2 -name "${arg}.jsonl" -print -quit 2>/dev/null)
-  if [[ -z "$jsonl" || ! -f "$jsonl" ]]; then
+  mapfile -t matches < <(find "$CLAUDE_DIR/projects" -maxdepth 2 -name "${arg}*.jsonl" 2>/dev/null)
+  if [[ ${#matches[@]} -eq 0 ]]; then
     echo "No JSONL found for session ID: $arg" >&2
     exit 1
   fi
+  if [[ ${#matches[@]} -gt 1 ]]; then
+    echo "Multiple JSONLs match '$arg':" >&2
+    printf '  %s\n' "${matches[@]}" >&2
+    exit 1
+  fi
+  jsonl="${matches[0]}"
 fi
 
 if ! command -v super &>/dev/null; then
