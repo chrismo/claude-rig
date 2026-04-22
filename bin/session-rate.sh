@@ -62,9 +62,10 @@ fi
 render() {
   super -f csv -c "
     type == 'assistant' and has(message.usage) and ${since_clause}
-    | summarize u := any(message.usage), ts := min(timestamp) by requestId
+    | summarize u := any(message.usage), ts := min(timestamp), sid := any(sessionId) by requestId
     | values {
         b: bucket(cast(ts, <time>), ${BUCKET}),
+        sid: sid[0:8],
         total: u.input_tokens + u.cache_creation_input_tokens + u.cache_read_input_tokens + u.output_tokens,
         ccreate: u.cache_creation_input_tokens,
         cread: u.cache_read_input_tokens
@@ -74,27 +75,28 @@ render() {
         ccreate := sum(ccreate),
         cread := sum(cread),
         total := sum(total)
-        by b
-    | sort b
-    | values {bucket: b, turns, ccreate, cread, total}
+        by b, sid
+    | sort b, sid
+    | values {bucket: b, sid, turns, ccreate, cread, total}
   " "${files[@]}" | awk -F, -v OFS=$'\t' '
     NR == 1 {
-      print $1, $2, $3, $4, $5, "cuml"
+      print $1, $2, $3, $4, $5, $6, "cuml"
       next
     }
     {
-      cuml += $5 + 0
-      print $1, $2, $3, $4, $5, cuml
+      cuml += $6 + 0
+      print $1, $2, $3, $4, $5, $6, cuml
     }
   ' | column -t -s $'\t'
 
-  printf '\nLegend:\n'
+  printf '\nLegend (aggregates all sessions under %s/projects/*/*.jsonl):\n' "$CLAUDE_DIR"
   printf '  bucket   start of the time bucket\n'
-  printf '  turns    API requests in this bucket\n'
+  printf '  sid      session ID (first 8 chars) contributing to this bucket\n'
+  printf '  turns    API requests from sid in this bucket\n'
   printf '  ccreate  cache_creation tokens (new-context cost)\n'
   printf '  cread    cache_read tokens (cached-context cost)\n'
-  printf '  total    input + ccreate + cread + output summed in bucket\n'
-  printf '  cuml     running cumulative of total across buckets\n'
+  printf '  total    input + ccreate + cread + output summed for sid in bucket\n'
+  printf '  cuml     running cumulative of total across all rows (all sessions)\n'
 }
 
 if [[ -t 1 ]]; then
