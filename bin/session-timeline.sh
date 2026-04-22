@@ -24,10 +24,13 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/config.sh"
 export ASDF_SUPERDB_VERSION="${ASDF_SUPERDB_VERSION:-0.3.0}"
 
 SINCE=""
+UNTIL=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --since=*) SINCE="${1#--since=}" ;;
-    --since) SINCE="$2"; shift ;;
+    --since)   SINCE="$2"; shift ;;
+    --until=*) UNTIL="${1#--until=}" ;;
+    --until)   UNTIL="$2"; shift ;;
     -h|--help)
       sed -n '2,20p' "$0"
       exit 0
@@ -52,14 +55,21 @@ if [[ ${#files[@]} -eq 0 ]]; then
   exit 1
 fi
 
-since_clause="true"
+frame_clause="true"
 if [[ -n "$SINCE" ]]; then
-  since_clause="timestamp >= \"$SINCE\""
+  frame_clause="timestamp >= \"$SINCE\""
+fi
+if [[ -n "$UNTIL" ]]; then
+  if [[ "$frame_clause" == "true" ]]; then
+    frame_clause="timestamp < \"$UNTIL\""
+  else
+    frame_clause="$frame_clause and timestamp < \"$UNTIL\""
+  fi
 fi
 
 render() {
   super -j -c "
-    type == 'assistant' and has(message.usage) and ${since_clause}
+    type == 'assistant' and has(message.usage) and ${frame_clause}
     | summarize
         u := any(message.usage),
         ts := min(timestamp),

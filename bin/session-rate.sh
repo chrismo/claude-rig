@@ -3,35 +3,43 @@
 set -euo pipefail
 
 # Bucketed token-rate timeline across all Claude Code sessions.
-# Sums tokens per time bucket and tracks a cumlulative total so you
+# Sums tokens per time bucket and tracks a cumulative total so you
 # can spot where rate-limit consumption actually spiked.
 #
 # Usage:
-#   session-rate.sh [--since=<ISO>] [--bucket=<duration>]
+#   session-rate.sh [--since=<ISO>] [--until=<ISO>] [--bucket=<duration>]
+#                   [--start-pct=<N> --end-pct=<N>]
+#
+# Passing --start-pct and --end-pct frames the window against an
+# observed rate-limit percentage (e.g. 46%→91% over a 5h window)
+# and adds a pct column that interpolates where cuml sat at each
+# bucket relative to the total burn in the frame.
 #
 # Example:
-#   session-rate.sh --since=2026-04-22T10:00:00Z --bucket=5m
-#
-# Columns:
-#   bucket     start of the time bucket
-#   turns      API requests in this bucket
-#   ccreate    cache_creation tokens (new-context cost)
-#   cread      cache_read tokens (cached-context cost)
-#   total      all input + ccreate + cread + output in bucket
-#   cuml        running cumlulative of total
+#   session-rate.sh --since=2026-04-22T12:00:00Z --until=2026-04-22T17:00:00Z \
+#                   --start-pct=46 --end-pct=91
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/config.sh"
 
 export ASDF_SUPERDB_VERSION="${ASDF_SUPERDB_VERSION:-0.3.0}"
 
 SINCE=""
+UNTIL=""
 BUCKET="5m"
+START_PCT=""
+END_PCT=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --since=*)  SINCE="${1#--since=}" ;;
-    --since)    SINCE="$2"; shift ;;
-    --bucket=*) BUCKET="${1#--bucket=}" ;;
-    --bucket)   BUCKET="$2"; shift ;;
+    --since=*)     SINCE="${1#--since=}" ;;
+    --since)       SINCE="$2"; shift ;;
+    --until=*)     UNTIL="${1#--until=}" ;;
+    --until)       UNTIL="$2"; shift ;;
+    --bucket=*)    BUCKET="${1#--bucket=}" ;;
+    --bucket)      BUCKET="$2"; shift ;;
+    --start-pct=*) START_PCT="${1#--start-pct=}" ;;
+    --start-pct)   START_PCT="$2"; shift ;;
+    --end-pct=*)   END_PCT="${1#--end-pct=}" ;;
+    --end-pct)     END_PCT="$2"; shift ;;
     -h|--help)
       sed -n '2,20p' "$0"
       exit 0
@@ -56,14 +64,21 @@ if [[ ${#files[@]} -eq 0 ]]; then
   exit 1
 fi
 
-since_clause="true"
+frame_clause="true"
 if [[ -n "$SINCE" ]]; then
-  since_clause="timestamp >= \"$SINCE\""
+  frame_clause="timestamp >= \"$SINCE\""
+fi
+if [[ -n "$UNTIL" ]]; then
+  if [[ "$frame_clause" == "true" ]]; then
+    frame_clause="timestamp < \"$UNTIL\""
+  else
+    frame_clause="$frame_clause and timestamp < \"$UNTIL\""
+  fi
 fi
 
 render() {
   super -f csv -c "
-    type == 'assistant' and has(message.usage) and ${since_clause}
+    type == 'assistant' and has(message.usage) and ${frame_clause}
     | summarize u := any(message.usage), ts := min(timestamp), sid := any(sessionId) by requestId
     | values {
         b: bucket(cast(ts, <time>), ${BUCKET}),
@@ -80,12 +95,26 @@ render() {
         by b, sid
     | sort b, sid
     | values {bucket: b, sid, turns, ccreate, cread, total}
-  " "${files[@]}" | awk -F, '
+  " "${files[@]}" | awk -F, -v start_pct="$START_PCT" -v end_pct="$END_PCT" '
     NR == 1 { next }
     {
       cuml += $6 + 0
-      printf "{\"bucket\":\"%s\",\"sid\":\"%s\",\"turns\":%d,\"ccreate\":%d,\"cread\":%d,\"total\":%d,\"cuml\":%d}\n", \
-        $1, $2, $3, $4, $5, $6, cuml
+      n++
+      bucket[n] = $1; sid[n] = $2; turns[n] = $3
+      ccr[n] = $4; crd[n] = $5; tot[n] = $6; cml[n] = cuml
+    }
+    END {
+      total = cuml
+      have_pct = (start_pct != "" && end_pct != "" && total > 0)
+      for (i = 1; i <= n; i++) {
+        pct_field = ""
+        if (have_pct) {
+          pct = start_pct + (cml[i] / total) * (end_pct - start_pct)
+          pct_field = sprintf(",\"pct\":%.1f", pct)
+        }
+        printf "{\"bucket\":\"%s\",\"sid\":\"%s\",\"turns\":%d,\"ccreate\":%d,\"cread\":%d,\"total\":%d,\"cuml\":%d%s}\n", \
+          bucket[i], sid[i], turns[i], ccr[i], crd[i], tot[i], cml[i], pct_field
+      }
     }
   ' | grdy
 
@@ -97,6 +126,9 @@ render() {
   printf '  cread    cache_read tokens (cached-context cost)\n'
   printf '  total    input + ccreate + cread + output summed for sid in bucket\n'
   printf '  cuml     running cumulative of total across all rows (all sessions)\n'
+  if [[ -n "$START_PCT" && -n "$END_PCT" ]]; then
+    printf '  pct      interpolated rate-limit pct for this row (frame: %s%% -> %s%%)\n' "$START_PCT" "$END_PCT"
+  fi
 }
 
 if [[ -t 1 ]]; then
