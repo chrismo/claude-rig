@@ -128,7 +128,7 @@ render() {
     }
   ' | grdy
 
-  printf '\nLegend:\n'
+  printf '\nLegend (all timestamps UTC):\n'
   printf '  ts       request timestamp\n'
   printf '  req      requestId (truncated)\n'
   printf '  input    new (uncached) input tokens\n'

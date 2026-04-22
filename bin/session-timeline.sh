@@ -98,7 +98,7 @@ render() {
       }
   " "${files[@]}" | grdy
 
-  printf '\nLegend:\n'
+  printf '\nLegend (all timestamps UTC):\n'
   printf '  last_ts       most recent assistant turn\n'
   printf '  sid           session ID (first 8 chars)\n'
   printf '  turns         unique API requests (by requestId)\n'

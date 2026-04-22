@@ -118,7 +118,7 @@ render() {
     }
   ' | grdy
 
-  printf '\nLegend (aggregates all sessions under %s/projects/*/*.jsonl):\n' "$CLAUDE_DIR"
+  printf '\nLegend (all timestamps UTC; aggregates all sessions under %s/projects/*/*.jsonl):\n' "$CLAUDE_DIR"
   printf '  bucket   start of the time bucket\n'
   printf '  sid      session ID (first 8 chars) contributing to this bucket\n'
   printf '  turns    API requests from sid in this bucket\n'
