@@ -4,19 +4,21 @@
 # ~/.claude/settings.json so the current compact trigger is visible
 # alongside the ctx percentage. If DISABLE_AUTO_COMPACT is set, show "off".
 
-muted_green="\033[2;32m"
-color_reset="\033[2;37m"
+# Color is informational, not good/bad — pick a muted neutral so
+# it doesn't imply health like ctx does.
+muted_magenta="\033[2;35m"
+color_reset="\033[0m"
 
 settings="$HOME/.claude/settings.json"
 [[ -f "$settings" ]] || exit 0
 
 disabled=$(super -f line -c 'coalesce(env.DISABLE_AUTO_COMPACT, "")' "$settings" 2>/dev/null)
 if [[ "$disabled" == "1" || "$disabled" == "true" ]]; then
-  echo -e "${muted_green}ac: off${color_reset}"
+  echo -e "${muted_magenta}ac: off${color_reset}"
   exit 0
 fi
 
 pct=$(super -f line -c 'coalesce(env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, "")' "$settings" 2>/dev/null)
 if [[ -n "$pct" ]]; then
-  echo -e "${muted_green}ac: ${pct}%${color_reset}"
+  echo -e "${muted_magenta}ac: ${pct}%${color_reset}"
 fi
