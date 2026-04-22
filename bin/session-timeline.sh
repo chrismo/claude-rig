@@ -101,12 +101,21 @@ render() {
   " "${files[@]}" | grdy
 
   printf '\nLegend (all timestamps UTC):\n'
-  printf '  last_ts       most recent assistant turn\n'
-  printf '  sid           session ID (first 8 chars)\n'
-  printf '  turns         unique API requests (by requestId)\n'
-  printf '  total_tokens  input + ccreate + cread + output, summed across turns\n'
-  printf '  bloat_turns   turns with cache_creation_input_tokens >=20K\n'
-  printf '  cwd           working directory recorded for the session\n'
+  printf '  last_ts       most recent assistant turn.\n'
+  printf '  sid           session ID (first 8 chars).\n'
+  printf '  turns         unique API requests (by requestId). Just\n'
+  printf '                activity volume; not inherently good/bad.\n'
+  printf '  total_tokens  input + ccreate + cread + output summed\n'
+  printf '                across turns. Magnitude of API activity\n'
+  printf '                -- bigger = more rate-limit burn. An\n'
+  printf '                outlier here is the first suspect to\n'
+  printf '                drill into with session-usage.sh.\n'
+  printf '  bloat_turns   turns where ccreate >= 20K. A few (1-3)\n'
+  printf '                is normal (cold start + resume gaps).\n'
+  printf '                Many (10+) without proportional context\n'
+  printf '                growth suggests repeated cache rebuilds\n'
+  printf '                or MCP tool-def tax on every new turn.\n'
+  printf '  cwd           working directory recorded for the session.\n'
 }
 
 if [[ -t 1 ]]; then

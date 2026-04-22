@@ -122,15 +122,33 @@ render() {
   ' | grdy
 
   printf '\nLegend (all timestamps UTC; aggregates all sessions under %s/projects/*/*.jsonl):\n' "$CLAUDE_DIR"
-  printf '  bucket   start of the time bucket\n'
-  printf '  sid      session ID (first 8 chars) contributing to this bucket\n'
-  printf '  turns    API requests from sid in this bucket\n'
-  printf '  ccreate  cache_creation tokens (new-context cost)\n'
-  printf '  cread    cache_read tokens (cached-context cost)\n'
-  printf '  total    input + ccreate + cread + output summed for sid in bucket\n'
-  printf '  cuml     running cumulative of total across all rows (all sessions)\n'
+  printf '  bucket   start of the time bucket.\n'
+  printf '  sid      session ID (first 8 chars) contributing to\n'
+  printf '           this bucket. Multiple sids per bucket means\n'
+  printf '           tabs were active simultaneously.\n'
+  printf '  turns    API requests from sid in this bucket. High\n'
+  printf '           turn count in a small window = fast iteration.\n'
+  printf '  ccreate  cache-creation tokens -- expensive. High on\n'
+  printf '           a sids first appearance is session-init cost\n'
+  printf '           (system prompt + MCP tool defs). Large MCP\n'
+  printf '           configs amplify this across every new session.\n'
+  printf '  cread    cache-read tokens -- cheap but still counts.\n'
+  printf '           Large and growing = accumulated context being\n'
+  printf '           re-read every turn (normal on 1M tier with\n'
+  printf '           long sessions; still rate-limit pressure).\n'
+  printf '  total    input + ccreate + cread + output for sid in\n'
+  printf '           bucket. The absolute weight of this rows\n'
+  printf '           activity.\n'
+  printf '  cuml     running cumulative total across all rows.\n'
+  printf '           Steep bucket-to-bucket jumps = fast-burn\n'
+  printf '           moment; flat = idle. If one bucket adds 10M+\n'
+  printf '           thats a tab swarm or runaway session worth\n'
+  printf '           drilling into with session-usage.sh.\n'
   if [[ -n "$START_PCT" && -n "$END_PCT" ]]; then
-    printf '  pct      interpolated rate-limit pct for this row (frame: %s%% -> %s%%)\n' "$START_PCT" "$END_PCT"
+    printf '  pct      linearly interpolated rate-limit pct across\n'
+    printf '           the frame (%s%% -> %s%%). Rough anchor, not\n' "$START_PCT" "$END_PCT"
+    printf '           authoritative -- cache_read is weighted\n'
+    printf '           less than full-rate tokens.\n'
   fi
 }
 
