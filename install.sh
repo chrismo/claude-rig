@@ -413,5 +413,21 @@ if [[ -d "$CC_AUDIT_RULES_SRC" ]]; then
   fi
 fi
 
+# Install bin/* helper commands as symlinks in ~/.local/bin/
+LOCAL_BIN="${LOCAL_BIN:-$HOME/.local/bin}"
+mkdir -p "$LOCAL_BIN"
+for cmd in claude-slot claude-tabs claude-search; do
+  src="$REPO_DIR/bin/$cmd"
+  dest="$LOCAL_BIN/$cmd"
+  if [[ -f "$src" ]]; then
+    if [[ -L "$dest" ]] || [[ -f "$dest" ]]; then
+      rm "$dest"
+    fi
+    ln -s "$src" "$dest"
+    echo "✓ Linked $cmd -> $LOCAL_BIN/"
+  fi
+done
+echo ""
+
 echo "settings.json:"
 cat "$SETTINGS_FILE"

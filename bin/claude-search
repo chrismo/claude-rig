@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+#
+# claude-search - Search Claude prompt history by keyword
+#
+# Usage: claude-search <term> [days]
+#
+# Searches ~/.claude/history.jsonl for prompts whose `display` field matches
+# the given term (case-insensitive regex). Limits results to the last N days
+# (default: 30). Prints date, project, sessionId, and a 100-char excerpt of
+# the prompt as a barred table.
+#
+# Date filter uses UTC (no timezone correction); "30 days" means 30*24h back
+# from now. Display dates are also UTC.
+#
+# Requires: super (SuperDB), mlr (Miller).
+#
+
+set -euo pipefail
+
+usage() {
+  cat <<-EOF
+	Usage: claude-search <term> [days]
+
+	Searches ~/.claude/history.jsonl for prompts matching <term>
+	(case-insensitive). Defaults to last 30 days.
+
+	Examples:
+	  claude-search fivetran
+	  claude-search "redis snapshot" 7
+	EOF
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" || -z "${1:-}" ]]; then
+  usage
+  exit 0
+fi
+
+term="$1"
+days="${2:-30}"
+history_file="${CLAUDE_SEARCH_HISTORY_FILE:-$HOME/.claude/history.jsonl}"
+
+if [[ ! -f "$history_file" ]]; then
+  echo "Claude history not found at $history_file" >&2
+  exit 1
+fi
+
+super -f json -c "
+  put ts:=(timestamp*1000000)::time
+  | where ts >= now() - '${days}d'::duration
+  | where grep('(?i)${term}', display)
+  | put date:=strftime('%Y-%m-%d %H:%M', ts)
+  | put project:=split(project, '/')[-1]
+  | put prompt:=replace(display[0:100], '\n', ' ')
+  | cut date, project, sessionId, prompt
+  | sort -date
+" "$history_file" 2>/dev/null | mlr --j2p --barred cat
