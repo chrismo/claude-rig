@@ -4,24 +4,27 @@
 #
 # Usage: claude-search <term> [days]
 #
-# Searches ~/.claude/history.jsonl for prompts whose `display` field matches
-# the given term (case-insensitive regex). Limits results to the last N days
-# (default: 30). Prints date, project, sessionId, and a 100-char excerpt of
-# the prompt as a barred table.
+# Searches ~/.claude/projects/*/*.jsonl session transcripts for user prompts
+# whose content matches <term> (case-insensitive regex). Limits results to the
+# last N days (default: 30). Prints date, project, sessionId, and an 89-char
+# excerpt as a barred table.
 #
-# Date filter uses UTC (no timezone correction); "30 days" means 30*24h back
-# from now. Display dates are also UTC.
+# Use the sessionId with `claude --resume <sessionId>` to resume a session.
 #
-# Requires: super (SuperDB), mlr (Miller).
+# Date filter uses UTC. Excludes meta entries, compact-summary continuations,
+# and tool-result messages so only real user prompts are returned.
+#
+# Requires: super (SuperDB), grdy.
 #
 
 set -euo pipefail
+shopt -s nullglob
 
 usage() {
   cat <<-EOF
 	Usage: claude-search <term> [days]
 
-	Searches ~/.claude/history.jsonl for prompts matching <term>
+	Searches ~/.claude/projects/*/*.jsonl for user prompts matching <term>
 	(case-insensitive). Defaults to last 30 days.
 
 	Examples:
@@ -37,20 +40,26 @@ fi
 
 term="$1"
 days="${2:-30}"
-history_file="${CLAUDE_SEARCH_HISTORY_FILE:-$HOME/.claude/history.jsonl}"
+projects_dir="${CLAUDE_SEARCH_PROJECTS_DIR:-$HOME/.claude/projects}"
 
-if [[ ! -f "$history_file" ]]; then
-  echo "Claude history not found at $history_file" >&2
+files=("$projects_dir"/*/*.jsonl)
+if [[ ${#files[@]} -eq 0 ]]; then
+  echo "No session files found under $projects_dir" >&2
   exit 1
 fi
 
-super -f json -c "
-  put ts:=(timestamp*1000000)::time
-  | where ts >= now() - '${days}d'::duration
-  | where grep('(?i)${term}', display)
-  | put date:=strftime('%Y-%m-%d %H:%M', ts)
-  | put project:=split(project, '/')[-1]
-  | put prompt:=replace(display[0:100], '\n', ' ')
-  | cut date, project, sessionId, prompt
-  | sort -date
-" "$history_file" 2>/dev/null | mlr --j2p --barred cat
+super -j -c "
+  where type=='user'
+    and not has(isMeta)
+    and not has(isCompactSummary)
+    and typeof(message.content) == <string>
+    and cast(timestamp, <time>) >= now() - '${days}d'::duration
+    and grep('(?i)${term}', cast(message.content, <string>))
+  | values {
+      date: strftime('%Y-%m-%d %H:%M', cast(timestamp, <time>)),
+      project: split(cwd, '/')[-1],
+      sessionId,
+      prompt: replace(cast(message.content, <string>)[0:89], '\n', ' ')
+    }
+  | sort -r date
+" "${files[@]}" | grdy
