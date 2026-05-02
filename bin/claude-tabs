@@ -23,8 +23,10 @@
 #   - Pane layout is lost. lsof sees processes, not terminal geometry.
 #     Sessions in Ghostty panes (splits) are detected and saved correctly,
 #     but restore opens each as a separate tab.
-#   - Multiple sessions in the same directory: lsof deduplicates cwds, so
-#     only the most recent session (by JSONL mtime) is saved.
+#   - Multiple sessions in the same directory: each running PID gets its own
+#     row, paired with one of the K most recently modified JSONLs (by mtime
+#     rank). The PID→session mapping isn't preserved — Claude doesn't keep
+#     the JSONL open — but on restore each tab gets a real, distinct session.
 #   - Stale session UUIDs: `claude --resume` with an invalid UUID should
 #     fail gracefully or start fresh.
 #   - Resuming an active session: `claude --resume` does not error — it
@@ -63,20 +65,27 @@ encode_project_path() {
 
 # detect_sessions <lsof_output>
 # Parses lsof -Fn output, cross-references with projects dir, returns JSON array.
+# Each active PID gets its own row — when K processes share a cwd, the K most
+# recently modified JSONLs in that project dir are paired up (rank by mtime).
 detect_sessions() {
   local lsof_output="$1"
   local entries=()
 
-  # Extract unique cwds from lsof output (lines starting with 'n', strip prefix)
-  local unique_cwds
-  unique_cwds=$(echo "$lsof_output" | grep '^n' | sed 's/^n//' | sort -u)
+  # Per-cwd counter: how many PIDs we've seen so far at this cwd.
+  # Bash 3 has no associative arrays, so use parallel-array lookup.
+  local seen_cwds=()
+  local seen_counts=()
+
+  # Extract cwds in order, one per PID (do NOT dedupe — duplicates mean
+  # multiple active sessions in the same directory).
+  local cwds
+  cwds=$(echo "$lsof_output" | grep '^n' | sed 's/^n//')
 
   while IFS= read -r cwd; do
     if [[ -z "$cwd" ]]; then
       continue
     fi
 
-    # Cross-reference with projects dir
     local encoded
     encoded=$(encode_project_path "$cwd")
     local project_dir="$CLAUDE_TABS_PROJECTS_DIR/$encoded"
@@ -85,20 +94,36 @@ detect_sessions() {
       continue
     fi
 
-    # Find most recent JSONL
-    local newest_jsonl
-    newest_jsonl=$(ls -t "$project_dir"/*.jsonl 2>/dev/null | head -1)
-    if [[ -z "$newest_jsonl" ]]; then
+    # Find this cwd's current count, then bump it.
+    local rank=0 i=0 found=0
+    for ((i = 0; i < ${#seen_cwds[@]}; i++)); do
+      if [[ "${seen_cwds[i]}" == "$cwd" ]]; then
+        rank="${seen_counts[i]}"
+        seen_counts[i]=$((rank + 1))
+        found=1
+        break
+      fi
+    done
+    if [[ "$found" -eq 0 ]]; then
+      seen_cwds+=("$cwd")
+      seen_counts+=(1)
+    fi
+
+    # Pick the (rank+1)th most recent JSONL — `ls -t` is newest-first,
+    # `sed -n "Np"` gets row N (1-indexed).
+    local jsonl
+    jsonl=$(ls -t "$project_dir"/*.jsonl 2>/dev/null | sed -n "$((rank + 1))p")
+    if [[ -z "$jsonl" ]]; then
       continue
     fi
 
     local session_id
-    session_id=$(basename "$newest_jsonl" .jsonl)
+    session_id=$(basename "$jsonl" .jsonl)
     local name
     name=$(basename "$cwd")
 
     entries+=("{\"name\": \"$name\", \"path\": \"$cwd\", \"session_id\": \"$session_id\"}")
-  done <<< "$unique_cwds"
+  done <<< "$cwds"
 
   # Build JSON array
   if [[ ${#entries[@]} -eq 0 ]]; then
@@ -123,9 +148,24 @@ detect_sessions() {
 get_lsof_output() {
   if [[ -n "${CLAUDE_TABS_LSOF_OUTPUT:-}" ]]; then
     echo "$CLAUDE_TABS_LSOF_OUTPUT"
-  else
-    lsof -c node -a -d cwd -Fn 2>/dev/null || true
+    return 0
   fi
+
+  # Find each running Claude session's PID. We can't use `lsof -c claude` —
+  # macOS lsof reports the binary's truncated kernel comm (e.g. "2.1.126"),
+  # not "claude" — and `lsof -c node` over-counts because each session forks
+  # MCP server children (npm exec + node).
+  local pids
+  pids=$(pgrep -f '^claude($| )' 2>/dev/null || true)
+  if [[ -z "$pids" ]]; then
+    return 0
+  fi
+
+  # lsof -p takes a comma-separated PID list.
+  local pid_list
+  pid_list=$(echo "$pids" | tr '\n' ',' | sed 's/,$//')
+
+  lsof -p "$pid_list" -a -d cwd -Fpn 2>/dev/null || true
 }
 
 cmd_save() {
@@ -135,7 +175,11 @@ cmd_save() {
   local json
   json=$(detect_sessions "$lsof_output")
 
-  echo "$json" | super -J - > "$CLAUDE_TABS_MANIFEST"
+  if [[ "$json" == "[]" ]]; then
+    echo "[]" > "$CLAUDE_TABS_MANIFEST"
+  else
+    echo "$json" | super -J -c 'unnest this | sort name | collect(this)' - > "$CLAUDE_TABS_MANIFEST"
+  fi
 
   # Copy to history
   mkdir -p "$CLAUDE_TABS_HISTORY_DIR"
@@ -153,7 +197,11 @@ cmd_list() {
   local json
   json=$(detect_sessions "$lsof_output")
 
-  echo "$json" | grdy
+  if [[ "$json" == "[]" ]]; then
+    return 0
+  fi
+
+  echo "$json" | super -J -c 'unnest this | sort name | collect(this)' - | grdy
 }
 
 build_restore_applescript() {
