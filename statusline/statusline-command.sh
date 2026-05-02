@@ -33,7 +33,8 @@ run_plugins() {
   local line_output=""
 
   for plugin in "$plugin_dir"/*; do
-    [[ -x "$plugin" ]] || continue
+    # Skip subdirectories (e.g., plugins.d/disabled/) and non-executable files.
+    [[ -f "$plugin" && -x "$plugin" ]] || continue
 
     local name
     name=$(basename "$plugin")

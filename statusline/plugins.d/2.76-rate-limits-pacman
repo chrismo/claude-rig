@@ -1,0 +1,173 @@
+#!/bin/bash
+# Segment: rate limit usage with mood face + pac-man bars.
+#
+# Layout:  <mood> 5h [bar] <dur> | 7d [bar] <dur>
+#   mood — one emoji reflecting the worse of 5h/7d
+#   bar  — N-cell track: ● used, ◇ on-pace, ◉ when both at the same slot, · empty
+#   dur  — largest single unit (4d9h32m → 4d, 1h45m → 1h)
+#
+# Alternative to plugins.d/2.75-rate-limits (the wedge layout). Make exactly
+# one of them executable with `chmod +x` to pick a default — or keep both
+# executable to render both segments side by side.
+
+input="${CLAUDE_STATUS_INPUT:-/tmp/claude-status-input.json}"
+
+muted_green="\033[2;32m"
+muted_yellow="\033[2;33m"
+muted_red="\033[2;31m"
+color_reset="\033[2;37m"
+
+FIVE_HOUR_SECONDS=18000
+SEVEN_DAY_SECONDS=604800
+FIVE_HOUR_SLOTS=5
+SEVEN_DAY_SLOTS=7
+
+five_hour=$(super -f line -c 'coalesce(cast(rate_limits.five_hour.used_percentage, <int64>), "")' "$input" 2>/dev/null)
+five_hour_resets=$(super -f line -c 'coalesce(cast(rate_limits.five_hour.resets_at, <int64>), "")' "$input" 2>/dev/null)
+seven_day=$(super -f line -c 'coalesce(cast(rate_limits.seven_day.used_percentage, <int64>), "")' "$input" 2>/dev/null)
+seven_day_resets=$(super -f line -c 'coalesce(cast(rate_limits.seven_day.resets_at, <int64>), "")' "$input" 2>/dev/null)
+
+if [[ -z "$five_hour" && -z "$seven_day" ]]; then
+  exit 0
+fi
+
+# pace_x100: returns ratio*100 as int (used / expected), or empty if no timing.
+pace_x100() {
+  local pct=$1 resets_at=$2 window_seconds=$3
+  if [[ -z "$resets_at" ]]; then echo ""; return; fi
+  local now elapsed
+  now=$(date +%s)
+  elapsed=$(( window_seconds - (resets_at - now) ))
+  if (( elapsed <= 0 )); then echo ""; return; fi
+  echo $(( pct * window_seconds / elapsed ))
+}
+
+# elapsed_seconds: bounded elapsed time in [0, window_seconds], or empty.
+elapsed_seconds() {
+  local resets_at=$1 window_seconds=$2
+  if [[ -z "$resets_at" ]]; then echo ""; return; fi
+  local now elapsed
+  now=$(date +%s)
+  elapsed=$(( window_seconds - (resets_at - now) ))
+  if (( elapsed < 0 )); then elapsed=0; fi
+  if (( elapsed > window_seconds )); then elapsed=$window_seconds; fi
+  echo "$elapsed"
+}
+
+# colorize: red ≥90% absolute, yellow at/over pace, green under pace.
+colorize() {
+  local pct=$1 pace=$2
+  if (( pct >= 90 )); then echo "$muted_red"; return; fi
+  if [[ -z "$pace" ]]; then
+    if (( pct >= 70 )); then echo "$muted_yellow"; else echo "$muted_green"; fi
+    return
+  fi
+  if (( pace >= 100 )); then echo "$muted_yellow"; else echo "$muted_green"; fi
+}
+
+# mood_level: 0 chill, 1 fine, 2 on pace, 3 worried, 4 panic.
+mood_level() {
+  local pct=$1 pace=$2
+  if (( pct >= 90 )); then echo 4; return; fi
+  if [[ -z "$pace" ]]; then
+    if   (( pct >= 70 )); then echo 3
+    elif (( pct >= 40 )); then echo 2
+    elif (( pct >= 10 )); then echo 1
+    else                       echo 0
+    fi
+    return
+  fi
+  if   (( pace <  40 )); then echo 0
+  elif (( pace <  80 )); then echo 1
+  elif (( pace < 120 )); then echo 2
+  elif (( pace < 160 )); then echo 3
+  else                        echo 4
+  fi
+}
+
+mood_face() {
+  case $1 in
+    0) echo "(^_^)" ;;
+    1) echo "(•‿•)" ;;
+    2) echo "(•_•)" ;;
+    3) echo "(>_<)" ;;
+    *) echo "(×_×)" ;;
+  esac
+}
+
+# pacman_bar: render N cells with ● at used slot, ◇ at expected slot, · empty.
+pacman_bar() {
+  local pct=$1 elapsed=$2 window_seconds=$3 N=$4
+
+  local slot_used
+  slot_used=$(( pct * N / 100 ))
+  if (( slot_used >= N )); then slot_used=$(( N - 1 )); fi
+  if (( slot_used < 0  )); then slot_used=0;             fi
+
+  local slot_expected=-1
+  if [[ -n "$elapsed" ]]; then
+    slot_expected=$(( elapsed * N / window_seconds ))
+    if (( slot_expected >= N )); then slot_expected=$(( N - 1 )); fi
+  fi
+
+  local bar="" i
+  for (( i = 0; i < N; i++ )); do
+    if   (( i == slot_used && i == slot_expected )); then bar+="◉"
+    elif (( i == slot_used     ));                   then bar+="●"
+    elif (( i == slot_expected ));                   then bar+="◇"
+    else                                                  bar+="·"
+    fi
+  done
+  echo "$bar"
+}
+
+# format_largest: largest single unit of remaining time. 4d9h32m → 4d.
+format_largest() {
+  local field=$1
+  local result
+  result=$(super -f line -c "
+    put d := cast(${field}.resets_at * 1000000000, <time>) - now()
+    | values case
+        when d >= 1m then regexp('^[0-9]+[a-z]', cast(bucket(d, 1m), <string>))[0]
+        else              'now'
+      end
+  " "$input" 2>/dev/null)
+  if [[ -z "$result" ]]; then echo "now"; else echo "$result"; fi
+}
+
+five_pace=$(pace_x100 "$five_hour"  "$five_hour_resets"  "$FIVE_HOUR_SECONDS")
+seven_pace=$(pace_x100 "$seven_day" "$seven_day_resets"  "$SEVEN_DAY_SECONDS")
+
+worst=-1
+if [[ -n "$five_hour" ]]; then
+  lvl=$(mood_level "$five_hour" "$five_pace")
+  (( lvl > worst )) && worst=$lvl
+fi
+if [[ -n "$seven_day" ]]; then
+  lvl=$(mood_level "$seven_day" "$seven_pace")
+  (( lvl > worst )) && worst=$lvl
+fi
+(( worst < 0 )) && worst=0
+face=$(mood_face "$worst")
+
+segments="$face"
+
+if [[ -n "$five_hour" ]]; then
+  c=$(colorize "$five_hour" "$five_pace")
+  elapsed=$(elapsed_seconds "$five_hour_resets" "$FIVE_HOUR_SECONDS")
+  bar=$(pacman_bar "$five_hour" "$elapsed" "$FIVE_HOUR_SECONDS" "$FIVE_HOUR_SLOTS")
+  remaining=$(format_largest "rate_limits.five_hour")
+  segments+=" ${c}5h [${bar}] ${remaining}${color_reset}"
+fi
+
+if [[ -n "$seven_day" ]]; then
+  c=$(colorize "$seven_day" "$seven_pace")
+  elapsed=$(elapsed_seconds "$seven_day_resets" "$SEVEN_DAY_SECONDS")
+  bar=$(pacman_bar "$seven_day" "$elapsed" "$SEVEN_DAY_SECONDS" "$SEVEN_DAY_SLOTS")
+  remaining=$(format_largest "rate_limits.seven_day")
+  separator=""
+  [[ -n "$five_hour" ]] && separator=" | "
+  segments+="${separator}${c}7d [${bar}] ${remaining}${color_reset}"
+fi
+
+echo -e "$segments"
