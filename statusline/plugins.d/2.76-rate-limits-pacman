@@ -89,7 +89,7 @@ mood_face() {
   case $1 in
     0) echo "(^_^)" ;;
     1) echo "(•‿•)" ;;
-    2) echo "(•_•)" ;;
+    2) echo '¯\_(ツ)_/¯' ;;
     3) echo "(>_<)" ;;
     *) echo "(×_×)" ;;
   esac
@@ -132,7 +132,7 @@ format_largest() {
         else              'now'
       end
   " "$input" 2>/dev/null)
-  if [[ -z "$result" || "$result" == error\(* ]]; then echo "now"; else echo "$result"; fi
+  if [[ -z "$result" || "$result" == error\(* ]]; then echo "?"; else echo "$result"; fi
 }
 
 five_pace=$(pace_x100 "$five_hour"  "$five_hour_resets"  "$FIVE_HOUR_SECONDS")

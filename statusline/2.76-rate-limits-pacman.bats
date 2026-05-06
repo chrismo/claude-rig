@@ -70,7 +70,7 @@ EOF
   [[ "$output" == *"(^_^)"* ]]
 }
 
-@test "mood: (•_•) neutral on pace" {
+@test "mood: shrug neutral on pace" {
   local now five_resets seven_resets
   now=$(date +%s)
   # both right on pace
@@ -79,7 +79,7 @@ EOF
   write_input 40 "$five_resets" 57 "$seven_resets"
 
   run bash "$PLUGIN"
-  [[ "$output" == *"(•_•)"* ]]
+  [[ "$output" == *'¯\_(ツ)_/¯'* ]]
 }
 
 @test "mood: (>_<) worried when one window is over pace (ratio ~1.4)" {
@@ -241,6 +241,7 @@ EOF
 
   run bash "$PLUGIN"
   [[ "$output" != *'error("missing")'* ]]
+  [[ "$output" == *'] ?'* ]]
 }
 
 # ── Color: same precedence as the wedge plugin ────────────────────────────────
