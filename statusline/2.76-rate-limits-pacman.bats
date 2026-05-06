@@ -219,6 +219,30 @@ EOF
   [[ "$output" =~ \]\ [0-9]+m ]]
 }
 
+# ── Duration: missing resets_at ──────────────────────────────────────────────
+
+@test "duration: missing resets_at does not output error(missing)" {
+  local now seven_resets
+  now=$(date +%s)
+  seven_resets=$(( now + 86400 ))
+  cat > "$INPUT" <<EOF
+{
+  "rate_limits": {
+    "five_hour": {
+      "used_percentage": 30
+    },
+    "seven_day": {
+      "used_percentage": 25,
+      "resets_at": $seven_resets
+    }
+  }
+}
+EOF
+
+  run bash "$PLUGIN"
+  [[ "$output" != *'error("missing")'* ]]
+}
+
 # ── Color: same precedence as the wedge plugin ────────────────────────────────
 
 @test "color: green when window is well under pace" {
