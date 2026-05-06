@@ -22,6 +22,8 @@ Claude Code has a built-in sandbox mode that restricts Bash commands at the OS l
 
 This is complementary to external sandboxes and hooks — it's another layer, not a replacement for either.
 
+**Sandbox fallback prompts and the "add to allowlist" option:** When a sandboxed command fails, Claude can retry it outside the sandbox via a `dangerouslyDisableSandbox` parameter — this is the built-in escape hatch. That retry goes through the normal permission flow, which historically offered three options: run once, add permanently to settings.json, and no. As of approximately late April/early May 2026, the prompt in sandbox auto mode appears to offer only yes/no — no option to auto-add to settings.json from the dialog. No specific changelog entry was found documenting this change; it may be a UI change in how the sandbox escape hatch surfaces to the user. **Workaround:** add allow rules manually via `/permissions` or edit `.claude/settings.json` directly under `permissions.allow`. The `allowUnsandboxedCommands: false` setting in sandbox config can disable the escape hatch entirely if you prefer hard sandbox enforcement.
+
 ## Approach 1b: External Sandboxes (Containers / VMs / Fly Sprites / EC2)
 
 Run Claude in an isolated environment where everything is safe to auto-allow.
