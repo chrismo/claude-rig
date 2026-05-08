@@ -12,8 +12,12 @@ if [[ -z "$model_name" ]]; then
 fi
 
 effort=""
-# Future-proof: check statusline input first (pending feature request #9488)
-effort=$(super -f line -c 'coalesce(model.reasoning_effort, "")' "$input" 2>/dev/null)
+# Canonical statusline field, added in Claude Code 2.1.121.
+effort=$(super -f line -c 'coalesce(effort.level, "")' "$input" 2>/dev/null)
+# Older speculative key, kept as a fallback for pre-2.1.121 builds.
+if [[ -z "$effort" ]]; then
+  effort=$(super -f line -c 'coalesce(model.reasoning_effort, "")' "$input" 2>/dev/null)
+fi
 # Env var override
 if [[ -z "$effort" && -n "${CLAUDE_CODE_EFFORT_LEVEL:-}" ]]; then
   effort="$CLAUDE_CODE_EFFORT_LEVEL"
