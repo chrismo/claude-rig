@@ -416,7 +416,7 @@ fi
 # Install bin/* helper commands as symlinks in ~/.local/bin/
 LOCAL_BIN="${LOCAL_BIN:-$HOME/.local/bin}"
 mkdir -p "$LOCAL_BIN"
-for cmd in claude-slot claude-tabs claude-search; do
+for cmd in claude-slot claude-tabs claude-search work-context; do
   src="$REPO_DIR/bin/$cmd"
   dest="$LOCAL_BIN/$cmd"
   if [[ -f "$src" ]]; then
