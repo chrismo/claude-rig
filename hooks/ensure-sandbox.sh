@@ -1,5 +1,12 @@
 #!/bin/bash
 # SessionStart hook: ensure sandbox is enabled in .claude/settings.local.json
+#
+# TODO: Currently unwired from install.sh — sandbox auto-enable was getting in
+# the way more than it helped. Revisit how modern Claude Code uses the sandbox
+# (allowWrite/allowRead semantics, autoAllowBashIfSandboxed, network isolation)
+# and decide what should live in sandbox config vs. in PreToolUse hooks vs. not
+# be enforced at all. If this script is still the right answer, re-wire it in
+# install.sh; otherwise delete it.
 
 SETTINGS=".claude/settings.local.json"
 

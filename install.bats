@@ -51,12 +51,12 @@ settings_get() {
   [ "$matcher" = "Bash" ]
 }
 
-@test "fresh install: SessionStart hooks are configured (startup, resume, clear)" {
+@test "fresh install: SessionStart hook is NOT configured (retired)" {
   run_installer
   [ "$status" -eq 0 ]
-  local count
-  count=$(settings_get 'len(this.hooks.SessionStart)')
-  [ "$count" -eq 3 ]
+  # SessionStart was deprecated; installer should leave the key absent
+  run settings_get 'this.hooks.SessionStart'
+  [ "$status" -ne 0 ] || [ "$output" = "error(\"missing\")" ]
 }
 
 @test "fresh install: all four event hooks are configured" {
@@ -67,6 +67,43 @@ settings_get() {
     count=$(settings_get "count(this.hooks.$event)")
     [ "$count" -ge 1 ]
   done
+}
+
+@test "hooks: pre-existing deprecated SessionStart is dropped on re-install" {
+  cat > "$CLAUDE_DIR/settings.json" <<'EOF'
+{
+  "hooks": {
+    "SessionStart": [
+      {"matcher": "startup", "hooks": [{"type": "command", "command": "/old/ensure-sandbox.sh"}]}
+    ]
+  }
+}
+EOF
+  run_installer
+  [ "$status" -eq 0 ]
+  run settings_get 'this.hooks.SessionStart'
+  [ "$status" -ne 0 ] || [ "$output" = "error(\"missing\")" ]
+}
+
+@test "hooks: user-managed hook event types are preserved" {
+  cat > "$CLAUDE_DIR/settings.json" <<'EOF'
+{
+  "hooks": {
+    "SubagentStop": [
+      {"matcher": "", "hooks": [{"type": "command", "command": "/my/custom-hook.sh"}]}
+    ]
+  }
+}
+EOF
+  run_installer
+  [ "$status" -eq 0 ]
+  local cmd
+  cmd=$(settings_get 'this.hooks.SubagentStop[0].hooks[0].command')
+  [ "$cmd" = "/my/custom-hook.sh" ]
+  # And claude-rig's hooks are also installed alongside
+  local matcher
+  matcher=$(settings_get 'this.hooks.PreToolUse[0].matcher')
+  [ "$matcher" = "Bash" ]
 }
 
 @test "fresh install: Stop hook includes claude-tabs save" {

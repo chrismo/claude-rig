@@ -46,13 +46,24 @@ echo "✓ Installed statusLine configuration"
 echo "  Command: bash $STATUSLINE_SCRIPT"
 echo ""
 
-# Merge tab-status hooks using super
-# These hooks auto-update Ghostty tab colors during Claude sessions
+# Merge claude-rig hooks into settings.json.
+#
+# Pattern: `put hooks := {} | drop hooks.X | values {...this, hooks: {...this.hooks, Y: [...], Z: [...]}}`
+#   - `put hooks := {}` ensures hooks exists (no-op if it already does — put merges
+#     records). Needed so `drop` and `this.hooks` work on a fresh settings.json.
+#   - `drop hooks.X` removes hook event types claude-rig used to manage but no longer
+#     does (otherwise stale entries would linger forever — spread can't subtract).
+#   - `...this.hooks` preserves any hook event types claude-rig does NOT manage (e.g.,
+#     user's own SubagentStop, PreCompact, etc.).
+#   - Named keys after the spread (Y, Z, ...) override per-event-type: claude-rig owns
+#     those event types entirely, replacing whatever was there.
+# When retiring a hook event type from claude-rig, ADD it to the `drop` list so it
+# disappears from existing settings.json on next install.
 HOOK_CMD_PREFIX="tab-status --hook"
 TITLE_CMD="tab-status --title > /dev/tty 2>/dev/null || true"
 
 new_settings=$(
-  super -J -c "hooks:={
+  super -J -c "put hooks := {} | drop hooks.SessionStart | values {...this, hooks: {...this.hooks,
     UserPromptSubmit: [{
       matcher: '',
       hooks: [{
@@ -94,32 +105,13 @@ new_settings=$(
         type: 'command',
         command: '${DEDICATED_TOOLS_HOOK}'
       }]
-    }],
-    SessionStart: [{
-      matcher: 'startup',
-      hooks: [{
-        type: 'command',
-        command: '${ENSURE_SANDBOX_HOOK}'
-      }]
-    }, {
-      matcher: 'resume',
-      hooks: [{
-        type: 'command',
-        command: '${ENSURE_SANDBOX_HOOK}'
-      }]
-    }, {
-      matcher: 'clear',
-      hooks: [{
-        type: 'command',
-        command: '${ENSURE_SANDBOX_HOOK}'
-      }]
     }]
-  }" "$SETTINGS_FILE"
+  }}" "$SETTINGS_FILE"
 )
 
 echo "$new_settings" > "$SETTINGS_FILE"
 
-echo "✓ Installed hooks (UserPromptSubmit, PostToolUse, PermissionRequest, Stop, PreToolUse, SessionStart)"
+echo "✓ Installed hooks (UserPromptSubmit, PostToolUse, PermissionRequest, Stop, PreToolUse)"
 echo ""
 
 # Set CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=16 for Opus 4.7 on the 1M tier.
