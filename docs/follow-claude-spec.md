@@ -84,4 +84,4 @@ Follower Claude reads transcripts on demand, not via a background `tail -F` + Mo
 
 - `mta:*` and `mtm:*` skills — productized version of multi-Claude coordination with explicit registration and shared context files.
 - `docs/multi-session-coordination.md` — prior thinking on multi-session workflows.
-- `script(1)` recipes (in conversation, not yet captured in docs) — the right tool for following a non-Claude terminal (e.g. psql over SSM).
+- `docs/screen-tap-spec.md` — sibling spec for following a non-Claude terminal (psql over SSM, etc.) via `script(1)`.
