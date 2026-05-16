@@ -1,0 +1,495 @@
+#!/usr/bin/env bash
+#
+# claude-pod - Show another Claude session's conversation as readable turns
+#
+# Usage:
+#   claude-pod [path]                     # most-recent session in worktree (default: $PWD)
+#   claude-pod --all [path]               # list sessions in worktree, newest first
+#   claude-pod --peers [path]             # like --all but excludes the current Claude
+#   claude-pod --session <id-or-name>     # show a specific session by ID or rename-name
+#
+# Render flags (apply to default and --session modes):
+#   --turns N                         # render only the last N readable turns
+#   --since <when>                    # render turns at/after <when>:
+#                                     #   ISO 8601 (2026-05-14T14:30:00Z)
+#                                     #   relative duration (30m, 1h, 2d, 90s)
+#   --follow, -f                      # after historical render, stream new turns
+#                                     # as they're appended (Ctrl-C to stop)
+#
+# Selection flags (apply to default, --all, and --peers modes):
+#   --exclude <id-or-name>            # skip this session (repeatable)
+#
+# Worktree mode resolves $path → ~/.claude/projects/<encoded-path>/ and picks the
+# .jsonl with the newest mtime (the active or most recently active session).
+# Path encoding mirrors Claude's: every '/' becomes '-'.
+#
+# Session names: if a session has been given a name via /rename, listings show
+# it in a 'name' column and --session/--exclude accept it in place of the UUID.
+# Names are sourced from ~/.claude/sessions/<pid>.json for live sessions, with
+# a fallback to the latest "Session renamed to:" event in the .jsonl for exited
+# sessions.
+#
+# Output is one block per turn (user prompts + assistant text), oldest-first.
+# Tool calls, tool results, thinking blocks, and meta entries are filtered out.
+#
+# Token-economics note for Claude observers:
+#   --follow streams every new turn → high token cost when used by a Claude
+#   instance. For Claude-driven observation, prefer polling with --since
+#   <last-read-ts> on a controlled cadence. --follow is intended for humans
+#   watching in a terminal pane (zero tokens).
+#
+# Requires: super (SuperDB).
+#
+
+set -euo pipefail
+shopt -s nullglob
+
+# Silence SIGPIPE write errors when output is piped to head/less/etc.
+trap '' PIPE
+
+usage() {
+  cat <<-EOF
+	Usage: claude-pod [path] [flags]
+	       claude-pod --all [path] [flags]
+	       claude-pod --peers [path] [flags]
+	       claude-pod --session <id-or-name> [render flags]
+
+	Selection:
+	  no args                most-recent session in \$PWD
+	  <path>                 most-recent session in that worktree
+	  --all [path]           list sessions in worktree, newest first
+	  --peers [path]         like --all but excludes \$CLAUDE_CODE_SESSION_ID
+	  --session <id-or-name> show a specific session by UUID or /rename name
+	  --exclude <id-or-name> skip this session (repeatable; with --all/--peers/default)
+
+	Render (with default or --session):
+	  --turns N            render only the last N readable turns
+	  --since <when>       ISO 8601 timestamp or relative duration (30m, 2h, 1d)
+	  --follow, -f         stream new turns after historical render (humans only)
+
+	Examples:
+	  claude-pod
+	  claude-pod --peers
+	  claude-pod --session ee28f782-247b-4c7e-88c4-11417fa87154 --turns 20
+	  claude-pod --session axon-staging-19 --since 30m   # name set via /rename
+	  claude-pod -f --since 5m            # human terminal watcher
+	EOF
+}
+
+projects_dir="${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
+
+encode_path() {
+  # Strip a leading slash so absolute paths don't double up the prefix dash.
+  local p="${1#/}"
+  echo "-${p//\//-}"
+}
+
+project_dir_for() {
+  local path
+  path="$(cd "$1" 2>/dev/null && pwd)" || {
+    echo "claude-pod: not a directory: $1" >&2
+    exit 1
+  }
+  local encoded
+  encoded="$(encode_path "$path")"
+  echo "$projects_dir/$encoded"
+}
+
+is_excluded() {
+  local sid="$1"
+  local ex
+  for ex in "${EXCLUDES[@]}"; do
+    [[ "$sid" == "$ex" ]] && return 0
+  done
+  return 1
+}
+
+# Session names (set via /rename) live in two places:
+#  1. ~/.claude/sessions/<pid>.json — for currently-running sessions
+#  2. The session's .jsonl, recorded as the local_command stdout
+#     "Session renamed to: NAME" — survives after the session exits
+# We try (1) first, then fall back to (2).
+
+sessions_meta_dir="${CLAUDE_SESSIONS_META_DIR:-$HOME/.claude/sessions}"
+
+# sessionId<TAB>name lines for every live session that has a /rename name.
+# Built lazily with one super call across all metadata files so per-session
+# lookups are an in-memory string match. Bash 3.2 has no associative arrays,
+# so we keep the cache as a TSV string and walk it.
+SID_NAME_MAP_TSV=""
+SID_NAME_MAP_LOADED=0
+
+load_sid_name_map() {
+  [[ "$SID_NAME_MAP_LOADED" -eq 1 ]] && return 0
+  SID_NAME_MAP_LOADED=1
+  local files=("$sessions_meta_dir"/*.json)
+  [[ -e "${files[0]:-}" ]] || return 0
+  SID_NAME_MAP_TSV=$(
+    super -i json -f line -c \
+      "where has(name) and has(sessionId) | values sessionId + '\t' + name" \
+      "${files[@]}" 2>/dev/null
+  ) || true
+}
+
+# Look up a session's name from the live sessions metadata directory.
+# Emits the name to stdout; exits 1 if not found.
+name_from_live_sessions() {
+  load_sid_name_map
+  [[ -n "$SID_NAME_MAP_TSV" ]] || return 1
+  local sid="$1" line
+  while IFS= read -r line; do
+    if [[ "$line" == "$sid"$'\t'* ]]; then
+      echo "${line#*$'\t'}"
+      return 0
+    fi
+  done <<< "$SID_NAME_MAP_TSV"
+  return 1
+}
+
+# Reverse lookup: name → sessionId from the live sessions metadata directory.
+sid_from_live_sessions() {
+  load_sid_name_map
+  [[ -n "$SID_NAME_MAP_TSV" ]] || return 1
+  local target="$1" line
+  while IFS= read -r line; do
+    if [[ "$line" == *$'\t'"$target" ]]; then
+      echo "${line%%$'\t'*}"
+      return 0
+    fi
+  done <<< "$SID_NAME_MAP_TSV"
+  return 1
+}
+
+# Latest /rename name recorded in a session's .jsonl, if any. The rename event
+# is stored as a system local_command stdout line. We grep the whole record
+# (rather than a named field) so the query stays valid for files whose schema
+# doesn't include subtype/content at all — super errors on missing fields when
+# referenced directly.
+name_from_jsonl() {
+  local file="$1"
+  [[ -r "$file" ]] || return 1
+  super -i json -f line -c "
+    where grep('Session renamed to:', this)
+    | sort -r timestamp
+    | head 1
+    | values regexp('Session renamed to: ([^<]+)', cast(this, <string>))[1]
+  " "$file" 2>/dev/null || true
+}
+
+session_name_for() {
+  local sid="$1" file="$2"
+  local name
+  name="$(name_from_live_sessions "$sid" 2>/dev/null || true)"
+  if [[ -z "$name" && -n "$file" ]]; then
+    name="$(name_from_jsonl "$file" 2>/dev/null || true)"
+  fi
+  echo "$name"
+}
+
+is_uuid() {
+  [[ "$1" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]
+}
+
+# Resolve an argument that is either a session UUID or a /rename name into a
+# UUID. Searches live sessions first, then the worktree's project dir as a
+# fallback. Worktree path comes from $POSITIONAL/$PWD.
+resolve_session_id() {
+  local arg="$1"
+  if is_uuid "$arg"; then
+    echo "$arg"
+    return 0
+  fi
+  local sid
+  if sid=$(sid_from_live_sessions "$arg"); then
+    echo "$sid"
+    return 0
+  fi
+  local target dir f name
+  target="${POSITIONAL:-$PWD}"
+  if dir="$(project_dir_for "$target" 2>/dev/null)" && [[ -d "$dir" ]]; then
+    for f in "$dir"/*.jsonl; do
+      [[ -e "$f" ]] || continue
+      name=$(name_from_jsonl "$f")
+      if [[ "$name" == "$arg" ]]; then
+        sid="${f##*/}"; sid="${sid%.jsonl}"
+        echo "$sid"
+        return 0
+      fi
+    done
+  fi
+  echo "claude-pod: no session matching name: $arg" >&2
+  return 1
+}
+
+filtered_sessions_in() {
+  local dir="$1"
+  local files=("$dir"/*.jsonl)
+  if [[ ${#files[@]} -eq 0 ]]; then
+    return 1
+  fi
+  local f sid f_mtime
+  while IFS= read -r f; do
+    sid="${f##*/}"
+    sid="${sid%.jsonl}"
+    is_excluded "$sid" && continue
+    if [[ -n "${SINCE_EPOCH:-}" ]]; then
+      f_mtime=$(stat -f '%m' "$f")
+      [[ $f_mtime -ge $SINCE_EPOCH ]] || continue
+    fi
+    echo "$f"
+  done < <(ls -t "${files[@]}")
+}
+
+list_sessions() {
+  local target="${1:-$PWD}"
+  local dir
+  dir="$(project_dir_for "$target")"
+  if [[ ! -d "$dir" ]]; then
+    echo "claude-pod: no Claude sessions for $target" >&2
+    echo "  expected: $dir" >&2
+    exit 1
+  fi
+  local any=0
+  printf '%-19s  %-36s  %-5s  %s\n' 'modified' 'sessionId' 'turns' 'name'
+  while IFS= read -r f; do
+    any=1
+    local sid mtime turns name
+    sid="${f##*/}"
+    sid="${sid%.jsonl}"
+    mtime=$(stat -f '%Sm' -t '%Y-%m-%d %H:%M:%S' "$f")
+    turns=$(wc -l < "$f" | tr -d ' ')
+    name=$(session_name_for "$sid" "$f")
+    printf '%-19s  %-36s  %-5s  %s\n' "$mtime" "$sid" "$turns" "$name"
+  done < <(filtered_sessions_in "$dir")
+  if [[ $any -eq 0 ]]; then
+    echo "claude-pod: no matching sessions in $dir" >&2
+    exit 1
+  fi
+}
+
+find_by_session_id() {
+  local sid="$1"
+  local matches=("$projects_dir"/*/"$sid".jsonl)
+  if [[ ${#matches[@]} -eq 0 ]]; then
+    echo "claude-pod: no session file for ID $sid" >&2
+    exit 1
+  fi
+  echo "${matches[0]}"
+}
+
+# Translate a --since value (ISO 8601 or relative duration) to a super expression.
+since_expr() {
+  local v="$1"
+  if [[ "$v" =~ ^[0-9]+[smhd]$ ]]; then
+    echo "now() - '${v}'::duration"
+  else
+    # Treat as ISO 8601. Super will error on bad input.
+    echo "cast('${v}', <time>)"
+  fi
+}
+
+# Translate a --since value to a Unix epoch threshold (for mtime filtering).
+# Delegates parsing to super, which handles durations and ISO 8601 natively.
+# Super returns errors as values (not exit codes), so we detect and surface them.
+since_to_epoch() {
+  local v="$1"
+  local expr
+  if [[ "$v" =~ ^[0-9]+(\.[0-9]+)?[smhdwy]$ ]]; then
+    expr="cast(now() - '$v'::duration, <int64>) / 1000000000"
+  else
+    expr="cast(cast('$v', <time>), <int64>) / 1000000000"
+  fi
+  local result
+  result=$(super -f line -c "$expr")
+  if [[ "$result" == error\(* ]]; then
+    echo "claude-pod: invalid --since value: $v" >&2
+    echo "  super: $result" >&2
+    exit 2
+  fi
+  echo "$result"
+}
+
+# Core filter+normalize pipeline shared by historical and follow rendering.
+# Emits {ts, role, text} records, oldest-first when sourced from a finite file.
+#
+# message.content is either a plain string (simple user prompts) or an array of
+# content blocks (tool use, mixed text/images). We coerce strings into a
+# one-element array of {type:'text', text:...} so a single unnest path handles
+# both shapes. An earlier `switch` design hit a SuperDB quirk where the
+# unnest-branch was evaluated against string rows even when the type guard
+# routed them to the other case.
+filter_pipeline() {
+  local since_clause=""
+  if [[ -n "${SINCE:-}" ]]; then
+    since_clause=" and cast(timestamp, <time>) >= $(since_expr "$SINCE")"
+  fi
+  cat <<EOF
+where type in ['user','assistant'] and not has(isMeta)${since_clause}
+| put _arr := case
+    when typeof(message.content) == <string>
+      then [{type: 'text', text: cast(message.content, <string>)}]
+      else message.content
+    end
+| put text := (unnest _arr | where this.type == 'text' | values this.text | collect(this))
+| where len(text) > 0
+| values {ts: timestamp, role: type, text: join(text, '\n')}
+EOF
+}
+
+# Format a {ts, role, text} record stream as readable blocks.
+format_clause() {
+  echo "| values strftime('%Y-%m-%d %H:%M', cast(ts, <time>)) + '  [' + role + ']\n' + text + '\n'"
+}
+
+render_historical() {
+  local file="$1"
+  local order_clause
+  if [[ -n "${TURNS:-}" ]]; then
+    # Sort desc, take N, then sort asc for chronological output.
+    order_clause="| sort -r ts | head $TURNS | sort ts"
+  else
+    order_clause="| sort ts"
+  fi
+  super -f line -c "$(filter_pipeline) $order_clause $(format_clause)" "$file"
+}
+
+render_follow() {
+  local file="$1"
+  # Stream appends through the same filter pipeline (no sort — append order is
+  # already chronological). -n 0 means start from end (don't re-emit history).
+  tail -f -n 0 "$file" | super -i json -f line -c "$(filter_pipeline) $(format_clause)"
+}
+
+MODE=worktree
+POSITIONAL=""
+SESSION_ID=""
+EXCLUDES=()
+TURNS=""
+SINCE=""
+FOLLOW=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --all)
+      MODE=list
+      shift
+      ;;
+    --peers)
+      MODE=list
+      [[ -n "${CLAUDE_CODE_SESSION_ID:-}" ]] || {
+        echo "claude-pod: --peers requires \$CLAUDE_CODE_SESSION_ID (only set inside Claude Code); use --all from a regular shell" >&2
+        exit 2
+      }
+      EXCLUDES+=("$CLAUDE_CODE_SESSION_ID")
+      shift
+      ;;
+    --session)
+      MODE=session
+      SESSION_ID="${2:?--session requires a sessionId}"
+      shift 2
+      ;;
+    --exclude)
+      EXCLUDES+=("${2:?--exclude requires a sessionId}")
+      shift 2
+      ;;
+    --turns)
+      TURNS="${2:?--turns requires a number}"
+      [[ "$TURNS" =~ ^[0-9]+$ ]] || { echo "claude-pod: --turns must be a non-negative integer" >&2; exit 2; }
+      shift 2
+      ;;
+    --since)
+      SINCE="${2:?--since requires a timestamp or duration}"
+      shift 2
+      ;;
+    -f|--follow)
+      FOLLOW=1
+      shift
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      echo "claude-pod: unknown flag: $1" >&2
+      exit 2
+      ;;
+    *)
+      [[ -z "$POSITIONAL" ]] || {
+        echo "claude-pod: too many positional args" >&2
+        exit 2
+      }
+      POSITIONAL="$1"
+      shift
+      ;;
+  esac
+done
+
+# --turns and --follow are render-only; --since is also a list-mode mtime filter.
+if [[ "$MODE" == "list" ]]; then
+  if [[ -n "$TURNS" || "$FOLLOW" -eq 1 ]]; then
+    echo "claude-pod: --turns/--follow are render flags; not valid with --all/--peers" >&2
+    exit 2
+  fi
+fi
+
+# Pre-validate --since once; fail fast before any rendering or listing runs.
+if [[ -n "$SINCE" ]]; then
+  SINCE_EPOCH=$(since_to_epoch "$SINCE")
+fi
+
+# Resolve names → UUIDs for --session and --exclude (positional was already
+# parsed, so project_dir_for can use it as the worktree fallback for names).
+if [[ -n "$SESSION_ID" ]]; then
+  SESSION_ID=$(resolve_session_id "$SESSION_ID")
+fi
+if [[ ${#EXCLUDES[@]} -gt 0 ]]; then
+  resolved=()
+  for ex in "${EXCLUDES[@]}"; do
+    resolved+=("$(resolve_session_id "$ex")")
+  done
+  EXCLUDES=("${resolved[@]}")
+fi
+
+resolve_render_file() {
+  case "$MODE" in
+    session)
+      find_by_session_id "$SESSION_ID"
+      ;;
+    worktree)
+      local target dir file
+      target="${POSITIONAL:-$PWD}"
+      dir="$(project_dir_for "$target")"
+      if [[ ! -d "$dir" ]]; then
+        echo "claude-pod: no Claude sessions for $target" >&2
+        echo "  expected: $dir" >&2
+        exit 1
+      fi
+      file=$(filtered_sessions_in "$dir" | head -n 1)
+      if [[ -z "$file" ]]; then
+        echo "claude-pod: no matching sessions in $dir" >&2
+        exit 1
+      fi
+      echo "$file"
+      ;;
+  esac
+}
+
+case "$MODE" in
+  list)
+    list_sessions "${POSITIONAL:-$PWD}"
+    ;;
+  *)
+    file="$(resolve_render_file)"
+    # --turns 0 means "no history" — skip the historical render.
+    if [[ "$TURNS" != "0" ]]; then
+      render_historical "$file"
+    fi
+    if [[ "$FOLLOW" -eq 1 ]]; then
+      render_follow "$file"
+    fi
+    ;;
+esac

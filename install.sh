@@ -406,9 +406,12 @@ if [[ -d "$CC_AUDIT_RULES_SRC" ]]; then
 fi
 
 # Install bin/* helper commands as symlinks in ~/.local/bin/
+# Explicit allowlist (not a glob) so ad-hoc analysis scripts in bin/
+# (harvest.sh, session-*.sh, etc.) don't get installed as user commands.
+# When adding a new user-facing command to bin/, add it here.
 LOCAL_BIN="${LOCAL_BIN:-$HOME/.local/bin}"
 mkdir -p "$LOCAL_BIN"
-for cmd in claude-slot claude-tabs claude-search work-context; do
+for cmd in claude-slot claude-tabs claude-search claude-pod work-context; do
   src="$REPO_DIR/bin/$cmd"
   dest="$LOCAL_BIN/$cmd"
   if [[ -f "$src" ]]; then
