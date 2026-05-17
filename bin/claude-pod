@@ -61,17 +61,22 @@ usage() {
 	  --session <id-or-name> show a specific session by UUID or /rename name
 	  --exclude <id-or-name> skip this session (repeatable; with --all/--peers)
 
-	Render (with <path> or --session):
-	  --turns N            render only the last N readable turns
+	Render flags:
+	  --turns N            render only the last N readable turns (per-session;
+	                       not valid with --all/--peers)
 	  --since <when>       ISO 8601 timestamp or relative duration (30m, 2h, 1d)
-	  --follow, -f         stream new turns after historical render (humans only)
+	  --follow, -f         stream new turns. Per-session: render historical then
+	                       follow. With --all/--peers: firehose — interleave new
+	                       turns from every matched session, tagged by short sid.
 
 	Examples:
 	  claude-pod .
 	  claude-pod --peers
 	  claude-pod --session ee28f782-247b-4c7e-88c4-11417fa87154 --turns 20
 	  claude-pod --session axon-staging-19 --since 30m   # name set via /rename
+	                                                     # cross-worktree
 	  claude-pod -f --since 5m .                          # human terminal watcher
+	  claude-pod --peers -f                               # firehose all peers
 	EOF
 }
 
@@ -162,28 +167,71 @@ sid_from_live_sessions() {
   return 1
 }
 
-# Latest /rename name recorded in a session's .jsonl, if any. The rename event
-# is stored as a system local_command stdout line. We grep the whole record
-# (rather than a named field) so the query stays valid for files whose schema
-# doesn't include subtype/content at all — super errors on missing fields when
-# referenced directly.
-name_from_jsonl() {
-  local file="$1"
-  [[ -r "$file" ]] || return 1
-  super -i json -f line -c "
-    where grep('Session renamed to:', this)
-    | sort -r timestamp
-    | head 1
-    | values regexp('Session renamed to: ([^<]+)', cast(this, <string>))[1]
-  " "$file" 2>/dev/null || true
+# Cache of /rename names recorded in session .jsonl files across all
+# worktrees. Built lazily with one super call so name lookups (forward and
+# reverse) are an in-memory walk regardless of how many sessions exist.
+#
+# Actual rename events have type=='system' and subtype=='local_command', with
+# the name in `content` wrapped in <local-command-stdout>…</local-command-stdout>
+# tags. Filtering on type+subtype prevents false matches from tool results,
+# code reads, or assistant turns that contain the literal phrase
+# "Session renamed to:". `has(subtype)` guards against records whose schema
+# lacks the field (super errors on direct missing-field access).
+SID_NAME_DISK_MAP_TSV=""
+SID_NAME_DISK_MAP_LOADED=0
+
+load_sid_name_disk_map() {
+  [[ "$SID_NAME_DISK_MAP_LOADED" -eq 1 ]] && return 0
+  SID_NAME_DISK_MAP_LOADED=1
+  local files=("$projects_dir"/*/*.jsonl)
+  [[ -e "${files[0]:-}" ]] || return 0
+  SID_NAME_DISK_MAP_TSV=$(
+    super -i json -f line -c "
+      where type == 'system' and has(subtype) and subtype == 'local_command'
+        and grep('Session renamed to:', this)
+      | put _name := regexp('Session renamed to: ([^<]+)', cast(this, <string>))[1]
+      | sort -r timestamp
+      | summarize ns := collect(_name) by sessionId
+      | values sessionId + '\t' + ns[0]
+    " "${files[@]}" 2>/dev/null
+  ) || true
+}
+
+# Forward lookup: sessionId → name from the on-disk rename map.
+name_from_disk_map() {
+  load_sid_name_disk_map
+  [[ -n "$SID_NAME_DISK_MAP_TSV" ]] || return 1
+  local sid="$1" line
+  while IFS= read -r line; do
+    if [[ "$line" == "$sid"$'\t'* ]]; then
+      echo "${line#*$'\t'}"
+      return 0
+    fi
+  done <<< "$SID_NAME_DISK_MAP_TSV"
+  return 1
+}
+
+# Reverse lookup: name → sessionId from the on-disk rename map. Scans every
+# worktree, so this is the cross-worktree fallback for `--session <name>`.
+sid_from_disk_map() {
+  load_sid_name_disk_map
+  [[ -n "$SID_NAME_DISK_MAP_TSV" ]] || return 1
+  local target="$1" line
+  while IFS= read -r line; do
+    if [[ "$line" == *$'\t'"$target" ]]; then
+      echo "${line%%$'\t'*}"
+      return 0
+    fi
+  done <<< "$SID_NAME_DISK_MAP_TSV"
+  return 1
 }
 
 session_name_for() {
-  local sid="$1" file="$2"
+  local sid="$1"
   local name
   name="$(name_from_live_sessions "$sid" 2>/dev/null || true)"
-  if [[ -z "$name" && -n "$file" ]]; then
-    name="$(name_from_jsonl "$file" 2>/dev/null || true)"
+  if [[ -z "$name" ]]; then
+    name="$(name_from_disk_map "$sid" 2>/dev/null || true)"
   fi
   echo "$name"
 }
@@ -193,8 +241,9 @@ is_uuid() {
 }
 
 # Resolve an argument that is either a session UUID or a /rename name into a
-# UUID. Searches live sessions first, then the worktree's project dir as a
-# fallback. Worktree path comes from $POSITIONAL/$PWD.
+# UUID. Searches live sessions first (cheap), then the on-disk rename map
+# (covers every worktree). Cross-worktree by design — a name set anywhere on
+# this machine will resolve.
 resolve_session_id() {
   local arg="$1"
   if is_uuid "$arg"; then
@@ -206,18 +255,9 @@ resolve_session_id() {
     echo "$sid"
     return 0
   fi
-  local target dir f name
-  target="${POSITIONAL:-$PWD}"
-  if dir="$(project_dir_for "$target" 2>/dev/null)" && [[ -d "$dir" ]]; then
-    for f in "$dir"/*.jsonl; do
-      [[ -e "$f" ]] || continue
-      name=$(name_from_jsonl "$f")
-      if [[ "$name" == "$arg" ]]; then
-        sid="${f##*/}"; sid="${sid%.jsonl}"
-        echo "$sid"
-        return 0
-      fi
-    done
+  if sid=$(sid_from_disk_map "$arg"); then
+    echo "$sid"
+    return 0
   fi
   echo "claude-pod: no session matching name: $arg" >&2
   return 1
@@ -246,26 +286,36 @@ list_sessions() {
   local target="${1:-$PWD}"
   local dir
   dir="$(project_dir_for "$target")"
+  # Bad path / never-used worktree is an error (the user pointed somewhere
+  # Claude has never run). But "directory exists, just no sessions match the
+  # window" is a normal answer — exit 0.
   if [[ ! -d "$dir" ]]; then
     echo "claude-pod: no Claude sessions for $target" >&2
     echo "  expected: $dir" >&2
     exit 1
   fi
+  # Pre-load the name maps in the parent shell. Each `name=$(session_name_for …)`
+  # runs in a subshell that can read but not write parent variables; without
+  # this, every row would rebuild the disk map from scratch (multi-second
+  # super query per row).
+  load_sid_name_map
+  load_sid_name_disk_map
   local any=0
-  printf '%-19s  %-36s  %-5s  %s\n' 'modified' 'sessionId' 'turns' 'name'
   while IFS= read -r f; do
+    if [[ $any -eq 0 ]]; then
+      printf '%-19s  %-36s  %-5s  %s\n' 'modified' 'sessionId' 'turns' 'name'
+    fi
     any=1
     local sid mtime turns name
     sid="${f##*/}"
     sid="${sid%.jsonl}"
     mtime=$(stat -f '%Sm' -t '%Y-%m-%d %H:%M:%S' "$f")
     turns=$(wc -l < "$f" | tr -d ' ')
-    name=$(session_name_for "$sid" "$f")
+    name=$(session_name_for "$sid")
     printf '%-19s  %-36s  %-5s  %s\n' "$mtime" "$sid" "$turns" "$name"
   done < <(filtered_sessions_in "$dir")
   if [[ $any -eq 0 ]]; then
     echo "claude-pod: no matching sessions in $dir" >&2
-    exit 1
   fi
 }
 
@@ -362,6 +412,42 @@ render_follow() {
   tail -f -n 0 "$file" | super -i json -f line -c "$(filter_pipeline) $(format_clause)"
 }
 
+# Variant of filter_pipeline that keeps sessionId in the output. Used by the
+# multi-session firehose so each turn can be tagged with its source.
+filter_pipeline_with_sid() {
+  local since_clause=""
+  if [[ -n "${SINCE:-}" ]]; then
+    since_clause=" and cast(timestamp, <time>) >= $(since_expr "$SINCE")"
+  fi
+  cat <<EOF
+where type in ['user','assistant'] and not has(isMeta)${since_clause}
+| put _arr := case
+    when typeof(message.content) == <string>
+      then [{type: 'text', text: cast(message.content, <string>)}]
+      else message.content
+    end
+| put text := (unnest _arr | where this.type == 'text' | values this.text | collect(this))
+| where len(text) > 0
+| values {ts: timestamp, role: type, sid: sessionId, text: join(text, '\n')}
+EOF
+}
+
+format_clause_with_sid() {
+  # Short sid (first 8 chars) keeps the prefix readable. Full sid is in the
+  # listing if you need to disambiguate.
+  echo "| values strftime('%Y-%m-%d %H:%M', cast(ts, <time>)) + '  [' + role + ' ' + sid[0:8] + ']\n' + text + '\n'"
+}
+
+# Stream-everything follow: tail -qf all matched files together, interleaved.
+# Output is annotated with a short sessionId prefix so turns from different
+# sessions can be told apart. `-q` suppresses the per-file ==> headers that
+# tail would otherwise emit when output switches files.
+render_follow_all() {
+  local files=("$@")
+  [[ ${#files[@]} -gt 0 ]] || return 0
+  tail -qf -n 0 "${files[@]}" | super -i json -f line -c "$(filter_pipeline_with_sid) $(format_clause_with_sid)"
+}
+
 MODE=worktree
 POSITIONAL=""
 SESSION_ID=""
@@ -437,12 +523,12 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# --turns and --follow are render-only; --since is also a list-mode mtime filter.
-if [[ "$MODE" == "list" ]]; then
-  if [[ -n "$TURNS" || "$FOLLOW" -eq 1 ]]; then
-    echo "claude-pod: --turns/--follow are render flags; not valid with --all/--peers" >&2
-    exit 2
-  fi
+# --turns is a per-session render flag; doesn't make sense across a list.
+# --follow IS valid with --all/--peers: it streams new turns from every matched
+# session interleaved ("firehose" mode).
+if [[ "$MODE" == "list" && -n "$TURNS" ]]; then
+  echo "claude-pod: --turns is a render flag; not valid with --all/--peers" >&2
+  exit 2
 fi
 
 # Pre-validate --since once; fail fast before any rendering or listing runs.
@@ -463,13 +549,18 @@ if [[ ${#EXCLUDES[@]} -gt 0 ]]; then
   EXCLUDES=("${resolved[@]}")
 fi
 
+# Sets $RENDER_FILE to the .jsonl to render, or empty if the worktree has
+# no matching sessions (a non-error empty answer — e.g. "no peer activity in
+# the last 10m"). Hard errors (bad path, unknown session id) exit non-zero
+# from helpers, so we don't need to signal them here.
+RENDER_FILE=""
 resolve_render_file() {
   case "$MODE" in
     session)
-      find_by_session_id "$SESSION_ID"
+      RENDER_FILE=$(find_by_session_id "$SESSION_ID")
       ;;
     worktree)
-      local target dir file
+      local target dir
       target="${POSITIONAL:-$PWD}"
       dir="$(project_dir_for "$target")"
       if [[ ! -d "$dir" ]]; then
@@ -477,22 +568,42 @@ resolve_render_file() {
         echo "  expected: $dir" >&2
         exit 1
       fi
-      file=$(filtered_sessions_in "$dir" | head -n 1)
-      if [[ -z "$file" ]]; then
+      RENDER_FILE=$(filtered_sessions_in "$dir" | head -n 1)
+      if [[ -z "$RENDER_FILE" ]]; then
         echo "claude-pod: no matching sessions in $dir" >&2
-        exit 1
       fi
-      echo "$file"
       ;;
   esac
 }
 
 case "$MODE" in
   list)
-    list_sessions "${POSITIONAL:-$PWD}"
+    if [[ "$FOLLOW" -eq 1 ]]; then
+      # Firehose mode: stream new turns from every matched session interleaved.
+      target="${POSITIONAL:-$PWD}"
+      dir="$(project_dir_for "$target")"
+      if [[ ! -d "$dir" ]]; then
+        echo "claude-pod: no Claude sessions for $target" >&2
+        echo "  expected: $dir" >&2
+        exit 1
+      fi
+      files=()
+      while IFS= read -r f; do
+        files+=("$f")
+      done < <(filtered_sessions_in "$dir")
+      if [[ ${#files[@]} -eq 0 ]]; then
+        echo "claude-pod: no matching sessions in $dir" >&2
+        exit 0
+      fi
+      render_follow_all "${files[@]}"
+    else
+      list_sessions "${POSITIONAL:-$PWD}"
+    fi
     ;;
   *)
-    file="$(resolve_render_file)"
+    resolve_render_file
+    [[ -z "$RENDER_FILE" ]] && exit 0
+    file="$RENDER_FILE"
     # --turns 0 means "no history" — skip the historical render.
     if [[ "$TURNS" != "0" ]]; then
       render_historical "$file"

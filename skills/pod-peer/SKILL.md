@@ -32,17 +32,22 @@ Selection:
   --session <id-or-name> show a specific session by UUID or /rename name
   --exclude <id-or-name> skip this session (repeatable; with --all/--peers)
 
-Render (with <path> or --session):
-  --turns N            render only the last N readable turns
+Render flags:
+  --turns N            render only the last N readable turns (per-session;
+                       not valid with --all/--peers)
   --since <when>       ISO 8601 timestamp or relative duration (30m, 2h, 1d)
-  --follow, -f         stream new turns after historical render (humans only)
+  --follow, -f         stream new turns. Per-session: render historical then
+                       follow. With --all/--peers: firehose — interleave new
+                       turns from every matched session, tagged by short sid.
 
 Examples:
   claude-pod .
   claude-pod --peers
   claude-pod --session ee28f782-247b-4c7e-88c4-11417fa87154 --turns 20
   claude-pod --session axon-staging-19 --since 30m   # name set via /rename
+                                                     # cross-worktree
   claude-pod -f --since 5m .                          # human terminal watcher
+  claude-pod --peers -f                               # firehose all peers
 ```
 
 Worktree scope is the default; pass a path to look at peers in another
