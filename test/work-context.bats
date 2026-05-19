@@ -218,3 +218,47 @@ inject_worktree_data() {
   echo "$result" | grep -q "ds1"
   echo "$result" | grep -q "ds3"
 }
+
+# ==============================================================================
+# worktrees (human-readable) dirty column + branch truncation
+# ==============================================================================
+
+@test "worktrees has a dedicated dirty column" {
+  command -v mlr &>/dev/null || skip "mlr not installed"
+  inject_worktree_data
+
+  run worktrees
+  assert_success
+  # A column header named "dirty"
+  [[ "$output" == *"dirty"* ]]
+}
+
+@test "worktrees does not append dirty marker to wt name" {
+  command -v mlr &>/dev/null || skip "mlr not installed"
+  inject_worktree_data
+
+  run worktrees
+  assert_success
+  # ds3 is dirty; it must not appear as "ds3*" (the marker now lives in its own column)
+  [[ "$output" != *"ds3*"* ]]
+  # But ds3 itself must still be present
+  [[ "$output" == *"ds3"* ]]
+}
+
+@test "worktrees truncates branch names to 46 chars" {
+  command -v mlr &>/dev/null || skip "mlr not installed"
+
+  collect_worktree_data() {
+    local _now; _now=$(date +%s)
+    # 57-char branch — should be truncated to its 46-char prefix
+    printf '{"name":"ds1","branch":"devops-1149-support-revival-of-shutdown-staging-axon-worker","commit_ts":%s,"commit_msg":"x","dirty":false}\n' "$_now"
+  }
+  export -f collect_worktree_data
+
+  run worktrees
+  assert_success
+  # Truncated form (46 chars) present
+  [[ "$output" == *"devops-1149-support-revival-of-shutdown-stagin"* ]]
+  # Full form absent
+  [[ "$output" != *"devops-1149-support-revival-of-shutdown-staging-axon-worker"* ]]
+}

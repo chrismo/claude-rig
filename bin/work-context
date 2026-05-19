@@ -248,8 +248,8 @@ function worktrees() {
       | where age_days <= 14
       | sort age_days
       | put age_str := age_days == 0 ? 'today' : f'{age_days}d'
-      | put wt := f'{name}{dirty_mark}'
-      | cut wt, age_str, branch, commit_msg
+      | put branch := branch[0:46]
+      | cut wt:=name, dirty:=dirty_mark, age:=age_str, branch, commit_msg
     " - | mlr --j2p --barred cat
 
     # Stale worktrees (>14 days), oldest last
@@ -260,9 +260,9 @@ function worktrees() {
       | where not grep('^staging', branch)
       | where age_days > 14
       | sort age_days
-      | put wt := f'{name}{dirty_mark}'
       | put age := f'{age_days}d'
-      | cut wt, age, branch
+      | put branch := branch[0:46]
+      | cut wt:=name, dirty:=dirty_mark, age, branch
     " - | mlr --j2p --headerless-csv-output cat)
 
     if [[ -n "$stale" ]]; then
