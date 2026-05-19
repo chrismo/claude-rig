@@ -256,8 +256,8 @@ inject_worktree_data() {
   [[ "$output" == *"gone"* ]]
   # ds5 (gone:true) is 3d old, should appear in recent table with an 'x' marker
   [[ "$output" == *"ds5"* ]]
-  # Check the ds5 row has an 'x' between two pipes (i.e., in a column cell)
-  echo "$output" | grep -E "ds5\b" | grep -qE '\|\s*x\s*\|'
+  # Check the ds5 row has an 'x' between two column separators (ASCII | or Unicode │)
+  echo "$output" | grep -E "ds5\b" | grep -qE '[|│]\s*x\s*[|│]'
 }
 
 @test "worktrees truncates branch names to 46 chars" {

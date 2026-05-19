@@ -257,7 +257,8 @@ function worktrees() {
       | put age_str := age_days == 0 ? 'today' : f'{age_days}d'
       | put branch := branch[0:46]
       | cut wt:=name, dirty:=dirty_mark, gone:=gone_mark, age:=age_str, branch, commit_msg
-    " - | mlr --j2p --barred cat
+      | collect(this)
+    " - | grdy
 
     # Stale worktrees (>14 days), oldest last
     local stale
@@ -271,7 +272,8 @@ function worktrees() {
       | put age := f'{age_days}d'
       | put branch := branch[0:46]
       | cut wt:=name, dirty:=dirty_mark, gone:=gone_mark, age, branch
-    " - | mlr --j2p --headerless-csv-output cat)
+      | collect(this)
+    " - | grdy)
 
     if [[ -n "$stale" ]]; then
         echo -e "\n${DIM}Stale (>2w):${RESET}"
