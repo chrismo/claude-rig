@@ -85,7 +85,7 @@ function emit_repo_json() {
     local repo_dir="$1"
     cd "$repo_dir" 2>/dev/null || return
 
-    local branch commit_ts commit_msg short_name dirty
+    local branch commit_ts commit_msg short_name dirty gone upstream_track
     branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null) || return
     commit_ts=$(git log -1 --format='%ct' 2>/dev/null) || return
     commit_msg=$(git log -1 --format='%s' 2>/dev/null | head -c 50)
@@ -93,12 +93,18 @@ function emit_repo_json() {
     dirty="false"
     [[ -n $(git status --porcelain 2>/dev/null) ]] && dirty="true"
 
+    # "gone" = upstream tracking ref exists in config but the remote ref has been deleted
+    # (the same signal `git branch -v -v` shows as "[gone]")
+    gone="false"
+    upstream_track=$(git for-each-ref --format='%(upstream:track)' "refs/heads/$branch" 2>/dev/null)
+    [[ "$upstream_track" == *"gone"* ]] && gone="true"
+
     # Escape quotes in commit message for JSON
     commit_msg="${commit_msg//\\/\\\\}"
     commit_msg="${commit_msg//\"/\\\"}"
 
-    printf '{"name":"%s","branch":"%s","commit_ts":%s,"commit_msg":"%s","dirty":%s}\n' \
-        "$short_name" "$branch" "$commit_ts" "$commit_msg" "$dirty"
+    printf '{"name":"%s","branch":"%s","commit_ts":%s,"commit_msg":"%s","dirty":%s,"gone":%s}\n' \
+        "$short_name" "$branch" "$commit_ts" "$commit_msg" "$dirty" "$gone"
 }
 
 function collect_worktree_data() {
@@ -244,12 +250,13 @@ function worktrees() {
     collect_worktree_data | super -f json -c "
       put age_days := ((${now} - commit_ts) / 86400)::int64
       | put dirty_mark := dirty ? '*' : ''
+      | put gone_mark := gone ? 'x' : ''
       | where not grep('^staging', branch)
       | where age_days <= 14
       | sort age_days
       | put age_str := age_days == 0 ? 'today' : f'{age_days}d'
       | put branch := branch[0:46]
-      | cut wt:=name, dirty:=dirty_mark, age:=age_str, branch, commit_msg
+      | cut wt:=name, dirty:=dirty_mark, gone:=gone_mark, age:=age_str, branch, commit_msg
     " - | mlr --j2p --barred cat
 
     # Stale worktrees (>14 days), oldest last
@@ -257,12 +264,13 @@ function worktrees() {
     stale=$(collect_worktree_data | super -f json -c "
       put age_days := ((${now} - commit_ts) / 86400)::int64
       | put dirty_mark := dirty ? '*' : ''
+      | put gone_mark := gone ? 'x' : ''
       | where not grep('^staging', branch)
       | where age_days > 14
       | sort age_days
       | put age := f'{age_days}d'
       | put branch := branch[0:46]
-      | cut wt:=name, dirty:=dirty_mark, age, branch
+      | cut wt:=name, dirty:=dirty_mark, gone:=gone_mark, age, branch
     " - | mlr --j2p --headerless-csv-output cat)
 
     if [[ -n "$stale" ]]; then

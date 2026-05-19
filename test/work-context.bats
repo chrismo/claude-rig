@@ -189,10 +189,11 @@ inject_worktree_data() {
   # Must export so override survives into pipe subshells
   collect_worktree_data() {
     local _now; _now=$(date +%s)
-    printf '{"name":"ds1","branch":"main","commit_ts":%s,"commit_msg":"latest commit","dirty":false}\n' "$_now"
-    printf '{"name":"ds2","branch":"staging-2","commit_ts":%s,"commit_msg":"old commit","dirty":false}\n' "$((_now - 86400 * 30))"
-    printf '{"name":"ds3","branch":"feat-123-something","commit_ts":%s,"commit_msg":"feature work","dirty":true}\n' "$((_now - 86400 * 5))"
-    printf '{"name":"ds4","branch":"staging-7","commit_ts":%s,"commit_msg":"parked","dirty":false}\n' "$((_now - 86400 * 20))"
+    printf '{"name":"ds1","branch":"main","commit_ts":%s,"commit_msg":"latest commit","dirty":false,"gone":false}\n' "$_now"
+    printf '{"name":"ds2","branch":"staging-2","commit_ts":%s,"commit_msg":"old commit","dirty":false,"gone":false}\n' "$((_now - 86400 * 30))"
+    printf '{"name":"ds3","branch":"feat-123-something","commit_ts":%s,"commit_msg":"feature work","dirty":true,"gone":false}\n' "$((_now - 86400 * 5))"
+    printf '{"name":"ds4","branch":"staging-7","commit_ts":%s,"commit_msg":"parked","dirty":false,"gone":false}\n' "$((_now - 86400 * 20))"
+    printf '{"name":"ds5","branch":"feat-merged-and-deleted","commit_ts":%s,"commit_msg":"merged work","dirty":false,"gone":true}\n' "$((_now - 86400 * 3))"
   }
   export -f collect_worktree_data
 }
@@ -243,6 +244,20 @@ inject_worktree_data() {
   [[ "$output" != *"ds3*"* ]]
   # But ds3 itself must still be present
   [[ "$output" == *"ds3"* ]]
+}
+
+@test "worktrees has a dedicated gone column" {
+  command -v mlr &>/dev/null || skip "mlr not installed"
+  inject_worktree_data
+
+  run worktrees
+  assert_success
+  # Column header "gone" must be present (alongside the existing "dirty" header)
+  [[ "$output" == *"gone"* ]]
+  # ds5 (gone:true) is 3d old, should appear in recent table with an 'x' marker
+  [[ "$output" == *"ds5"* ]]
+  # Check the ds5 row has an 'x' between two pipes (i.e., in a column cell)
+  echo "$output" | grep -E "ds5\b" | grep -qE '\|\s*x\s*\|'
 }
 
 @test "worktrees truncates branch names to 46 chars" {
