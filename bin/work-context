@@ -243,7 +243,8 @@ function worktrees() {
     local now
     now=$(date +%s)
 
-    echo -e "${CYAN}${BOLD}🌳 GIT WORKTREES STATUS${RESET}"
+    local config_display="${wc_config:-~/.config/work-context.sup (not found)}"
+    echo -e "${CYAN}${BOLD}🌳 GIT WORKTREES STATUS${RESET}  ${DIM}(config: ${config_display})${RESET}"
     echo -e "${DIM}───────────────────────────────────────────────────────────────${RESET}"
 
     # Recent worktrees (<=14 days, not staging)
