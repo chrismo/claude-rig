@@ -133,7 +133,7 @@ load_sid_name_map() {
   [[ -e "${files[0]:-}" ]] || return 0
   SID_NAME_MAP_TSV=$(
     super -i json -f line -c \
-      "where has(name) and has(sessionId) | values sessionId + '\t' + name" \
+      "where has(name) and has(sessionId) | values f'{sessionId}\t{name}'" \
       "${files[@]}" 2>/dev/null
   ) || true
 }
@@ -192,7 +192,7 @@ load_sid_name_disk_map() {
       | put _name := regexp('Session renamed to: ([^<]+)', cast(this, <string>))[1]
       | sort -r timestamp
       | summarize ns := collect(_name) by sessionId
-      | values sessionId + '\t' + ns[0]
+      | values f'{sessionId}\t{ns[0]}'
     " "${files[@]}" 2>/dev/null
   ) || true
 }
@@ -390,7 +390,7 @@ EOF
 
 # Format a {ts, role, text} record stream as readable blocks.
 format_clause() {
-  echo "| values strftime('%Y-%m-%d %H:%M', cast(ts, <time>)) + '  [' + role + ']\n' + text + '\n'"
+  echo "| values f'{strftime(\"%Y-%m-%d %H:%M\", cast(ts, <time>))}  [{role}]\n{text}\n'"
 }
 
 render_historical() {
@@ -435,7 +435,7 @@ EOF
 format_clause_with_sid() {
   # Short sid (first 8 chars) keeps the prefix readable. Full sid is in the
   # listing if you need to disambiguate.
-  echo "| values strftime('%Y-%m-%d %H:%M', cast(ts, <time>)) + '  [' + role + ' ' + sid[0:8] + ']\n' + text + '\n'"
+  echo "| values f'{strftime(\"%Y-%m-%d %H:%M\", cast(ts, <time>))}  [{role} {sid[0:8]}]\n{text}\n'"
 }
 
 # Stream-everything follow: tail -qf all matched files together, interleaved.
