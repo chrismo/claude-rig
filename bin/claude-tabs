@@ -36,13 +36,16 @@
 #   - Restore adds tabs; it doesn't replace existing ones. Kill Ghostty
 #     first for a clean slate.
 #
-# Pane-aware restore is theoretically possible — Ghostty 1.3+ has AppleScript
-# support for splits (application → windows → tabs → terminals), including
-# creating splits and reading working directories per-terminal. But panes are
-# typically temp helpers, so tabs-only is the practical choice. If needed:
-#   - Save: enumerate terminals per tab via AppleScript to capture groupings
-#   - Restore: create tab, split it, send commands to each pane
-#   - See also: ghostty-workspace (YAML-driven layouts via AppleScript)
+# Restore uses Ghostty's native scripting (Ghostty 1.3+) — `new tab`,
+# `input text to terminal`, `send key "return" to terminal` — instead of
+# clipboard+keystroke routing through System Events. This avoids focus races
+# where a paste meant for a new tab landed in the prior tab's claude prompt.
+#
+# Pane-aware restore is possible but unimplemented: the dictionary exposes
+# `split direction:right/left/down/up` on terminals, so save could enumerate
+# terminals-per-tab and restore could create splits. Panes are typically temp
+# helpers, so tabs-only remains the practical choice.
+# See also: ghostty-workspace (YAML-driven layouts via AppleScript).
 #
 
 set -euo pipefail
@@ -208,66 +211,80 @@ build_restore_applescript() {
   local cmd_dir="$1"
   local count="$2"
 
+  # Uses Ghostty's native scripting commands (Ghostty 1.3+):
+  #   - `new tab in window`   — returns a tab object directly, no focus race
+  #   - `input text ... to terminal`  — delivers to a specific terminal surface
+  #   - `send key "return" to terminal` — Enter to that same terminal
+  #
+  # The old implementation routed cmd+v through System Events, which delivered
+  # to whatever tab happened to be frontmost when the keystroke landed. Under
+  # load, the new tab hadn't taken focus yet and the paste ended up in the
+  # prior tab where `claude` was already booting.
+  #
+  # Note: we keep `tell application "Ghostty"` blocks small and avoid using
+  # any identifier that might collide with terminology Ghostty's dictionary
+  # loads into scope (e.g. `date`, `time`). Date arithmetic is replaced with
+  # a fixed-count poll in `waitForFirstWindow`.
   cat <<EOF
-on isRunning()
-    application "Ghostty" is running
-end isRunning
-
 on hasWindows()
-    if not isRunning() then return false
-    tell application "System Events"
-        return exists window 1 of process "Ghostty"
+    if not (application "Ghostty" is running) then return false
+    tell application "Ghostty"
+        set n to (count of windows)
     end tell
+    return n > 0
 end hasWindows
 
-on waitForWindow(timeout_s)
-    set end_time to (current date) + timeout_s
-    repeat until hasWindows() or ((current date) > end_time)
+on waitForFirstWindow()
+    repeat 60 times
+        if hasWindows() then return true
         delay 0.05
     end repeat
     return hasWindows()
-end waitForWindow
+end waitForFirstWindow
 
-on pasteAndRun(cmdFile)
-    do shell script "cat " & quoted form of cmdFile & " | pbcopy"
-    delay 0.1
-    tell application "System Events"
-        tell process "Ghostty"
-            keystroke "v" using command down
-            delay 0.1
-            keystroke return
-        end tell
-    end tell
-end pasteAndRun
+on readCmd(cmdFile)
+    return do shell script "cat " & quoted form of cmdFile
+end readCmd
 
-on newTab()
-    tell application "System Events"
-        keystroke "t" using command down
+on sendToTerminal(term, cmdFile)
+    set cmdText to my readCmd(cmdFile)
+    tell application "Ghostty"
+        input text cmdText to term
+        send key "return" to term
     end tell
-    delay 0.5
-end newTab
+end sendToTerminal
 
 set cmdDir to "${cmd_dir}"
 set sessionCount to ${count}
 
-set justActivated to not isRunning()
+set wasRunning to (application "Ghostty" is running)
 tell application "Ghostty" to activate
+if not my waitForFirstWindow() then
+    display dialog "Ghostty did not open a window"
+    return
+end if
 
-if justActivated then
-    if not waitForWindow(3) then
-        display dialog "Failed to create initial Ghostty window"
-        return
-    end if
-    delay 0.5
-    my pasteAndRun(cmdDir & "/cmd-0.txt")
+tell application "Ghostty"
+    set targetWindow to front window
+end tell
+
+set startIdx to 0
+if not wasRunning then
+    -- Activate just created a fresh window with one default tab — reuse it
+    -- for cmd-0 so we don't leave an empty shell behind.
+    tell application "Ghostty"
+        set firstTerm to terminal 1 of tab 1 of targetWindow
+    end tell
+    my sendToTerminal(firstTerm, cmdDir & "/cmd-0.txt")
     set startIdx to 1
-else
-    set startIdx to 0
 end if
 
 repeat with i from startIdx to (sessionCount - 1)
-    my newTab()
-    my pasteAndRun(cmdDir & "/cmd-" & i & ".txt")
+    tell application "Ghostty"
+        set newT to new tab in targetWindow
+        set newTerm to terminal 1 of newT
+    end tell
+    my sendToTerminal(newTerm, cmdDir & "/cmd-" & i & ".txt")
 end repeat
 EOF
 }
