@@ -47,6 +47,30 @@ setup() {
   [[ "$output" == *"new tab"* ]]
 }
 
+@test "applescript creates a window when none exists (cold start)" {
+  run build_restore_applescript "/tmp/cmd-dir" 3
+
+  [ "$status" -eq 0 ]
+
+  # On a cold start `tell application "Ghostty" to activate` does NOT open a
+  # window — it can launch (or wake a backgrounded) Ghostty that has zero
+  # windows. The script must explicitly create one via the scripting
+  # dictionary's `new window` rather than waiting for activate to do it.
+  [[ "$output" == *"new window"* ]]
+  [[ "$output" == *"count of windows"* ]]
+}
+
+@test "applescript submits with the 'enter' key name, not 'return'" {
+  run build_restore_applescript "/tmp/cmd-dir" 1
+
+  [ "$status" -eq 0 ]
+
+  # Ghostty's `send key` rejects "return" with "Unknown key name: return".
+  # Its key names use "enter" (per the scripting dictionary's own example).
+  [[ "$output" != *'send key "return"'* ]]
+  [[ "$output" == *'send key "enter"'* ]]
+}
+
 @test "applescript embeds the command directory and session count" {
   run build_restore_applescript "/my/cmd/dir" 7
 
