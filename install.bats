@@ -10,6 +10,9 @@ INSTALLER="$BATS_TEST_DIRNAME/install.sh"
 setup() {
   TEST_DIR="$(mktemp -d "$TMPDIR/install-test.XXXXXX")"
   export CLAUDE_DIR="$TEST_DIR/.claude"
+  # Keep bin symlinks hermetic — otherwise the installer writes into the real
+  # ~/.local/bin during tests.
+  export LOCAL_BIN="$TEST_DIR/local-bin"
   mkdir -p "$CLAUDE_DIR"
 }
 
@@ -251,6 +254,38 @@ EOF
   local count
   count=$(find "$CLAUDE_DIR/rules" -maxdepth 1 -name "*.md" -type l | wc -l | tr -d ' ')
   [ "$count" -gt 0 ]
+}
+
+# ── Symlinks: bin commands ──────────────────────────────────────────────────
+
+@test "bin: claude-tabs is symlinked from bin/" {
+  run_installer
+  [ "$status" -eq 0 ]
+  [ -L "$LOCAL_BIN/claude-tabs" ]
+  local target
+  target=$(readlink "$LOCAL_BIN/claude-tabs")
+  [[ "$target" == "$BATS_TEST_DIRNAME/bin/claude-tabs" ]]
+}
+
+@test "bin: tab-status is symlinked from tab-status/" {
+  run_installer
+  [ "$status" -eq 0 ]
+  [ -L "$LOCAL_BIN/tab-status" ]
+  local target
+  target=$(readlink "$LOCAL_BIN/tab-status")
+  [[ "$target" == "$BATS_TEST_DIRNAME/tab-status/tab-status" ]]
+}
+
+@test "bin: a stale tab-status symlink (e.g. to another repo) is replaced" {
+  # Models the brain takeover: an existing symlink pointing elsewhere must be
+  # repointed at claude-rig's copy.
+  mkdir -p "$LOCAL_BIN"
+  ln -s "/some/other/repo/xdg/.local/bin/tab-status" "$LOCAL_BIN/tab-status"
+  run_installer
+  [ "$status" -eq 0 ]
+  local target
+  target=$(readlink "$LOCAL_BIN/tab-status")
+  [[ "$target" == "$BATS_TEST_DIRNAME/tab-status/tab-status" ]]
 }
 
 # ── Backup ─────────────────────────────────────────────────────────────────────

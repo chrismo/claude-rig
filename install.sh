@@ -422,6 +422,20 @@ for cmd in claude-slot claude-tabs claude-search claude-pod work-context; do
     echo "✓ Linked $cmd -> $LOCAL_BIN/"
   fi
 done
+
+# tab-status lives in tab-status/ (not bin/) but is a user-facing command used
+# by the title hooks. Link it the same way so claude-rig owns
+# ~/.local/bin/tab-status — historically this symlink pointed at a stale copy
+# in the brain repo, so an existing (possibly cross-repo) symlink is replaced.
+ts_src="$REPO_DIR/tab-status/tab-status"
+ts_dest="$LOCAL_BIN/tab-status"
+if [[ -f "$ts_src" ]]; then
+  if [[ -L "$ts_dest" ]] || [[ -f "$ts_dest" ]]; then
+    rm "$ts_dest"
+  fi
+  ln -s "$ts_src" "$ts_dest"
+  echo "✓ Linked tab-status -> $LOCAL_BIN/"
+fi
 echo ""
 
 echo "settings.json:"
