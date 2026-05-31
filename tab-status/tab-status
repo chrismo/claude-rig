@@ -19,7 +19,7 @@
 #   Manual calls (no --hook) set a .manual marker that prevents hooks
 #   from overwriting the status. Use "clear" to release the hold.
 
-STATUS_DIR="$HOME/.claude/tab-status"
+STATUS_DIR="${STATUS_DIR:-$HOME/.claude/tab-status}"
 
 # Get worktree name (directory name)
 get_worktree() {
@@ -38,8 +38,36 @@ status_emoji() {
   esac
 }
 
+# Current Claude session name (agentName), set by /rename or `claude --name`.
+# The name lives in the session transcript as the LAST record of
+# type "agent-name" (records are appended, so a mid-session rename adds a new
+# one). The transcript path comes from either:
+#   - TAB_STATUS_TRANSCRIPT (tests / manual use), or
+#   - the hook JSON Claude pipes to stdin (transcript_path field).
+# We only read stdin when it's not a TTY, so a human running `tab-status
+# --title` at a prompt never blocks on `cat`. Transcripts can be large (MBs),
+# so we read from the END (tail -r) and stop at the first match. macOS-only
+# (tail -r is BSD); this repo is macOS-only (Ghostty/AppleScript/lsof).
+# Prints the name, or nothing when there is no name.
+get_agent_name() {
+  local transcript="" hook_json
+  if [[ -n "${TAB_STATUS_TRANSCRIPT:-}" ]]; then
+    transcript="$TAB_STATUS_TRANSCRIPT"
+  elif [[ ! -t 0 ]]; then
+    hook_json=$(cat 2>/dev/null)
+    transcript=$(printf '%s' "$hook_json" \
+      | sed -n 's/.*"transcript_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
+  fi
+
+  [[ -z "$transcript" || ! -f "$transcript" ]] && return 0
+
+  tail -r "$transcript" 2>/dev/null \
+    | grep -m1 -E '"type"[[:space:]]*:[[:space:]]*"agent-name"' \
+    | sed -n 's/.*"agentName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
+}
+
 build_title() {
-  local worktree dir_name branch emoji prefix title
+  local worktree dir_name branch emoji prefix title label agent_name
   worktree=$(get_worktree)
   local status_file="$STATUS_DIR/$worktree"
 
@@ -51,7 +79,14 @@ build_title() {
   dir_name="$worktree"
   if git rev-parse --is-inside-work-tree &>/dev/null; then
     branch=$(git symbolic-ref --short HEAD 2>/dev/null || git rev-parse --short HEAD 2>/dev/null)
-    title="${prefix}${dir_name} (${branch})"
+    label="$branch"
+    # On the default branch the branch name is uninformative (many tabs read
+    # "(main)"); swap in the session name when one exists.
+    if [[ "$branch" == "main" || "$branch" == "master" ]]; then
+      agent_name=$(get_agent_name)
+      [[ -n "$agent_name" ]] && label="$agent_name"
+    fi
+    title="${prefix}${dir_name} (${label})"
   else
     title="${prefix}${dir_name}"
   fi
@@ -134,5 +169,10 @@ main() {
     ghostty_title
   fi
 }
+
+# Guard: when sourced (e.g. by bats), define functions but don't run main.
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+  return 0 2>/dev/null || true
+fi
 
 main "$@"
