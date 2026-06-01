@@ -59,8 +59,12 @@ echo ""
 #     those event types entirely, replacing whatever was there.
 # When retiring a hook event type from claude-rig, ADD it to the `drop` list so it
 # disappears from existing settings.json on next install.
+# tab-status --title sets the Ghostty tab title itself (resolves the pane's pts
+# and uses Ghostty's set_tab_title action via osascript). It must NOT redirect
+# to /dev/tty: hooks run with no controlling terminal, so opening /dev/tty fails
+# and the command would never execute.
 HOOK_CMD_PREFIX="tab-status --hook"
-TITLE_CMD="tab-status --title > /dev/tty 2>/dev/null || true"
+TITLE_CMD="tab-status --title > /dev/null 2>&1 || true"
 
 new_settings=$(
   super -J -c "put hooks := {} | drop hooks.SessionStart | values {...this, hooks: {...this.hooks,

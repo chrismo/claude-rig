@@ -66,8 +66,12 @@ get_agent_name() {
     | sed -n 's/.*"agentName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
 }
 
-build_title() {
-  local worktree dir_name branch emoji prefix title label agent_name
+# Compute the tab title string (pure — no side effects, no terminal writes).
+# Format: "{emoji }{dir} ({label})" where label is the git branch, except on the
+# default branch (main/master) where it becomes the Claude session name when one
+# exists. Outside a git repo: "{emoji }{dir}".
+compute_title() {
+  local worktree dir_name branch emoji prefix label agent_name
   worktree=$(get_worktree)
   local status_file="$STATUS_DIR/$worktree"
 
@@ -86,20 +90,93 @@ build_title() {
       agent_name=$(get_agent_name)
       [[ -n "$agent_name" ]] && label="$agent_name"
     fi
-    title="${prefix}${dir_name} (${label})"
+    printf '%s%s (%s)' "$prefix" "$dir_name" "$label"
   else
-    title="${prefix}${dir_name}"
+    printf '%s%s' "$prefix" "$dir_name"
+  fi
+}
+
+# Resolve this process's Ghostty pane pts by walking up the process tree to the
+# first ancestor with a real controlling terminal (ttysNNN). Hooks run with no
+# controlling terminal of their own (so `> /dev/tty` fails), but the claude
+# process above us does have the pane's pts. Prints "/dev/ttysNNN" or fails.
+resolve_pts() {
+  local pid="$PPID" tty
+  while [[ "$pid" -gt 1 ]]; do
+    tty=$(ps -o tty= -p "$pid" 2>/dev/null | tr -d ' ')
+    if [[ "$tty" == ttys* ]]; then
+      printf '/dev/%s' "$tty"
+      return 0
+    fi
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+  done
+  return 1
+}
+
+# Deliver the title as a persistent Ghostty TAB title (survives focus changes
+# between splits, unlike a per-surface OSC title).
+#
+# Why not just `printf '\e]0;..' > /dev/tty`: hooks have no controlling
+# terminal, so /dev/tty can't be opened. We instead:
+#   1. resolve our pane's pts and mark the surface with a unique sentinel (OSC),
+#   2. ask Ghostty (1.3.1+) to find that terminal and set its tab title via
+#      `perform action set_tab_title:<title>` (osascript works without a tty),
+#   3. restore the surface title to the real title (so it's correct even if the
+#      osascript step is unavailable — graceful fallback to a surface title).
+# A per-pts cache skips the (expensive) osascript when the title is unchanged.
+deliver_title() {
+  local title="$1"
+  local pts; pts=$(resolve_pts) || return 0
+  [[ -w "$pts" ]] || return 0
+
+  mkdir -p "$STATUS_DIR"
+  local cache="$STATUS_DIR/.delivered-$(basename "$pts")"
+  if [[ -f "$cache" && "$(cat "$cache" 2>/dev/null)" == "$title" ]]; then
+    return 0
   fi
 
-  printf '\e]0;%s\a' "$title"
+  local sentinel="__tabstatus__$(basename "$pts")__$$"
+  printf '\e]0;%s\a' "$sentinel" > "$pts" 2>/dev/null || return 0
+
+  # Title passed via argv (not interpolated into the script) to avoid quoting
+  # issues with spaces/parens in the title.
+  osascript - "$sentinel" "$title" >/dev/null 2>&1 <<'OSA'
+on run argv
+  set sentinel to item 1 of argv
+  set theTitle to item 2 of argv
+  tell application "Ghostty"
+    set matches to {}
+    repeat 12 times
+      set matches to (every terminal whose name is sentinel)
+      if (count of matches) > 0 then exit repeat
+      delay 0.03
+    end repeat
+    if (count of matches) is 0 then return
+    perform action ("set_tab_title:" & theTitle) on (item 1 of matches)
+  end tell
+end run
+OSA
+
+  # Restore the surface title to the real title (masked by the tab title when
+  # set_tab_title succeeded; the visible fallback when it didn't).
+  printf '\e]0;%s\a' "$title" > "$pts" 2>/dev/null || true
+
+  printf '%s' "$title" > "$cache" 2>/dev/null || true
 }
 
 main() {
   local worktree wt_status status_file manual_file hook_mode=false
 
-  # Output OSC title escape sequence for current status
+  # Set the Ghostty tab title for the current session/worktree.
   if [[ "${1:-}" == "--title" ]]; then
-    build_title
+    deliver_title "$(compute_title)"
+    return
+  fi
+
+  # Print the computed title string without delivering it (tests / debugging).
+  if [[ "${1:-}" == "--print-title" ]]; then
+    compute_title
+    echo
     return
   fi
 

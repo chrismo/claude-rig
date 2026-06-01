@@ -2,9 +2,9 @@
 
 bats_require_minimum_version 1.5.0
 
-# Test suite for tab-status build_title / get_agent_name.
+# Test suite for tab-status compute_title / get_agent_name.
 #
-# build_title renders the Ghostty tab title. The behaviour under test:
+# compute_title renders the Ghostty tab title. The behaviour under test:
 # on the default branch (main/master) the parenthetical becomes the Claude
 # session name (agentName, set by /rename or `claude --name`) when one exists;
 # otherwise it stays the git branch.
@@ -53,12 +53,12 @@ make_transcript() {
   export TAB_STATUS_TRANSCRIPT="$TRANSCRIPT"
 }
 
-# ── build_title ───────────────────────────────────────────────────────────────
+# ── compute_title ───────────────────────────────────────────────────────────────
 
 @test "default branch (main) shows the session name in parens" {
   init_repo main
   make_transcript find-difficult-words-script
-  run build_title </dev/null
+  run compute_title </dev/null
 
   [ "$status" -eq 0 ]
   [[ "$output" == *"(find-difficult-words-script)"* ]]
@@ -67,7 +67,7 @@ make_transcript() {
 
 @test "default branch (main) with no name shows the branch" {
   init_repo main
-  run build_title </dev/null
+  run compute_title </dev/null
 
   [ "$status" -eq 0 ]
   [[ "$output" == *"(main)"* ]]
@@ -76,7 +76,7 @@ make_transcript() {
 @test "last agent-name record wins (mid-session rename)" {
   init_repo main
   make_transcript first-name second-name third-name
-  run build_title </dev/null
+  run compute_title </dev/null
 
   [ "$status" -eq 0 ]
   [[ "$output" == *"(third-name)"* ]]
@@ -86,7 +86,7 @@ make_transcript() {
 @test "feature branch shows the branch and ignores the session name" {
   init_repo some-feature
   make_transcript find-difficult-words-script
-  run build_title </dev/null
+  run compute_title </dev/null
 
   [ "$status" -eq 0 ]
   [[ "$output" == *"(some-feature)"* ]]
@@ -96,7 +96,7 @@ make_transcript() {
 @test "master is treated as a default branch" {
   init_repo master
   make_transcript stateful-petting-sunbeam
-  run build_title </dev/null
+  run compute_title </dev/null
 
   [ "$status" -eq 0 ]
   [[ "$output" == *"(stateful-petting-sunbeam)"* ]]
@@ -106,7 +106,7 @@ make_transcript() {
 @test "outside a git repo shows the dir with no parens" {
   mkdir -p "$TEST_DIR/plain"
   cd "$TEST_DIR/plain"
-  run build_title </dev/null
+  run compute_title </dev/null
 
   [ "$status" -eq 0 ]
   [[ "$output" == *"plain"* ]]
@@ -117,7 +117,7 @@ make_transcript() {
   init_repo main
   make_transcript find-difficult-words-script
   printf 'active\n' > "$STATUS_DIR/$(basename "$REPO")"
-  run build_title </dev/null
+  run compute_title </dev/null
 
   [ "$status" -eq 0 ]
   [[ "$output" == *"🟢 "* ]]
@@ -127,7 +127,7 @@ make_transcript() {
 @test "status emoji prefix is preserved (branch case)" {
   init_repo some-feature
   printf 'waiting\n' > "$STATUS_DIR/$(basename "$REPO")"
-  run build_title </dev/null
+  run compute_title </dev/null
 
   [ "$status" -eq 0 ]
   [[ "$output" == *"🟡 "* ]]
@@ -139,7 +139,7 @@ make_transcript() {
   make_transcript find-difficult-words-script
   # Drop the env override so the name MUST come from stdin (the hook path).
   unset TAB_STATUS_TRANSCRIPT
-  run build_title <<< "{\"transcript_path\":\"$TRANSCRIPT\",\"hook_event_name\":\"Stop\"}"
+  run compute_title <<< "{\"transcript_path\":\"$TRANSCRIPT\",\"hook_event_name\":\"Stop\"}"
 
   [ "$status" -eq 0 ]
   [[ "$output" == *"(find-difficult-words-script)"* ]]
@@ -148,7 +148,7 @@ make_transcript() {
 @test "manual invocation with no transcript does not hang; falls back to branch" {
   init_repo main
   # Empty (non-tty) stdin must not block on cat; must fall back to the branch.
-  run timeout 5 bash -c "STATUS_DIR='$STATUS_DIR' source '$TAB_STATUS'; build_title" </dev/null
+  run timeout 5 bash -c "STATUS_DIR='$STATUS_DIR' source '$TAB_STATUS'; compute_title" </dev/null
 
   [ "$status" -ne 124 ]   # 124 == timeout fired (hang)
   [[ "$output" == *"(main)"* ]]
@@ -157,21 +157,22 @@ make_transcript() {
 @test "nonexistent transcript path falls back to the branch" {
   init_repo main
   export TAB_STATUS_TRANSCRIPT="$TEST_DIR/does-not-exist.jsonl"
-  run build_title </dev/null
+  run compute_title </dev/null
 
   [ "$status" -eq 0 ]
   [[ "$output" == *"(main)"* ]]
 }
 
-@test "installed hook chain: --title reads stdin --hook left unread (real pipe)" {
+@test "installed hook chain: title computation reads stdin --hook left unread (real pipe)" {
   # Faithfully replicates the installed hook command shape, with hook JSON on a
   # non-seekable pipe (process substitution): `--hook` ignores stdin, so the
-  # following `--title` must still be able to read transcript_path from it.
+  # following title command must still read transcript_path from it. Uses
+  # --print-title (pure) so the test doesn't invoke the osascript delivery path.
   init_repo main
   make_transcript chained-name
   unset TAB_STATUS_TRANSCRIPT
   run bash -c \
-    "STATUS_DIR='$STATUS_DIR' '$TAB_STATUS' --hook active >/dev/null; STATUS_DIR='$STATUS_DIR' '$TAB_STATUS' --title" \
+    "STATUS_DIR='$STATUS_DIR' '$TAB_STATUS' --hook active >/dev/null; STATUS_DIR='$STATUS_DIR' '$TAB_STATUS' --print-title" \
     < <(printf '%s' "{\"transcript_path\":\"$TRANSCRIPT\"}")
 
   [ "$status" -eq 0 ]
