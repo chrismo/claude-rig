@@ -108,20 +108,36 @@ function emit_repo_json() {
 }
 
 function collect_worktree_data() {
+    # First, gather every repo + linked-worktree path. This walk is cheap
+    # (file reads + dir checks) — no git, no subprocess per worktree. The
+    # worktree path is the contents of .git/worktrees/<name>/gitdir with the
+    # trailing "/.git" stripped, done with bash expansion instead of spawning
+    # a `super` process per worktree.
+    local paths=() repo wt wt_path
     for repo in "${repos_to_check[@]}"; do
         [[ ! -d "$repo" ]] && continue
-
-        emit_repo_json "$repo"
+        paths+=("$repo")
 
         if [[ -d "$repo/.git/worktrees" ]]; then
             for wt in "$repo/.git/worktrees"/*; do
-                if [[ -f "$wt/gitdir" ]]; then
-                    wt_path=$(super -i line -f line -c "replace(this, '/.git', '')" "$wt/gitdir")
-                    [[ -d "$wt_path" ]] && emit_repo_json "$wt_path"
-                fi
+                [[ -f "$wt/gitdir" ]] || continue
+                wt_path=$(<"$wt/gitdir")     # e.g. /path/to/wt/.git
+                wt_path="${wt_path%/.git}"   # -> /path/to/wt
+                [[ -d "$wt_path" ]] && paths+=("$wt_path")
             done
         fi
     done
+
+    # Fan out: emit each path's JSON concurrently. The git calls dominate wall
+    # time (notably `git status --porcelain` on large repos), and they're fully
+    # independent. Each emit_repo_json writes a single line well under PIPE_BUF,
+    # so concurrent writes to the pipe stay atomic and don't interleave. Output
+    # order is non-deterministic; every downstream consumer sorts by age_days.
+    local p
+    for p in "${paths[@]}"; do
+        emit_repo_json "$p" &
+    done
+    wait
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -247,8 +263,13 @@ function worktrees() {
     echo -e "${CYAN}${BOLD}🌳 GIT WORKTREES STATUS${RESET}  ${DIM}(config: ${config_display})${RESET}"
     echo -e "${DIM}───────────────────────────────────────────────────────────────${RESET}"
 
+    # Collect once; partition into recent/stale below. (The walk is the
+    # expensive part — no reason to run it twice.)
+    local wt_data
+    wt_data=$(collect_worktree_data)
+
     # Recent worktrees (<=14 days, not staging)
-    collect_worktree_data | super -f json -c "
+    echo "$wt_data" | super -f json -c "
       put age_days := ((${now} - commit_ts) / 86400)::int64
       | put dirty_mark := dirty ? '*' : ''
       | put gone_mark := gone ? 'x' : ''
@@ -263,7 +284,7 @@ function worktrees() {
 
     # Stale worktrees (>14 days), oldest last
     local stale
-    stale=$(collect_worktree_data | super -f json -c "
+    stale=$(echo "$wt_data" | super -f json -c "
       put age_days := ((${now} - commit_ts) / 86400)::int64
       | put dirty_mark := dirty ? '*' : ''
       | put gone_mark := gone ? 'x' : ''
