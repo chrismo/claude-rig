@@ -59,11 +59,19 @@ Often the intent is already captured — a `spec.md`, a design doc, or a plan
 Claude wrote earlier this session. Use it as the source of the finish line:
 
 - **Reference the file by path in the condition** (`…per plan.md`) so the working
-  Claude re-grounds itself each turn. But remember the evaluator can't read that
-  file — so the condition must still spell out a concrete, transcript-checkable
-  end state. "Complete phase 2 per plan.md" is not verifiable on its own;
-  "phase 2 done — `npm test` green and the migration script exists, per plan.md"
-  is.
+  Claude re-grounds itself each turn. How much you spell out depends on the plan:
+  - If the plan's phase already defines its own crisp, checkable "done" (a
+    "Phase 2 Goal" with a stated verification), keep the condition **short** —
+    just point to it: "Complete the Phase 2 Goal in plan.md and paste the
+    verification output it specifies." No need to re-spell what the plan already
+    nails down.
+  - If the phase's done criteria are vague, distill a concrete,
+    transcript-checkable end state into the condition yourself. "Complete phase 2
+    per plan.md" alone isn't verifiable; "phase 2 done — `npm test` green and the
+    migration script exists, per plan.md" is.
+
+  Either way, keep the **surface-the-proof** instruction: the evaluator can't
+  open the plan, so it judges from the proof Claude pastes, not from the file.
 - **A phased plan is not one goal.** Each phase is its own finish line, so it
   gets its own `/goal`, composed with all four parts and run in sequence: paste
   phase 1, let it clear, paste phase 2. Cramming a multi-phase plan into one
@@ -132,8 +140,10 @@ Rough intent → composed `/goal`:
   → `/goal \`bats hooks/use-dedicated-tools.bats\` exits 0 with zero failures. Run it each turn with the sandbox disabled (per CLAUDE.md) and paste the final tally. Don't weaken assertions to pass. If not green after 12 turns, stop and report what's failing.`
 
 - *phased plan in `plan.md`* → one goal per phase, run in order:
-  1. `/goal Phase 1 done per plan.md: the parser module exists and \`npm test -- parser\` is green. Paste the test summary each turn. Stop after 15 turns if blocked.`
-  2. `/goal Phase 2 done per plan.md: the CLI wires the parser in and \`npm test\` is fully green. Paste the summary each turn. Don't touch the parser module. Stop after 15 turns if blocked.`
+  1. *(plan defines the Phase 1 goal+check, so point to it — short)*
+     `/goal Complete the Phase 1 Goal in plan.md and paste the verification output it specifies each turn. Stop after 15 turns if blocked.`
+  2. *(plan's Phase 2 done-criteria are vague, so distill them)*
+     `/goal Phase 2 done per plan.md: the CLI wires the parser in and \`npm test\` is fully green. Paste the summary each turn. Don't touch the parser module. Stop after 15 turns if blocked.`
   (…paste each only after the previous clears.)
 
 ## Anti-patterns to steer the user away from
