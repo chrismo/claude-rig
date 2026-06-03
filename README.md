@@ -37,6 +37,7 @@ User-level skills symlinked into `~/.claude/skills/`:
 - **/plan** — spawn pre-implementation architecture and design review agents
 - **/review** — spawn quality review agents before committing
 - **/prove-it** — verify facts and assumptions before responding
+- **/goal-compose** — turn a rough intent into a paste-ready condition for the built-in `/goal` command (measurable, self-verifying, self-terminating)
 - **/claude-rig-init** — scaffolding helper for new claude-rig setups
 
 **Tip:** Skills support inline shell execution with `` !`command` `` syntax in the markdown body. The command runs at invocation time and its output is injected as context before Claude sees the prompt. The built-in `/commit` skill uses this to pre-load `git status`, `git diff HEAD`, etc. Useful for building skills that need live system state.
