@@ -2,9 +2,10 @@
 #
 # claude-tabs - Save and restore Ghostty Claude Code sessions
 #
-# Usage: claude-tabs save        Save active sessions to manifest
-#        claude-tabs restore     Restore sessions from manifest
-#        claude-tabs list        Show active sessions (dry-run of save)
+# Usage: claude-tabs save          Save active sessions to manifest
+#        claude-tabs restore       Restore sessions from manifest
+#        claude-tabs list-active   Show running sessions (dry-run of save)
+#        claude-tabs list-saved    Show the saved manifest (what restore uses)
 #
 # Detection: No registration or state files. Asks the system what's running
 # via `lsof -c node -a -d cwd -Fn`, which returns the cwd of every node
@@ -35,6 +36,19 @@
 #     but not the intended workflow (save → kill Ghostty → restore).
 #   - Restore adds tabs; it doesn't replace existing ones. Kill Ghostty
 #     first for a clean slate.
+#   - Incomplete detection from non-interactive contexts. Observed 2026-06-03:
+#     `claude-tabs save` run from the Stop hook (or any claude-spawned
+#     subprocess) sometimes cannot see running `claude` CLI processes via
+#     `pgrep` — even with the sandbox disabled — while the same command from an
+#     interactive shell sees them all. When that happens, detection yields `[]`
+#     and `save` overwrites a good manifest with empty. Root cause unconfirmed
+#     (argv visibility / process-tree context — theory, not verified).
+#     Recovery: every save is also archived to the history dir, so the last
+#     good snapshot survives; and `work-context` (the worktree walk) can
+#     reconstruct active work to get back on track.
+#     TODO: guard `cmd_save` so it never replaces a populated manifest with an
+#     empty detection result (add a `--allow-empty` escape hatch for the
+#     intentional "record nothing" case).
 #
 # Restore uses Ghostty's native scripting (Ghostty 1.3+) — `new tab`,
 # `input text to terminal`, `send key "enter" to terminal` — instead of
@@ -193,7 +207,9 @@ cmd_save() {
   echo "Saved $count sessions to $CLAUDE_TABS_MANIFEST"
 }
 
-cmd_list() {
+# list-active: what's running right now (the set `save` would capture).
+# Detects live `claude` processes — does NOT read the manifest.
+cmd_list_active() {
   local lsof_output
   lsof_output=$(get_lsof_output)
 
@@ -205,6 +221,24 @@ cmd_list() {
   fi
 
   echo "$json" | super -J -c 'unnest this | sort name | collect(this)' - | grdy
+}
+
+# list-saved: what's in the manifest (the set `restore` would reopen).
+# Reads the manifest file — does NOT inspect live processes.
+cmd_list_saved() {
+  if [[ ! -f "$CLAUDE_TABS_MANIFEST" ]]; then
+    echo "No saved manifest at $CLAUDE_TABS_MANIFEST"
+    return 0
+  fi
+
+  local content
+  content=$(cat "$CLAUDE_TABS_MANIFEST")
+  if [[ -z "$content" || "$content" == "[]" ]]; then
+    echo "Saved manifest is empty: $CLAUDE_TABS_MANIFEST"
+    return 0
+  fi
+
+  super -J -c 'unnest this | sort name | collect(this)' "$CLAUDE_TABS_MANIFEST" | grdy
 }
 
 build_restore_applescript() {
@@ -339,16 +373,22 @@ usage() {
   echo "Usage: claude-tabs <command>"
   echo ""
   echo "Commands:"
-  echo "  save      Save active Claude sessions to manifest"
-  echo "  restore   Restore sessions from manifest"
-  echo "  list      Show active sessions (dry-run of save)"
+  echo "  save          Save running Claude sessions to the manifest"
+  echo "  restore       Reopen the sessions in the manifest"
+  echo "  list-active   Show currently running sessions (dry-run of save)"
+  echo "  list-saved    Show the saved manifest (what restore will reopen)"
+  echo ""
+  echo "Manifest: $CLAUDE_TABS_MANIFEST"
+  echo "Every save is also archived (timestamped) under:"
+  echo "  $CLAUDE_TABS_HISTORY_DIR"
 }
 
 case "${1:-}" in
-  save)    cmd_save ;;
-  restore) shift; cmd_restore "$@" ;;
-  list)    cmd_list ;;
-  -h|--help) usage ;;
+  save)        cmd_save ;;
+  restore)     shift; cmd_restore "$@" ;;
+  list-active) cmd_list_active ;;
+  list-saved)  cmd_list_saved ;;
+  -h|--help)   usage ;;
   *)
     usage
     exit 1

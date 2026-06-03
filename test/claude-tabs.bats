@@ -210,10 +210,10 @@ MOCK
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Manifest write/read round-trip (save + list)
+# Manifest write/read round-trip (save + list-active)
 # ─────────────────────────────────────────────────────────────────────────────
 
-@test "save writes manifest and list reads it back" {
+@test "save writes manifest and list-active reads it back" {
   source "$CLAUDE_TABS"
 
   mkdir -p "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-ds5"
@@ -249,7 +249,7 @@ MOCK
   [[ "$output" == *"Saved 2 sessions"* ]]
 }
 
-@test "list pipes JSON through grdy for table display" {
+@test "list-active pipes JSON through grdy for table display" {
   source "$CLAUDE_TABS"
 
   mkdir -p "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-ds5"
@@ -258,7 +258,7 @@ MOCK
   mock_lsof="$(printf 'p925\nn/Users/chrismo/dev/ds5\n')"
   export CLAUDE_TABS_LSOF_OUTPUT="$mock_lsof"
 
-  run cmd_list
+  run cmd_list_active
   [[ "$status" -eq 0 ]]
   # Should contain box-drawing characters from grdy table
   [[ "$output" == *"╭"* ]]
@@ -296,15 +296,77 @@ MOCK
   [[ "$mango_idx" -lt "$zebra_idx" ]]
 }
 
-@test "list with no sessions produces no output" {
+@test "list-active with no sessions produces no output" {
   source "$CLAUDE_TABS"
 
   mock_lsof="$(printf 'p3616\nn/Users/chrismo/dev/not-a-claude-project\n')"
   export CLAUDE_TABS_LSOF_OUTPUT="$mock_lsof"
 
-  run cmd_list
+  run cmd_list_active
   [[ "$status" -eq 0 ]]
   [[ -z "$output" ]]
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# list-saved (reads the manifest, not live processes)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@test "list-saved renders the saved manifest as a grdy table" {
+  source "$CLAUDE_TABS"
+
+  cat > "$CLAUDE_TABS_MANIFEST" <<'MANIFEST'
+[
+  {"name": "ds5", "path": "/Users/chrismo/dev/ds5", "session_id": "abc-123"},
+  {"name": "mta", "path": "/Users/chrismo/dev/mta", "session_id": "def-456"}
+]
+MANIFEST
+
+  run cmd_list_saved
+  [[ "$status" -eq 0 ]]
+  # Box-drawing chars from the grdy table
+  [[ "$output" == *"╭"* ]]
+  [[ "$output" == *"ds5"* ]]
+  [[ "$output" == *"mta"* ]]
+  [[ "$output" == *"abc-123"* ]]
+}
+
+@test "list-saved does not consult live processes" {
+  source "$CLAUDE_TABS"
+
+  # A live session that is NOT in the manifest must not appear.
+  mkdir -p "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-live-only"
+  touch "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-live-only/live-999.jsonl"
+  export CLAUDE_TABS_LSOF_OUTPUT="$(printf 'p925\nn/Users/chrismo/dev/live-only\n')"
+
+  cat > "$CLAUDE_TABS_MANIFEST" <<'MANIFEST'
+[
+  {"name": "ds5", "path": "/Users/chrismo/dev/ds5", "session_id": "abc-123"}
+]
+MANIFEST
+
+  run cmd_list_saved
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"ds5"* ]]
+  [[ "$output" != *"live-only"* ]]
+}
+
+@test "list-saved reports gracefully when no manifest exists" {
+  source "$CLAUDE_TABS"
+
+  export CLAUDE_TABS_MANIFEST="$TEST_DIR/nonexistent.json"
+  run cmd_list_saved
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"$TEST_DIR/nonexistent.json"* ]]
+  [[ "$output" == *"o saved"* ]]
+}
+
+@test "list-saved reports gracefully on an empty manifest" {
+  source "$CLAUDE_TABS"
+
+  echo "[]" > "$CLAUDE_TABS_MANIFEST"
+  run cmd_list_saved
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"empty"* ]]
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -420,8 +482,25 @@ MANIFEST
 
   [[ "$script" == *'set sessionCount to 3'* ]]
   [[ "$script" == *'/tmp/test-cmds'* ]]
-  [[ "$script" == *'pasteAndRun'* ]]
-  [[ "$script" == *'newTab'* ]]
+  [[ "$script" == *'sendToTerminal'* ]]
+  [[ "$script" == *'new tab'* ]]
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# usage / dispatch
+# ─────────────────────────────────────────────────────────────────────────────
+
+@test "usage lists list-active and list-saved and the history path" {
+  export CLAUDE_TABS_HISTORY_DIR="$TEST_DIR/tab-history"
+
+  run "$CLAUDE_TABS"
+  [[ "$status" -ne 0 ]]
+  [[ "$output" == *"list-active"* ]]
+  [[ "$output" == *"list-saved"* ]]
+  # Plain `list` is gone — must not be advertised.
+  [[ "$output" != *"  list "* ]]
+  # History location is surfaced, with the real resolved path.
+  [[ "$output" == *"$TEST_DIR/tab-history"* ]]
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
