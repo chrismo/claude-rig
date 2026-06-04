@@ -111,12 +111,9 @@ base_cmd="${first_word##*/}"
 message=""
 
 case "$base_cmd" in
-  grep)
-    message="Use the Grep tool instead of \`$base_cmd\` in Bash."
-    ;;
-  find)
-    message="Use the Glob tool instead of \`$base_cmd\` in Bash."
-    ;;
+  # Note: grep/rg/find are intentionally NOT denied. The native Claude Code
+  # binary (2.1.117+) removed the dedicated Grep and Glob tools and routes
+  # search through Bash (embedded ripgrep/find), so search must pass through.
   cat|head|tail)
     message="Use the Read tool instead of \`$base_cmd\` in Bash."
     ;;

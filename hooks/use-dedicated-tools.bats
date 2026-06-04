@@ -52,11 +52,11 @@ assert_allow() {
   [ -z "$output" ]
 }
 
-# ── Deny: grep / rg → Grep tool ────────────────────────────────────────────────
+# ── Allow: grep / rg / find (native binary routes search through Bash) ─────────
 
-@test "deny: grep foo bar → Grep tool" {
+@test "allow: grep foo bar" {
   run_hook "grep foo bar"
-  assert_deny "Grep tool"
+  assert_allow
 }
 
 @test "allow: rg pattern file" {
@@ -64,11 +64,9 @@ assert_allow() {
   assert_allow
 }
 
-# ── Deny: find → Glob tool ─────────────────────────────────────────────────────
-
-@test "deny: find . -name '*.sh' → Glob tool" {
+@test "allow: find . -name '*.sh'" {
   run_hook 'find . -name "*.sh"'
-  assert_deny "Glob tool"
+  assert_allow
 }
 
 # ── Deny: cat / head / tail → Read tool ────────────────────────────────────────
@@ -249,11 +247,11 @@ assert_allow() {
   assert_allow
 }
 
-# ── Deny: full path commands ────────────────────────────────────────────────────
+# ── Allow: full path search commands (full path stripped, search allowed) ──────
 
-@test "deny: /usr/bin/grep foo → Grep tool (full path stripped)" {
+@test "allow: /usr/bin/grep foo (full path stripped)" {
   run_hook "/usr/bin/grep foo"
-  assert_deny "Grep tool"
+  assert_allow
 }
 
 # ── Deny: compound commands (pipes, chains, semicolons) ───────────────────────
