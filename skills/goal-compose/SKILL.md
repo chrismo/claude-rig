@@ -99,11 +99,27 @@ Claude wrote earlier this session. Use it as the source of the finish line:
    Respect repo conventions found in `CLAUDE.md` (e.g. tests that must run with
    the sandbox disabled).
 
-4. **Draft the condition(s)** from the four parts above — one goal, or one goal
+4. **Recommend a model.** The goal loop runs on whatever model is active when the
+   user pastes the condition — pick the right tier:
+   - **Haiku 4.5** — mechanical tasks: formatting, boilerplate, trivial single-file
+     edits where speed and cost matter more than reasoning depth
+   - **Sonnet 4.6** — standard engineering: typical feature work, test fixes,
+     moderate refactors
+   - **Opus 4.8** — complex work: multi-file architectural changes, hard debugging,
+     long-horizon agentic loops with many interdependent steps; Claude Code's
+     default for autonomous coding runs at `xhigh` effort on Opus 4.8
+   - **Fable 5** — ceiling problems: novel algorithm design, the hardest
+     correctness or architectural problems, when Opus 4.8 is expected to struggle
+
+   When unsure, lean toward Opus 4.8 for goal loops — it's optimized for
+   long-horizon agentic execution. Include a one-line rationale and remind the
+   user to switch before pasting: `/model <model-id>`.
+
+5. **Draft the condition(s)** from the four parts above — one goal, or one goal
    per phase for a phased plan. Keep each tight and imperative. Bake in "show the
    output" explicitly.
 
-5. **Present it** in the output format below.
+6. **Present it** in the output format below.
 
 ## Output format
 
@@ -118,6 +134,7 @@ Claude wrote earlier this session. Use it as the source of the finish line:
 - Proof surfaced: <what Claude will paste each turn>
 - Stop clause: <turn cap / give-up>
 - Constraints: <or "none">
+- Model: <recommended model + one-line rationale> — switch with `/model <model-id>` before pasting
 ```
 
 Keep the explanation to a few lines. The paste line is the product.
