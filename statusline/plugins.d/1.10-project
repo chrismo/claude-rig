@@ -1,8 +1,25 @@
 #!/bin/bash
-# Segment: project name (basename of project_dir)
+# Segment: project/worktree name (basename of project_dir).
+# Dropped entirely when the name equals the current git branch — in that case
+# it is redundant with the git segment. Truncated to 40 chars (37 + "...").
 project_dir="${CLAUDE_PROJECT_DIR:-}"
 if [[ -z "$project_dir" ]]; then
   echo "."
-else
-  basename "$project_dir"
+  exit 0
 fi
+
+name=$(basename "$project_dir")
+
+# Drop the segment when the worktree name matches the branch (redundant).
+dir="${CLAUDE_CURRENT_DIR:-$(pwd)}"
+branch=$(git -C "$dir" symbolic-ref --short HEAD 2>/dev/null || git -C "$dir" rev-parse --short HEAD 2>/dev/null)
+if [[ -n "$branch" && "$name" == "$branch" ]]; then
+  exit 0
+fi
+
+# Truncate to 40 chars (37 + literal "...").
+if [[ ${#name} -gt 40 ]]; then
+  name="${name:0:37}..."
+fi
+
+echo "$name"
