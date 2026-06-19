@@ -214,14 +214,38 @@ EOF
 
 @test "skills: stale bare-file symlinks are cleaned up" {
   mkdir -p "$CLAUDE_DIR/skills"
-  # Simulate a stale prove-it.md symlink from before restructuring
-  ln -s "/some/old/path/prove-it.md" "$CLAUDE_DIR/skills/prove-it.md"
+  # Simulate a stale goal-compose.md symlink from before restructuring
+  ln -s "/some/old/path/goal-compose.md" "$CLAUDE_DIR/skills/goal-compose.md"
   run_installer
   [ "$status" -eq 0 ]
   # Stale .md symlink should be gone
-  [ ! -e "$CLAUDE_DIR/skills/prove-it.md" ]
+  [ ! -e "$CLAUDE_DIR/skills/goal-compose.md" ]
   # Directory symlink should exist instead
-  [ -L "$CLAUDE_DIR/skills/prove-it" ]
+  [ -L "$CLAUDE_DIR/skills/goal-compose" ]
+}
+
+@test "skills: dangling symlink for a deleted skill is pruned" {
+  run_installer
+  [ "$status" -eq 0 ]
+  # Simulate a skill removed from the repo: a symlink in dest pointing into
+  # SKILLS_SRC at a name that no longer has a source directory.
+  ln -s "$BATS_TEST_DIRNAME/skills/deleted-skill/" "$CLAUDE_DIR/skills/deleted-skill"
+  [ -L "$CLAUDE_DIR/skills/deleted-skill" ]
+  run_installer
+  [ "$status" -eq 0 ]
+  # Prune should remove the orphaned symlink
+  [ ! -L "$CLAUDE_DIR/skills/deleted-skill" ]
+}
+
+@test "skills: a user's broken symlink pointing outside the repo is left alone" {
+  run_installer
+  [ "$status" -eq 0 ]
+  # A broken symlink the user created, pointing somewhere other than SKILLS_SRC.
+  ln -s "/some/other/place/my-skill" "$CLAUDE_DIR/skills/my-skill"
+  run_installer
+  [ "$status" -eq 0 ]
+  # Prune must only touch symlinks pointing into the repo skills dir.
+  [ -L "$CLAUDE_DIR/skills/my-skill" ]
 }
 
 # ── Symlinks: agents ──────────────────────────────────────────────────────────

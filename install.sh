@@ -323,6 +323,16 @@ if [[ -d "$SKILLS_SRC" ]]; then
     fi
   done
 
+  # Prune orphaned symlinks for skills deleted from the repo. The loops above
+  # only add/update; without this a removed skill lingers as a dangling symlink.
+  # Scope to broken links pointing into $SKILLS_SRC so the user's own symlinks
+  # (pointing elsewhere) are never touched.
+  for dest in "$SKILLS_DEST"/*; do
+    if [[ -L "$dest" ]] && [[ ! -e "$dest" ]] && [[ "$(readlink "$dest")" == "$SKILLS_SRC/"* ]]; then
+      rm "$dest"
+    fi
+  done
+
   if [[ $count -gt 0 ]]; then
     echo "✓ Installed $count user-level skill(s)"
     echo ""
