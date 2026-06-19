@@ -34,9 +34,6 @@ CLI tools symlinked into `~/.local/bin/`:
 
 User-level skills symlinked into `~/.claude/skills/`:
 
-- **/plan** — spawn pre-implementation architecture and design review agents
-- **/review** — spawn quality review agents before committing
-- **/prove-it** — verify facts and assumptions before responding
 - **/goal-compose** — turn a rough intent into a paste-ready condition for the built-in `/goal` command (measurable, self-verifying, self-terminating)
 - **/claude-rig-init** — scaffolding helper for new claude-rig setups
 
