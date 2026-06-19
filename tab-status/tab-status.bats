@@ -163,6 +163,124 @@ make_transcript() {
   [[ "$output" == *"(main)"* ]]
 }
 
+# ── background-command detection (filter_bg_commands) ───────────────────────────
+
+# Each line: "pid ppid command...". Mirrors `ps -axo pid=,ppid=,command=`.
+
+@test "filter_bg_commands finds a snapshot-child of the claude pid" {
+  run filter_bg_commands 24592 "999" <<'PS'
+91202 24592 /bin/zsh -c source /Users/x/.claude/shell-snapshots/snapshot-zsh-1.sh && eval './tests.sh'
+55555 1 /sbin/launchd
+PS
+  [ "$output" = "91202" ]
+}
+
+@test "filter_bg_commands ignores children of a different claude session" {
+  run filter_bg_commands 24592 "999" <<'PS'
+91202 77777 /bin/zsh -c source /Users/x/.claude/shell-snapshots/snapshot-zsh-1.sh && eval './tests.sh'
+PS
+  [ -z "$output" ]
+}
+
+@test "filter_bg_commands ignores non-snapshot children" {
+  run filter_bg_commands 24592 "999" <<'PS'
+91202 24592 /bin/zsh -c some random command
+PS
+  [ -z "$output" ]
+}
+
+@test "filter_bg_commands excludes the self chain (the hook's own shell)" {
+  run filter_bg_commands 24592 $'88888\n12345' <<'PS'
+88888 24592 /bin/zsh -c source /Users/x/.claude/shell-snapshots/snapshot-zsh-9.sh && eval 'tab-status --hook stop'
+91202 24592 /bin/zsh -c source /Users/x/.claude/shell-snapshots/snapshot-zsh-1.sh && eval './tests.sh'
+PS
+  [ "$output" = "91202" ]
+}
+
+# ── stop-status resolution (resolve_stop_status) ─────────────────────────────────
+#
+# A backgrounded command (or a standing reminder that one ran) keeps the tab
+# GREEN/active rather than dropping to idle — a "go back, work's still cooking"
+# nudge. Reuses the active 🟢 status; no separate glyph.
+
+@test "resolve_stop_status: a live bg command stays active" {
+  run resolve_stop_status 1 0
+  [ "$output" = "active" ]
+}
+
+@test "resolve_stop_status: a standing reminder keeps active even with no live bg" {
+  run resolve_stop_status 0 1
+  [ "$output" = "active" ]
+}
+
+@test "resolve_stop_status: no bg and no reminder settles to idle" {
+  run resolve_stop_status 0 0
+  [ "$output" = "idle" ]
+}
+
+# ── stop / engage hook actions (sticky reminder) ─────────────────────────────────
+
+@test "stop with a live bg command stays active and drops a reminder marker" {
+  init_repo main
+  local wt; wt=$(basename "$REPO")
+  TAB_STATUS_FAKE_BG=1 run "$TAB_STATUS" --hook stop </dev/null
+  [ "$(cat "$STATUS_DIR/$wt")" = "active" ]
+  [ -f "$STATUS_DIR/$wt.bgreminder" ]
+}
+
+@test "stop stays active while the reminder stands (bg already finished)" {
+  init_repo main
+  local wt; wt=$(basename "$REPO")
+  printf 'active\n' > "$STATUS_DIR/$wt"
+  touch "$STATUS_DIR/$wt.bgreminder"
+  # No live bg now, but the reminder must keep it active, not idle.
+  TAB_STATUS_FAKE_BG=0 run "$TAB_STATUS" --hook stop </dev/null
+  [ "$(cat "$STATUS_DIR/$wt")" = "active" ]
+}
+
+@test "stop with no bg and no reminder settles to idle" {
+  init_repo main
+  local wt; wt=$(basename "$REPO")
+  TAB_STATUS_FAKE_BG=0 run "$TAB_STATUS" --hook stop </dev/null
+  [ "$(cat "$STATUS_DIR/$wt")" = "idle" ]
+  [ ! -f "$STATUS_DIR/$wt.bgreminder" ]
+}
+
+@test "engage (user re-prompt) clears the reminder so a later stop can idle" {
+  init_repo main
+  local wt; wt=$(basename "$REPO")
+  printf 'active\n' > "$STATUS_DIR/$wt"
+  touch "$STATUS_DIR/$wt.bgreminder"
+  TAB_STATUS_FAKE_BG=0 run "$TAB_STATUS" --hook engage </dev/null
+  [ "$(cat "$STATUS_DIR/$wt")" = "active" ]
+  [ ! -f "$STATUS_DIR/$wt.bgreminder" ]
+  # Now a quiet stop settles to idle.
+  TAB_STATUS_FAKE_BG=0 run "$TAB_STATUS" --hook stop </dev/null
+  [ "$(cat "$STATUS_DIR/$wt")" = "idle" ]
+}
+
+@test "PostToolUse-style active does NOT clear the reminder (autonomous continuation)" {
+  init_repo main
+  local wt; wt=$(basename "$REPO")
+  printf 'active\n' > "$STATUS_DIR/$wt"
+  touch "$STATUS_DIR/$wt.bgreminder"
+  TAB_STATUS_FAKE_BG=0 run "$TAB_STATUS" --hook active </dev/null
+  [ "$(cat "$STATUS_DIR/$wt")" = "active" ]
+  [ -f "$STATUS_DIR/$wt.bgreminder" ]
+  # Reminder survived, so the next quiet stop stays active, not idle.
+  TAB_STATUS_FAKE_BG=0 run "$TAB_STATUS" --hook stop </dev/null
+  [ "$(cat "$STATUS_DIR/$wt")" = "active" ]
+}
+
+@test "clear removes the reminder marker too" {
+  init_repo main
+  local wt; wt=$(basename "$REPO")
+  printf 'active\n' > "$STATUS_DIR/$wt"
+  touch "$STATUS_DIR/$wt.bgreminder"
+  run "$TAB_STATUS" clear </dev/null
+  [ ! -f "$STATUS_DIR/$wt.bgreminder" ]
+}
+
 @test "installed hook chain: title computation reads stdin --hook left unread (real pipe)" {
   # Faithfully replicates the installed hook command shape, with hook JSON on a
   # non-seekable pipe (process substitution): `--hook` ignores stdin, so the

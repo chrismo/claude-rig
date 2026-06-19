@@ -72,7 +72,7 @@ new_settings=$(
       matcher: '',
       hooks: [{
         type: 'command',
-        command: '${HOOK_CMD_PREFIX} active > /dev/null; ${TITLE_CMD}'
+        command: '${HOOK_CMD_PREFIX} engage > /dev/null; ${TITLE_CMD}'
       }]
     }],
     PermissionRequest: [{
@@ -93,7 +93,7 @@ new_settings=$(
       matcher: '',
       hooks: [{
         type: 'command',
-        command: '${HOOK_CMD_PREFIX} idle > /dev/null; ${TITLE_CMD}'
+        command: '${HOOK_CMD_PREFIX} stop > /dev/null; ${TITLE_CMD}'
       }]
     }, {
       matcher: '',

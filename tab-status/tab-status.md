@@ -24,7 +24,7 @@ sequenceDiagram
 
     U->>C: sends prompt
     C->>H: UserPromptSubmit fires
-    H->>TS: tab-status --hook active
+    H->>TS: tab-status --hook engage
     TS->>TS: check .manual file
     alt no manual hold
         TS-->>H: exit 0
@@ -53,16 +53,39 @@ sequenceDiagram
     Note over TS: (same manual hold check)
     C->>U: responds
     C->>H: Stop fires
-    H->>TS: tab-status --hook idle
+    H->>TS: tab-status --hook stop
     TS->>TS: check .manual file
     alt no manual hold
-        TS-->>H: exit 0
-        H->>T: tab-status --title > /dev/tty (⚪)
+        TS->>TS: background command running for this session?
+        alt yes (or .bgreminder set)
+            TS->>T: stays 🟢 active, drops .bgreminder
+        else no
+            TS->>T: ⚪ idle
+        end
     else manual hold exists
         TS-->>H: exit 1
         H->>T: (skipped)
     end
 ```
+
+## Background Commands (the "go back" nudge)
+
+Claude runs every Bash call detached in its own session. A *backgrounded*
+command (`run_in_background`) keeps running after Claude goes idle — but it's
+process-wise identical to a foreground one. The tell is timing: at **Stop**,
+Claude isn't running anything in the foreground, so any live shell-snapshot
+child of this session's `claude` pid is necessarily a background command. Its
+PPID is exactly that claude pid, so detection is per-session.
+
+When `stop` sees one, the tab **stays green instead of going idle** and drops a
+`<worktree>.bgreminder` marker — a "work's still cooking, come back" nudge. The
+reminder keeps the tab green *even after the command finishes*; it's cleared
+only when **you** re-engage (`UserPromptSubmit → engage`), not by Claude's own
+autonomous tool use (`PostToolUse → active`). So the tab only settles to ⚪ idle
+once you've returned **and** Claude has come to a real standstill.
+
+(Caveat: a background command that finishes before the turn-ending Stop fires is
+never seen — only commands still alive at a Stop trigger the nudge.)
 
 ## Manual Override Flow
 
@@ -118,8 +141,8 @@ flowchart LR
 
 | Status | Emoji | Meaning | Set by |
 |--------|-------|---------|--------|
-| active | 🟢 | Claude is working | Hook (UserPromptSubmit, PostToolUse) |
+| active | 🟢 | Claude is working — or idle with a background command still cooking | Hook (UserPromptSubmit, PostToolUse, Stop-with-bg) |
 | waiting | 🟡 | Permission prompt, need your input now | Hook (PermissionRequest) |
-| idle | ⚪ | Your turn, no rush | Hook (Stop) |
+| idle | ⚪ | Your turn, no rush (no background command running) | Hook (Stop) |
 | paused | 🔵 | Parked, will return later | Manual |
 | blocked | 🔴 | Can't proceed, external dependency | Manual |

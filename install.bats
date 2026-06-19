@@ -119,6 +119,22 @@ EOF
   [[ "$cmd" == *"claude-tabs save"* ]]
 }
 
+@test "fresh install: Stop hook resolves status via tab-status stop (bg-aware)" {
+  run_installer
+  [ "$status" -eq 0 ]
+  local cmd
+  cmd=$(settings_get 'this.hooks.Stop[0].hooks[0].command')
+  [[ "$cmd" == *"tab-status --hook stop"* ]]
+}
+
+@test "fresh install: UserPromptSubmit engages (clears the bg reminder)" {
+  run_installer
+  [ "$status" -eq 0 ]
+  local cmd
+  cmd=$(settings_get 'this.hooks.UserPromptSubmit[0].hooks[0].command')
+  [[ "$cmd" == *"tab-status --hook engage"* ]]
+}
+
 # ── Permissions merge ──────────────────────────────────────────────────────────
 
 @test "permissions: allow.sup entries are merged" {

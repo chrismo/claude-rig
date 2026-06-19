@@ -164,8 +164,90 @@ OSA
   printf '%s' "$title" > "$cache" 2>/dev/null || true
 }
 
+# ── Background-command detection ────────────────────────────────────────────────
+#
+# Claude Code runs EVERY Bash tool call detached in its own session (setsid),
+# sourcing ~/.claude/shell-snapshots/snapshot-*.sh. Foreground and background
+# commands are process-wise identical (same signature, TTY "??", session
+# leader) — the ONLY difference is lifetime: a foreground command exists just
+# while Claude is mid-turn (blocked on it). So at Stop time, when Claude is no
+# longer running anything in the foreground, any live snapshot-child of this
+# session's `claude` pid is necessarily a *backgrounded* command. The command's
+# PPID is exactly that claude pid, so detection is naturally per-session.
+
+SNAPSHOT_SIG="shell-snapshots/snapshot"
+
+# Walk the PPID chain from $1 (default $$) up to the first ancestor whose command
+# starts with "claude". Prints that pid, or nothing.
+find_claude_ancestor() {
+  local pid="${1:-$$}" cmd
+  while [[ "$pid" -gt 1 ]]; do
+    cmd=$(ps -o command= -p "$pid" 2>/dev/null)
+    if [[ "$cmd" == claude* ]]; then
+      printf '%s' "$pid"
+      return 0
+    fi
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+  done
+  return 1
+}
+
+# Ancestor pids of $1 (default $$) up to and including the claude pid, one per
+# line. These are "self": the running hook's own shell is itself a snapshot-child
+# of claude and must not be mistaken for a backgrounded command.
+self_chain() {
+  local pid="${1:-$$}" cmd
+  while [[ "$pid" -gt 1 ]]; do
+    printf '%s\n' "$pid"
+    cmd=$(ps -o command= -p "$pid" 2>/dev/null)
+    [[ "$cmd" == claude* ]] && return 0
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+  done
+}
+
+# Pure core (testable): read `ps -axo pid=,ppid=,command=` lines from stdin and
+# print the pid of every snapshot-child of the claude pid that isn't excluded.
+#   $1 = claude pid
+#   $2 = newline-separated pids to exclude (the self chain)
+filter_bg_commands() {
+  local claude_pid="$1" exclude="$2" pid ppid rest
+  while read -r pid ppid rest; do
+    [[ "$ppid" == "$claude_pid" ]] || continue
+    [[ "$rest" == *"$SNAPSHOT_SIG"* ]] || continue
+    case $'\n'"$exclude"$'\n' in
+      *$'\n'"$pid"$'\n'*) continue ;;
+    esac
+    printf '%s\n' "$pid"
+  done
+}
+
+# Does THIS session have a backgrounded command running right now? (exit 0 = yes)
+# Test seam: TAB_STATUS_FAKE_BG=1 forces yes, =0 forces no.
+has_bg_command() {
+  if [[ -n "${TAB_STATUS_FAKE_BG:-}" ]]; then
+    [[ "$TAB_STATUS_FAKE_BG" == 1 ]]
+    return
+  fi
+  local claude_pid
+  claude_pid=$(find_claude_ancestor) || return 1
+  local found
+  found=$(ps -axo pid=,ppid=,command= | filter_bg_commands "$claude_pid" "$(self_chain)")
+  [[ -n "$found" ]]
+}
+
+# Decide the Stop status. A live bg command — or a standing reminder that one
+# ran — keeps the tab active (green); otherwise it settles to idle.
+#   $1 = bg present (1/0)   $2 = reminder present (1/0)
+resolve_stop_status() {
+  if [[ "$1" == 1 || "$2" == 1 ]]; then
+    echo active
+  else
+    echo idle
+  fi
+}
+
 main() {
-  local worktree wt_status status_file manual_file hook_mode=false
+  local worktree wt_status status_file manual_file reminder_file hook_mode=false
 
   # Set the Ghostty tab title for the current session/worktree.
   if [[ "${1:-}" == "--title" ]]; then
@@ -189,10 +271,38 @@ main() {
   worktree=$(get_worktree)
   status_file="$STATUS_DIR/$worktree"
   manual_file="$STATUS_DIR/$worktree.manual"
+  # Marker that a backgrounded command ran during this idle stretch. It keeps the
+  # tab green ("go back, work's still cooking") even after the command finishes,
+  # and is cleared only when the user re-engages (UserPromptSubmit -> engage) so
+  # Claude's own autonomous continuation (PostToolUse -> active) can't drop it.
+  reminder_file="$STATUS_DIR/$worktree.bgreminder"
 
   mkdir -p "$STATUS_DIR"
 
-  case "${1:-}" in
+  # Resolve Stop-hook pseudo-actions into a concrete status, managing the
+  # background-command reminder marker.
+  local action="${1:-}" reminder_action=none
+  case "$action" in
+    stop)
+      # Respect manual hold before the (mildly expensive) process scan.
+      if [[ "$hook_mode" == true ]] && [[ -f "$manual_file" ]]; then
+        return 1
+      fi
+      local bg=0 rem=0
+      has_bg_command && bg=1
+      [[ -f "$reminder_file" ]] && rem=1
+      action=$(resolve_stop_status "$bg" "$rem")
+      [[ "$action" == active ]] && reminder_action=set
+      ;;
+    engage)
+      # The user is back: behave like `active`, but drop the bg reminder so a
+      # later quiet Stop can finally settle to idle.
+      action=active
+      reminder_action=clear
+      ;;
+  esac
+
+  case "$action" in
     "")
       # Show current status
       if [[ -f "$status_file" ]]; then
@@ -206,7 +316,7 @@ main() {
       fi
       ;;
     clear)
-      rm -f "$status_file" "$manual_file"
+      rm -f "$status_file" "$manual_file" "$reminder_file"
       echo "Status cleared for $worktree"
       ;;
     waiting|active|idle|paused|blocked)
@@ -215,7 +325,12 @@ main() {
         return 1
       fi
 
-      echo "$1" > "$status_file"
+      echo "$action" > "$status_file"
+
+      case "$reminder_action" in
+        set)   touch "$reminder_file" ;;
+        clear) rm -f "$reminder_file" ;;
+      esac
 
       # Manual calls set the hold, hook calls clear it
       if [[ "$hook_mode" == true ]]; then
@@ -224,7 +339,7 @@ main() {
         touch "$manual_file"
       fi
 
-      echo "$(status_emoji "$1") $worktree → $1"
+      echo "$(status_emoji "$action") $worktree → $action"
       ;;
     *)
       echo "Usage: tab-status [--hook] [waiting|active|paused|blocked|clear]"
