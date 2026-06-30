@@ -28,6 +28,12 @@ log() {
 
 input=$(cat)
 
+# ── DISABLED 2026-06-23: experimenting with newer Claude's auto-mode ──
+# All the dedicated-tool / compound-command / redirect checks below are turned
+# off to see whether the model self-governs well enough without them. This early
+# allow short-circuits the entire hook. To re-enable, delete this block.
+exit 0
+
 # Extract the command string from the hook JSON
 # Note: use pipe instead of <<< here-string — bash 3.2 (macOS default) mangles <<<
 command_str=$(echo "$input" | super -f line -c 'this.tool_input.command' -)
