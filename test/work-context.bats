@@ -42,10 +42,12 @@ teardown() {
 }
 
 # Helper: create a fake JSONL conversation file
-# Args: filename session_id timestamp prompt [msg_count]
+# Args: filename session_id timestamp prompt [msg_count [last_timestamp]]
+# last_timestamp: timestamp for all follow-up messages; defaults to timestamp
 create_conversation() {
   local filename="$1" session_id="$2" timestamp="$3" prompt="$4"
   local msg_count="${5:-5}"
+  local last_timestamp="${6:-$timestamp}"
   local dir="$TEST_HOME/.claude/projects/test-project"
 
   # Write enough user messages to satisfy msg_count grep
@@ -54,7 +56,7 @@ create_conversation() {
       "$session_id" "$timestamp" "$prompt"
     for ((i=2; i<=msg_count; i++)); do
       printf '{"type":"user","sessionId":"%s","timestamp":"%s","message":{"content":"follow-up %d"},"gitBranch":"main"}\n' \
-        "$session_id" "$timestamp" "$i"
+        "$session_id" "$last_timestamp" "$i"
     done
   } > "$dir/$filename"
 }
@@ -109,9 +111,28 @@ create_conversation() {
   [[ "$output" == *"sessionId"* ]]
   [[ "$output" == *"date"* ]]
   [[ "$output" == *"time"* ]]
+  [[ "$output" == *"started"* ]]
   [[ "$output" == *"project"* ]]
   [[ "$output" == *"messageCount"* ]]
   [[ "$output" == *"first_prompt"* ]]
+}
+
+@test "conversations_json filters on updatedAt not created (cross-midnight session)" {
+  # Session started yesterday but had activity today — must appear in days=0 results
+  create_conversation "cross.jsonl" "sess-cross" "$YESTERDAY_TS" "started yesterday prompt" 5 "$TODAY_TS"
+
+  run conversations_json 0
+  assert_success
+  [[ "$output" == *"sess-cross"* ]]
+}
+
+@test "conversations_json cross-midnight session date reflects last activity not start" {
+  create_conversation "cross.jsonl" "sess-cross" "$YESTERDAY_TS" "started yesterday prompt" 5 "$TODAY_TS"
+
+  run conversations_json 0
+  assert_success
+  # date field should reflect today (updatedAt), not yesterday (created)
+  [[ "$output" == *"$TODAY_DATE"* ]]
 }
 
 @test "conversations_json shows correct local date" {

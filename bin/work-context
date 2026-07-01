@@ -336,16 +336,18 @@ function collect_session_data() {
             # Skip files with no user messages (e.g., subagent files)
             [[ $msg_count -eq 0 ]] && continue
 
-            # Emit session record from first user message
-            # Cast message.content to string to ensure slicing works downstream
+            # Emit session record: created from first user message, updatedAt from last.
+            # Sort by timestamp so any() picks the earliest firstPrompt.
             super -f line -c "
               where type == 'user'
-              | head 1
+              | sort timestamp
               | put firstPrompt := message.content::string
+              | summarize sessionId:=any(sessionId), gitBranch:=any(gitBranch),
+                          firstPrompt:=any(firstPrompt),
+                          created:=min(timestamp), updatedAt:=max(timestamp)
               | put messageCount := ${msg_count}
               | put project := '${project_name}'
-              | put created := timestamp
-              | cut sessionId, created, gitBranch, firstPrompt, messageCount, project
+              | cut sessionId, created, updatedAt, gitBranch, firstPrompt, messageCount, project
             " "$jsonl_file" 2>/dev/null
         done
     )
@@ -366,7 +368,8 @@ function conversations() {
     fi
 
     conversations_json "$days" | super -f json -c "
-      cut date, time, project, msgs:=messageCount, prompt:=first_prompt[0:80]
+      put started_col := started != date ? started : ''
+      | cut date, time, started:=started_col, project, msgs:=messageCount, prompt:=first_prompt[0:80]
     " - 2>/dev/null | mlr --j2p --barred cat
 
     echo
@@ -622,16 +625,17 @@ function conversations_json() {
     local cutoff="${local_date}T$(printf '%02d' $utc_midnight_hour):00"
 
     # Each conversation as separate record with full metadata
-    # Convert UTC to local time using tz_offset_hours
+    # Filter and sort on updatedAt (last activity); convert UTC to local time using tz_offset_hours
     collect_session_data "$days" | super -f json -c "
-      where created >= '${cutoff}'
-      | put local_time:=created::time + '${tz_offset_hours}h'::duration
-      | put date:=strftime('%Y-%m-%d', local_time)
-      | put time:=strftime('%H:%M', local_time)
+      where updatedAt >= '${cutoff}'
+      | put local_updated:=updatedAt::time + '${tz_offset_hours}h'::duration
+      | put date:=strftime('%Y-%m-%d', local_updated)
+      | put time:=strftime('%H:%M', local_updated)
+      | put started:=strftime('%Y-%m-%d', created::time + '${tz_offset_hours}h'::duration)
       | put first_prompt:=replace(firstPrompt[0:300], '\\n', ' ')
       | put conv_summary:=replace(has(summary) ? summary : '', '\\n', ' ')
-      | sort -created
-      | cut sessionId, date, time, project, messageCount, gitBranch, first_prompt, conv_summary
+      | sort -updatedAt
+      | cut sessionId, date, time, started, project, messageCount, gitBranch, first_prompt, conv_summary
     " - 2>/dev/null
 }
 
