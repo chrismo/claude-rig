@@ -6,6 +6,7 @@
 #        claude-tabs restore       Restore sessions from manifest
 #        claude-tabs list-active   Show running sessions (dry-run of save)
 #        claude-tabs list-saved    Show the saved manifest (what restore uses)
+#        claude-tabs history       fzf-pick a saved snapshot and restore it
 #
 # Detection: No registration or state files. Asks the system what's running
 # via `lsof -c node -a -d cwd -Fn`, which returns the cwd of every node
@@ -241,6 +242,31 @@ cmd_list_saved() {
   super -J -c 'unnest this | sort name | collect(this)' "$CLAUDE_TABS_MANIFEST" | grdy
 }
 
+# history_label <snapshot-filename-or-path>
+# tab-state-20260501-083328.json → "2026-05-01 08:33:28"
+history_label() {
+  local base="${1##*/}"
+  local stamp="${base#tab-state-}"
+  stamp="${stamp%.json}"
+  local d="${stamp%%-*}"   # 20260501
+  local t="${stamp##*-}"   # 083328
+  printf '%s-%s-%s %s:%s:%s' \
+    "${d:0:4}" "${d:4:2}" "${d:6:2}" "${t:0:2}" "${t:2:2}" "${t:4:2}"
+}
+
+# history_rows [dir]
+# Emits one "path<TAB>label" row per snapshot, newest-first.
+history_rows() {
+  local dir="${1:-$CLAUDE_TABS_HISTORY_DIR}"
+  local files
+  # No matches → ls fails; under `pipefail` that must not bubble up as an error.
+  files=$(ls -t "$dir"/tab-state-*.json 2>/dev/null) || return 0
+  [[ -z "$files" ]] && return 0
+  while IFS= read -r f; do
+    printf '%s\t%s\n' "$f" "$(history_label "$f")"
+  done <<< "$files"
+}
+
 build_restore_applescript() {
   local cmd_dir="$1"
   local count="$2"
@@ -360,6 +386,45 @@ cmd_restore() {
   fi
 }
 
+# history: browse timestamped save snapshots in an fzf picker and restore the
+# selected one. The preview window renders that snapshot's sessions (grdy).
+# Reads only the history dir — does NOT inspect live processes or the manifest.
+cmd_history() {
+  if [[ ! -d "$CLAUDE_TABS_HISTORY_DIR" ]]; then
+    echo "No history dir at $CLAUDE_TABS_HISTORY_DIR"
+    return 0
+  fi
+
+  local rows
+  rows=$(history_rows)
+  if [[ -z "$rows" ]]; then
+    echo "No history snapshots in $CLAUDE_TABS_HISTORY_DIR"
+    return 0
+  fi
+
+  if ! command -v fzf >/dev/null 2>&1; then
+    echo "fzf not found — install it to browse tab history interactively." >&2
+    return 1
+  fi
+
+  # fzf field 1 (tab-delimited) is the snapshot path; column 2 (the label) is
+  # what's shown in the list. On cancel fzf exits non-zero — swallow it.
+  local selected
+  selected=$(printf '%s\n' "$rows" | fzf \
+    --delimiter='\t' \
+    --with-nth=2 \
+    --prompt='tab-history> ' \
+    --header='enter: restore   esc: cancel' \
+    --preview='grdy {1}' \
+    --preview-window='right:72%:wrap') || return 0
+
+  [[ -z "$selected" ]] && return 0
+
+  local file="${selected%%$'\t'*}"
+  echo "Restoring snapshot from $(history_label "$file")"
+  cmd_restore "$file"
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Main (skipped when sourced)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -377,6 +442,7 @@ usage() {
   echo "  restore       Reopen the sessions in the manifest"
   echo "  list-active   Show currently running sessions (dry-run of save)"
   echo "  list-saved    Show the saved manifest (what restore will reopen)"
+  echo "  history       Browse saved snapshots in fzf and restore one"
   echo ""
   echo "Manifest: $CLAUDE_TABS_MANIFEST"
   echo "Every save is also archived (timestamped) under:"
@@ -388,6 +454,7 @@ case "${1:-}" in
   restore)     shift; cmd_restore "$@" ;;
   list-active) cmd_list_active ;;
   list-saved)  cmd_list_saved ;;
+  history)     cmd_history ;;
   -h|--help)   usage ;;
   *)
     usage

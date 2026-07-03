@@ -78,3 +78,43 @@ setup() {
   [[ "$output" == *"/my/cmd/dir"* ]]
   [[ "$output" == *"7"* ]]
 }
+
+# ── history helpers ───────────────────────────────────────────────────────────
+
+@test "history_label formats the timestamp from a snapshot filename" {
+  run history_label "tab-state-20260501-083328.json"
+  [ "$status" -eq 0 ]
+  [[ "$output" == "2026-05-01 08:33:28" ]]
+}
+
+@test "history_label accepts a full path" {
+  run history_label "/x/y/tab-history/tab-state-20251231-235959.json"
+  [ "$status" -eq 0 ]
+  [[ "$output" == "2025-12-31 23:59:59" ]]
+}
+
+@test "history_rows lists snapshots newest-first with path<TAB>label" {
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/tab-hist.XXXXXX")"
+  : > "$dir/tab-state-20260101-010101.json"
+  : > "$dir/tab-state-20260102-020202.json"
+  touch -t 202601010101.01 "$dir/tab-state-20260101-010101.json"
+  touch -t 202601020202.02 "$dir/tab-state-20260102-020202.json"
+
+  run history_rows "$dir"
+  [ "$status" -eq 0 ]
+
+  first="$(echo "$output" | sed -n 1p)"
+  second="$(echo "$output" | sed -n 2p)"
+  [[ "$first"  == *"tab-state-20260102-020202.json"$'\t'"2026-01-02 02:02:02" ]]
+  [[ "$second" == *"tab-state-20260101-010101.json"$'\t'"2026-01-01 01:01:01" ]]
+
+  rm -rf "$dir"
+}
+
+@test "history_rows emits nothing for an empty/missing dir" {
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/tab-hist-empty.XXXXXX")"
+  run history_rows "$dir"
+  [ "$status" -eq 0 ]
+  [[ -z "$output" ]]
+  rm -rf "$dir"
+}
