@@ -79,6 +79,10 @@ DEFAULT_CONSOLE_TAG="main"
 # quiet server pane can't blow up the cost of reading the busy one.
 DEFAULT_TAIL=200
 
+# The window a --new read falls back to the first time it sees a stream, before a
+# cursor exists. Deliberately small: a first read is orientation, not archaeology.
+DEFAULT_NEW_TURNS=10
+
 usage() {
   cat <<-EOF
 	Usage: claude-pod <path> [flags]
@@ -97,6 +101,10 @@ usage() {
 	  --exclude <id-or-name> skip this session (repeatable; with --all/--peers)
 
 	Render flags:
+	  --new                only what arrived since THIS reader last looked. Works on
+	                       sessions and consoles; keeps a cursor per (reader, stream).
+	                       The cheap way to keep up — --turns/--tail re-read history
+	                       you already paid for.
 	  --turns N            render only the last N readable turns (per-session;
 	                       not valid with --all/--peers)
 	  --since <when>       ISO 8601 timestamp or relative duration (30m, 2h, 1d)
@@ -126,11 +134,48 @@ usage() {
 	  claude-pod --console-list                           # which panes are recording
 	  claude-pod --console --tail 80                      # what the human just saw
 	  claude-pod --console --tag tests                    # only the test pane
+	  claude-pod --console --tag tests --new              # …only what's new since I looked
+	  claude-pod --peers --new                            # what peers said since I looked
 	  claude-pod --record --tag server                    # how they start a pane
 	EOF
 }
 
 projects_dir="${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
+
+# ── Read cursors ───────────────────────────────────────────────────────────────
+#
+# Catching up on a peer stream with --tail/--turns re-reads what this reader has
+# already seen, so the more often it checks, the more it pays to re-read its own
+# history. A cursor makes catch-up cost O(new output) instead.
+#
+# Cursors are per (reader, stream): two Claudes following the same peer each keep
+# their own idea of "what's new for me". The reader is $CLAUDE_CODE_SESSION_ID
+# inside Claude Code; a plain shell shares one cursor namespace, which is fine —
+# a human's `--new` is curiosity, not bookkeeping.
+#
+# The stored value differs by stream: a byte offset for a console typescript, the
+# timestamp of the last rendered turn for a session .jsonl.
+cursor_dir="${CLAUDE_POD_CURSOR_DIR:-$HOME/.claude/claude-pod/cursors}"
+reader_id="${CLAUDE_CODE_SESSION_ID:-shell}"
+
+cursor_file() {
+  local key="${1//\//-}"
+  echo "$cursor_dir/$reader_id/$key"
+}
+
+cursor_get() {
+  local f
+  f="$(cursor_file "$1")"
+  [[ -f "$f" ]] || return 0
+  cat "$f"
+}
+
+cursor_set() {
+  local f
+  f="$(cursor_file "$1")"
+  mkdir -p "${f%/*}"
+  printf '%s\n' "$2" > "$f"
+}
 
 encode_path() {
   # Strip a leading slash so absolute paths don't double up the prefix dash.
@@ -425,6 +470,12 @@ filter_pipeline() {
   if [[ -n "${SINCE:-}" ]]; then
     since_clause=" and cast(timestamp, <time>) >= $(since_expr "$SINCE")"
   fi
+  # A cursor is exclusive where --since is inclusive: the turn at the cursor is
+  # the last one already rendered, so re-emitting it would double-charge the
+  # reader for output it has seen.
+  if [[ -n "${CURSOR_TS:-}" ]]; then
+    since_clause+=" and cast(timestamp, <time>) > cast('$CURSOR_TS', <time>)"
+  fi
   cat <<EOF
 where type in ['user','assistant'] and not has(isMeta)${since_clause}
 | put _arr := case
@@ -453,6 +504,55 @@ render_historical() {
     order_clause="| sort ts"
   fi
   super -f line -c "$(filter_pipeline) $order_clause $(format_clause)" "$file"
+}
+
+# The timestamp of the newest readable turn in a session — what a cursor stores.
+# Computed from the unfiltered stream, so it advances past the last turn the
+# reader actually saw even when a window (--turns) clipped the render.
+last_turn_ts() {
+  local file="$1"
+  CURSOR_TS="" SINCE="" super -f line -c "
+    where type in ['user','assistant'] and not has(isMeta)
+    | sort -r timestamp
+    | head 1
+    | values cast(timestamp, <string>)
+  " "$file" 2>/dev/null || true
+}
+
+# Only the turns added to this session since this reader last looked. Same three
+# edges as the console path: no cursor → fall back to the window rather than
+# replaying the whole conversation; nothing new → say so rather than printing
+# nothing at all.
+render_session_new() {
+  local file="$1"
+  local sid="${file##*/}"
+  sid="${sid%.jsonl}"
+
+  local cursor first_read=0
+  cursor="$(cursor_get "$sid")"
+  if [[ -z "$cursor" ]]; then
+    first_read=1
+    TURNS="${TURNS:-$DEFAULT_NEW_TURNS}"
+  else
+    CURSOR_TS="$cursor"
+    TURNS=""
+  fi
+
+  local out
+  out="$(render_historical "$file")"
+
+  local newest
+  newest="$(last_turn_ts "$file")"
+  [[ -n "$newest" ]] && cursor_set "$sid" "$newest"
+
+  if [[ -z "$out" ]]; then
+    echo "[$sid] no new turns since last read"
+    return 0
+  fi
+  if [[ "$first_read" -eq 1 ]]; then
+    echo "[$sid] first read — last $TURNS turns"
+  fi
+  printf '%s\n' "$out"
 }
 
 render_follow() {
@@ -662,13 +762,64 @@ render_console_file() {
   tail -n "$n" "$file" | clean_console
 }
 
+# Only what's been appended to this pane since this reader last looked.
+#
+# Three edges decide whether this is trustworthy:
+#  - No cursor yet → fall back to the window. A first read must not dump a whole
+#    day of terminal history into a context window.
+#  - Cursor past EOF → the pane was re-recorded. `script` truncates on start, so
+#    this is routine, not corruption. Reset and say so; otherwise a restarted pane
+#    would read as "nothing new" forever.
+#  - Nothing appended → say so out loud. "No new output" and "I didn't look" must
+#    not produce identical silence.
+render_console_new() {
+  local file="$1"
+  local n="${TAIL:-$DEFAULT_TAIL}"
+  local key size offset
+  key="$(physical_path "$file")"
+  size=$(stat -f '%z' "$file")
+  offset="$(cursor_get "$key")"
+
+  printf '── %s  (%s, %s, last write %s)\n' \
+    "$(console_tag_for "$file")" \
+    "${file##*/}" \
+    "$(console_status "$file")" \
+    "$(console_age "$file")"
+
+  if [[ -z "$offset" ]]; then
+    echo "   [first read — showing the last $n lines]"
+    tail -n "$n" "$file" | clean_console
+    cursor_set "$key" "$size"
+    return 0
+  fi
+
+  if ((offset > size)); then
+    echo "   [pane was re-recorded since the last read — reading from the start]"
+    offset=0
+  fi
+
+  if ((offset == size)); then
+    echo "   [no new output since last read]"
+    return 0
+  fi
+
+  # Cap the delta at the same window: a pane that exploded while nobody was
+  # looking must not be able to blow the context window open.
+  tail -c "+$((offset + 1))" "$file" | clean_console | tail -n "$n"
+  cursor_set "$key" "$size"
+}
+
 render_consoles() {
   local files=("$@")
   load_live_consoles "${files[@]}"
   local i
   for i in "${!files[@]}"; do
     [[ $i -eq 0 ]] || echo
-    render_console_file "${files[$i]}"
+    if [[ "$NEW" -eq 1 ]]; then
+      render_console_new "${files[$i]}"
+    else
+      render_console_file "${files[$i]}"
+    fi
   done
 }
 
@@ -763,6 +914,8 @@ TAIL=""
 TAG=""
 SINCE=""
 FOLLOW=0
+NEW=0
+CURSOR_TS=""
 
 # Bare invocation prints usage. Rendering the most-recent session "by default"
 # was too magical — easy to surprise yourself in the wrong worktree.
@@ -814,6 +967,10 @@ while [[ $# -gt 0 ]]; do
     --tag)
       TAG="${2:?--tag requires a console tag}"
       shift 2
+      ;;
+    --new)
+      NEW=1
+      shift
       ;;
     --turns)
       TURNS="${2:?--turns requires a number}"
@@ -963,8 +1120,7 @@ case "$MODE" in
     fi
     ;;
   list)
-    if [[ "$FOLLOW" -eq 1 ]]; then
-      # Firehose mode: stream new turns from every matched session interleaved.
+    if [[ "$FOLLOW" -eq 1 || "$NEW" -eq 1 ]]; then
       target="${POSITIONAL:-$PWD}"
       dir="$(project_dir_for "$target")"
       if [[ ! -d "$dir" ]]; then
@@ -980,7 +1136,16 @@ case "$MODE" in
         echo "claude-pod: no matching sessions in $dir" >&2
         exit 0
       fi
-      render_follow_all "${files[@]}"
+      if [[ "$NEW" -eq 1 ]]; then
+        # Catch up on every peer at once: each session gets its own cursor, so
+        # this returns only what each has said since this reader last looked.
+        for f in "${files[@]}"; do
+          render_session_new "$f"
+        done
+      else
+        # Firehose mode: stream new turns from every matched session interleaved.
+        render_follow_all "${files[@]}"
+      fi
     else
       list_sessions "${POSITIONAL:-$PWD}"
     fi
@@ -989,8 +1154,10 @@ case "$MODE" in
     resolve_render_file
     [[ -z "$RENDER_FILE" ]] && exit 0
     file="$RENDER_FILE"
-    # --turns 0 means "no history" — skip the historical render.
-    if [[ "$TURNS" != "0" ]]; then
+    if [[ "$NEW" -eq 1 ]]; then
+      render_session_new "$file"
+    elif [[ "$TURNS" != "0" ]]; then
+      # --turns 0 means "no history" — skip the historical render.
       render_historical "$file"
     fi
     if [[ "$FOLLOW" -eq 1 ]]; then

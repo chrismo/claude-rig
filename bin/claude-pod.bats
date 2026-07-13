@@ -16,6 +16,7 @@ POD="$BATS_TEST_DIRNAME/claude-pod"
 setup() {
   export CLAUDE_PROJECTS_DIR="$BATS_TEST_TMPDIR/.claude/projects"
   export CLAUDE_SESSIONS_META_DIR="$BATS_TEST_TMPDIR/.claude/sessions"
+  export CLAUDE_POD_CURSOR_DIR="$BATS_TEST_TMPDIR/.claude/claude-pod/cursors"
   mkdir -p "$CLAUDE_PROJECTS_DIR" "$CLAUDE_SESSIONS_META_DIR"
   # Many tests want a clean baseline; --peers behavior depends on this.
   unset CLAUDE_CODE_SESSION_ID
@@ -535,6 +536,138 @@ two_consoles() {
   [[ "$output" == *"ended"* ]]
   [[ "$output" == *"ago"* ]]
   [[ "$output" == *"ancient"* ]]
+}
+
+# ── --new: read only what arrived since this reader last looked ────────────────
+#
+# Catching up with --tail/--turns re-reads lines already seen, so the more often
+# Claude checks, the more it pays to re-read its own history. --new is the cursor
+# that fixes that, and these tests pin the edges that make it trustworthy: a first
+# read must not dump the world, an empty delta must SAY it's empty, and a
+# re-recorded pane must not go silent forever.
+
+@test "--console --new with no cursor yet falls back to the window, doesn't dump everything" {
+  wt=$(make_worktree wt1)
+  write_console "$wt" >/dev/null
+  run "$POD" --console --new --tail 1 "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"boom: NoMethodError"* ]]
+  [[ "$output" != *"PASS first-test"* ]]
+}
+
+@test "--console --new returns only what was appended since the last read" {
+  wt=$(make_worktree wt1)
+  write_console "$wt" >/dev/null
+  run "$POD" --console --new "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"boom: NoMethodError"* ]]
+
+  printf 'freshly-appended-line\n' >> "$wt/.main-console.log"
+  run "$POD" --console --new "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"freshly-appended-line"* ]]
+  [[ "$output" != *"boom: NoMethodError"* ]]
+}
+
+@test "--console --new with nothing appended says so, rather than printing nothing" {
+  wt=$(make_worktree wt1)
+  write_console "$wt" >/dev/null
+  run "$POD" --console --new "$wt"
+  [ "$status" -eq 0 ]
+
+  run "$POD" --console --new "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no new output"* ]]
+}
+
+@test "--console --new recovers when the pane is re-recorded (script truncates)" {
+  wt=$(make_worktree wt1)
+  write_console "$wt" >/dev/null
+  run "$POD" --console --new "$wt"
+  [ "$status" -eq 0 ]
+
+  # `rec` again → script truncates the log. The cursor now points past EOF.
+  printf 'a brand new session\n' > "$wt/.main-console.log"
+  run "$POD" --console --new "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"a brand new session"* ]]
+  [[ "$output" == *"re-recorded"* ]]
+}
+
+@test "--console --new caps an oversized delta with --tail" {
+  wt=$(make_worktree wt1)
+  write_console "$wt" >/dev/null
+  run "$POD" --console --new "$wt"
+  [ "$status" -eq 0 ]
+
+  # The pane exploded while we weren't looking.
+  local i
+  for i in $(seq 1 500); do printf 'flood-line-%s\n' "$i"; done >> "$wt/.main-console.log"
+  run "$POD" --console --new --tail 5 "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"flood-line-500"* ]]
+  [[ "$output" != *"flood-line-1 "* ]]
+  [[ "$output" != *"flood-line-100"* ]]
+}
+
+@test "cursors are per reader session — two Claudes each get their own 'what's new'" {
+  wt=$(make_worktree wt1)
+  write_console "$wt" >/dev/null
+
+  export CLAUDE_CODE_SESSION_ID="aaaaaaaa-1111-1111-1111-aaaaaaaaaaaa"
+  run "$POD" --console --new "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"boom: NoMethodError"* ]]
+
+  # A different reader has never looked; it must still see the content.
+  export CLAUDE_CODE_SESSION_ID="bbbbbbbb-2222-2222-2222-bbbbbbbbbbbb"
+  run "$POD" --console --new "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"boom: NoMethodError"* ]]
+}
+
+@test "--session --new returns only turns added since the last read" {
+  wt=$(make_worktree wt1)
+  sid="dddddddd-1111-2222-3333-444444444444"
+  write_session "$wt" "$sid" >/dev/null
+  run "$POD" --session "$sid" --new "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"hello"* ]]
+
+  local file
+  file="$(session_dir_for "$wt")/$sid.jsonl"
+  cat >> "$file" <<EOF
+{"type":"assistant","sessionId":"$sid","timestamp":"2026-05-17T00:05:00Z","message":{"content":[{"type":"text","text":"a-brand-new-turn"}]}}
+EOF
+  run "$POD" --session "$sid" --new "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"a-brand-new-turn"* ]]
+  [[ "$output" != *"hello"* ]]
+}
+
+@test "--session --new with no new turns says so" {
+  wt=$(make_worktree wt1)
+  sid="eeeeeeee-1111-2222-3333-444444444444"
+  write_session "$wt" "$sid" >/dev/null
+  run "$POD" --session "$sid" --new "$wt"
+  [ "$status" -eq 0 ]
+
+  run "$POD" --session "$sid" --new "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no new"* ]]
+}
+
+@test "--peers --new renders each peer's new turns, headed by session" {
+  wt=$(make_worktree wt1)
+  write_session "$wt" "11111111-2222-3333-4444-555555555555" >/dev/null
+  write_session "$wt" "22222222-3333-4444-5555-666666666666" >/dev/null
+  export CLAUDE_CODE_SESSION_ID="11111111-2222-3333-4444-555555555555"
+  run "$POD" --peers --new "$wt"
+  [ "$status" -eq 0 ]
+  # The peer's turns, not our own.
+  [[ "$output" == *"hi"* ]]
+  [[ "$output" == *"22222222"* ]]
+  [[ "$output" != *"11111111"* ]]
 }
 
 # ── --record: hand the human a command to start recording ──────────────────────

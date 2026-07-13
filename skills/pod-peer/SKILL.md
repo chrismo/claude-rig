@@ -135,8 +135,89 @@ works in *their* environment rather than in a tool-call subshell.
 - The user references something a peer said, or something they saw in their
   terminal.
 
-Don't poll. Don't read peers for entertainment — every read costs tokens. On a
-console, `--console-list` is the cheap look before the expensive one; prefer
-`--tag` and a bounded `--tail N` once you know which pane you want. Don't
-`--follow` a console: `-f` is for a human watching a pane, and would stream
-every line of their terminal into your context.
+Don't read peers for entertainment — every read costs tokens. `--console-list`
+and `--peers` are the cheap look before the expensive one.
+
+## Keeping up, without burning tokens
+
+**The unit of cost is a model turn, not a byte.** Anything that re-invokes you
+costs a turn; anything that doesn't is free. That single fact decides everything
+below.
+
+### `--new` — read only what you haven't seen
+
+`--tail N` and `--turns N` re-read what you already read. The more often you check,
+the more you pay to re-read your own history. `--new` returns only what arrived
+since *you* last looked, and remembers your position per stream:
+
+```
+claude-pod --console --tag tests --new   # only what that pane printed since last time
+claude-pod --peers --new                 # only what each peer said since last time
+```
+
+Use `--new` for every catch-up read. Keep `--tail`/`--turns` for the first look at
+something, or when you deliberately want history. `--new` tells you plainly when
+nothing has changed, and recovers on its own when the human re-records a pane
+(`script` truncates on start, so this is routine).
+
+### The ladder — start at the top
+
+**1. Pull on demand. This is the default.** Zero cost while idle. Read when the
+human mentions something they saw, when a peer might overlap your work, or at a
+natural checkpoint. Right for slow, multitasked work — which is most work. Stay
+here unless there's a reason to leave.
+
+**2. Waiting for one specific thing?** Use Bash `run_in_background` with a
+condition that *exits*:
+
+```
+until grep -q "Ready in" .server-console.log; do sleep 1; done
+```
+
+Exactly one turn, when it trips. Right for "tell me when the suite finishes."
+
+**3. High attention (an outage, a live debugging session)? Use Monitor as a
+coalescing doorbell.**
+
+Monitor turns **every stdout line into a model turn**. So piping a raw `tail -f`
+into it costs a turn *per log line* — that, and not Monitor itself, is what makes
+a watch "chatty." But the fix is *not* a keyword grep: any keyword list can miss
+the thing that mattered.
+
+Separate the two jobs. **The monitor decides when you wake. `--new` decides what
+you read.** Wake on *any* new output, coalesced on an interval:
+
+```bash
+LOG=.prod-console.log
+prev=$(wc -l < "$LOG")
+while true; do
+  sleep 20
+  cur=$(wc -l < "$LOG")
+  [ "$cur" -ne "$prev" ] && echo "$((cur - prev)) new lines in prod pane"
+  prev=$cur
+done
+```
+
+At most one turn per interval, and only when something actually happened. **Cost is
+bounded by wall-clock, not by log volume** — a log screaming ten thousand lines a
+second costs the same as one dribbling out three. When it fires, pull the content
+with `claude-pod --console --tag prod --new`, and send a PushNotification if the
+human would want to act on it now. Tighten the interval for more currency; loosen
+it to spend less.
+
+Nothing is missed: the doorbell doesn't judge importance, it only says "there's new
+output" — and `--new` then hands you all of it.
+
+A keyword filter (`tail -f "$LOG" | grep -E --line-buffered 'FATAL|Traceback|panic'`)
+is worth adding only as a *second, faster* doorbell for "wake me instantly for a
+catastrophe." It is an urgency hint, never your coverage. If you use one, remember
+**silence is not success** — a filter matching only the happy path stays quiet
+through a crashloop, and quiet looks exactly like healthy.
+
+**4. Don't poll on a timer.** `/loop`, cron, a scheduled wake-up: each pays a full
+turn per tick whether or not anything happened. The doorbell above is strictly
+better — same interval, silent when nothing changed.
+
+**`--follow` is for humans, not for you.** On a console it streams every line of a
+terminal into your context; on `--peers` it's a firehose of every peer's turns.
+It's meant for a human watching a terminal pane, where it costs nothing.
