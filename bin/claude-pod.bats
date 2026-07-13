@@ -32,9 +32,9 @@ setup() {
 # ── Fixture helpers ────────────────────────────────────────────────────────────
 
 # encode_path /tmp/foo/bar → -tmp-foo-bar (mirrors claude-pod's encode_path).
+# Claude Code replaces EVERY non-alphanumeric character, not just '/'.
 encode_path() {
-  local p="${1#/}"
-  echo "-${p//\//-}"
+  printf '%s' "$1" | sed 's/[^a-zA-Z0-9]/-/g'
 }
 
 # make_worktree NAME
@@ -155,6 +155,30 @@ write_console() {
 @test "bad path → exit 1" {
   run "$POD" /does/not/exist
   [ "$status" -eq 1 ]
+}
+
+# Issue #17: a worktree under a Google Drive path — dots, an @, and a space —
+# resolved to a project dir that doesn't exist, so claude-pod reported "no
+# sessions" while peers were actively running. A silent false negative.
+#
+# The expected name here is derived independently (the sanitizer from the issue),
+# NOT from this file's encode_path helper — otherwise the test would pass by
+# mirroring whatever bug the helper shares with the script.
+@test "project dir encoding replaces every non-alphanumeric char, not just / (issue #17)" {
+  wt="$BATS_TEST_TMPDIR/GoogleDrive-chris.morris@dscout.com/My Drive/work-rig"
+  mkdir -p "$wt"
+  local canonical encoded sid
+  canonical="$(cd "$wt" && pwd)"
+  encoded="$(printf '%s' "$canonical" | sed 's/[^a-zA-Z0-9]/-/g')"
+  mkdir -p "$CLAUDE_PROJECTS_DIR/$encoded"
+  sid="c0ffee00-1111-2222-3333-444444444444"
+  cat > "$CLAUDE_PROJECTS_DIR/$encoded/$sid.jsonl" <<EOF
+{"type":"system","sessionId":"$sid","subtype":"info","timestamp":"2026-07-14T00:00:00Z","content":"meta","isMeta":true}
+{"type":"user","sessionId":"$sid","timestamp":"2026-07-14T00:00:01Z","message":{"content":"hello from google drive"}}
+EOF
+  run "$POD" --all "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$sid"* ]]
 }
 
 @test "valid worktree, --all matches nothing in window → exit 0, message on stderr" {

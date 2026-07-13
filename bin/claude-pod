@@ -177,10 +177,17 @@ cursor_set() {
   printf '%s\n' "$2" > "$f"
 }
 
+# Claude Code names a project dir by replacing EVERY non-alphanumeric character in
+# the absolute path with '-', not just the slashes. The leading '/' becomes the
+# leading '-' for free.
+#
+# Getting this wrong is a silent false negative — under a path like
+#   /Users/me/Library/CloudStorage/GoogleDrive-chris.morris@dscout.com/My Drive/rig
+# a '/'-only substitution keeps the '.', '@' and space, points at a directory that
+# was never created, and reports "no sessions" while peers are actively running
+# (issue #17). Sanitize the same way Claude does, or don't find anything.
 encode_path() {
-  # Strip a leading slash so absolute paths don't double up the prefix dash.
-  local p="${1#/}"
-  echo "-${p//\//-}"
+  printf '%s' "$1" | sed 's/[^a-zA-Z0-9]/-/g'
 }
 
 project_dir_for() {
