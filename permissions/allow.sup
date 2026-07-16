@@ -34,6 +34,4 @@
 "WebFetch(domain:bchq.net)"
 "WebFetch(domain:healthchecks.io)"
 "WebFetch(domain:statsig.anthropic.com)"
-"Write(.claude/tmp/*)"
-"Write(tmp/*)"
 "Edit(tmp/*)"
