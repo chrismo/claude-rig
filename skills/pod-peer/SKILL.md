@@ -57,8 +57,9 @@ Selection:
   --session <id-or-name> show a specific session by UUID or /rename name
   --exclude <id-or-name> skip this session (repeatable; with --all/--peers)
 
-Source:
-  --codex                read Codex (~/.codex) sessions instead of Claude's
+Source (default: auto — the source with sessions here; freshest wins if both):
+  --codex                force Codex (~/.codex) sessions
+  --claude               force Claude sessions
 
 Render flags:
   --turns N            render only the last N readable turns (per-session;
@@ -83,22 +84,28 @@ worktree.
 
 ## Codex peers
 
-A peer in the same worktree may be Codex (the OpenAI CLI), not Claude. `--codex`
-points every selection and render flag at `~/.codex` instead of Claude's
-sessions, so you can read what a Codex peer is doing exactly as you'd read a
-Claude one:
+A peer in the same worktree may be Codex (the OpenAI CLI), not Claude. By default
+claude-pod **auto-detects**: with no source flag it reads whichever source has
+sessions here, and if both do, it shows the more recently active one and prints a
+one-line hint on stderr naming the other. So `claude-pod --peers` usually just
+does the right thing.
+
+To be explicit, `--codex` and `--claude` pin the source, pointing every selection
+and render flag at `~/.codex` or `~/.claude`:
 
 ```
-claude-pod --codex --peers          # Codex sessions in this worktree
+claude-pod --peers                  # auto: peers here (Claude or Codex, freshest wins)
+claude-pod --codex --peers          # only Codex sessions in this worktree
 claude-pod --codex --peers --new    # …only what they've said since you looked
 claude-pod --codex --session <uuid> # a specific Codex rollout, by UUID
+claude-pod --claude --peers         # only Claude sessions (force past auto)
 ```
 
-It's a separate source: `claude-pod --peers` shows Claude peers, `claude-pod
---codex --peers` shows Codex peers. When you suspect a Codex peer is in the
-worktree, run both. Three things Codex doesn't support: `--session` by name
-(Codex records no `/rename`), `--all/--peers -f` firehose (use `--new`), and
-`--console`/`--record` (those read the human's terminal, which has no source).
+When the auto hint tells you the other source also has sessions, and you care
+about both halves of a mixed worktree, run the pinned form for each. Three things
+Codex doesn't support: `--session` by name (Codex records no `/rename`),
+`--all/--peers -f` firehose (use `--new`), and `--console`/`--record` (those read
+the human's terminal, which has no source).
 
 Codex prepends each session with injected `<environment_context>` and
 `<user_instructions>` turns — orientation boilerplate, not conversation. Skim

@@ -927,3 +927,73 @@ write_codex_subagent() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"via symlink"* ]]
 }
+
+# ── Auto source detection (no --codex/--claude flag) ────────────────────────────
+#
+# With neither flag, claude-pod picks the source that has sessions for the
+# worktree; when both do, the more recently active one wins and a hint on stderr
+# names the quiet source so a mixed worktree's other half isn't hidden.
+
+@test "auto source: renders Codex when only Codex has sessions here" {
+  wt=$(make_worktree awt)
+  # make_worktree created an (empty) Claude project dir; only Codex has turns.
+  write_codex_session "$wt" "aaaaaaaa-1111-2222-3333-444444444444" "user:codex only" >/dev/null
+  run "$POD" "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"codex only"* ]]
+}
+
+@test "auto source: still renders Claude when only Claude has sessions here" {
+  wt=$(make_worktree awt)
+  write_session "$wt" "11111111-1111-1111-1111-111111111111" >/dev/null
+  run "$POD" "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"hello"* ]]
+}
+
+@test "auto source: with both, the more recent source wins (Codex), hint points at --claude" {
+  wt=$(make_worktree awt)
+  cf=$(write_session "$wt" "11111111-1111-1111-1111-111111111111")
+  write_codex_session "$wt" "aaaaaaaa-1111-2222-3333-444444444444" "user:codex is fresher" >/dev/null
+  xf="$CLAUDE_POD_CODEX_DIR/2026/07/15/rollout-2026-07-15T10-00-00-aaaaaaaa-1111-2222-3333-444444444444.jsonl"
+  touch -t 202001010000 "$cf"
+  touch "$xf"
+  run --separate-stderr "$POD" "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"codex is fresher"* ]]
+  [[ "$stderr" == *"--claude"* ]]
+}
+
+@test "auto source: with both, Claude wins when it's fresher, hint points at --codex" {
+  wt=$(make_worktree awt)
+  cf=$(write_session "$wt" "11111111-1111-1111-1111-111111111111")
+  write_codex_session "$wt" "aaaaaaaa-1111-2222-3333-444444444444" "user:codex here too" >/dev/null
+  xf="$CLAUDE_POD_CODEX_DIR/2026/07/15/rollout-2026-07-15T10-00-00-aaaaaaaa-1111-2222-3333-444444444444.jsonl"
+  touch -t 202001010000 "$xf"
+  touch "$cf"
+  run --separate-stderr "$POD" "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"hello"* ]]
+  [[ "$stderr" == *"--codex"* ]]
+}
+
+@test "--claude forces the Claude source even when Codex is more recent" {
+  wt=$(make_worktree awt)
+  cf=$(write_session "$wt" "11111111-1111-1111-1111-111111111111")
+  write_codex_session "$wt" "aaaaaaaa-1111-2222-3333-444444444444" "user:codex fresher" >/dev/null
+  xf="$CLAUDE_POD_CODEX_DIR/2026/07/15/rollout-2026-07-15T10-00-00-aaaaaaaa-1111-2222-3333-444444444444.jsonl"
+  touch -t 202001010000 "$cf"
+  touch "$xf"
+  run "$POD" --claude "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"hello"* ]]
+  [[ "$output" != *"codex fresher"* ]]
+}
+
+@test "--session with no source flag resolves a Codex-only UUID" {
+  wt=$(make_worktree awt)
+  write_codex_session "$wt" "aaaaaaaa-1111-2222-3333-444444444444" "user:codex by uuid auto" >/dev/null
+  run "$POD" --session "aaaaaaaa-1111-2222-3333-444444444444" "$BATS_TEST_TMPDIR"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"codex by uuid auto"* ]]
+}
