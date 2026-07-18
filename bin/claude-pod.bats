@@ -17,6 +17,7 @@ setup() {
   export CLAUDE_PROJECTS_DIR="$BATS_TEST_TMPDIR/.claude/projects"
   export CLAUDE_SESSIONS_META_DIR="$BATS_TEST_TMPDIR/.claude/sessions"
   export CLAUDE_POD_CURSOR_DIR="$BATS_TEST_TMPDIR/.claude/claude-pod/cursors"
+  export CLAUDE_POD_CODEX_DIR="$BATS_TEST_TMPDIR/.codex/sessions"
   mkdir -p "$CLAUDE_PROJECTS_DIR" "$CLAUDE_SESSIONS_META_DIR"
   # Many tests want a clean baseline; --peers behavior depends on this.
   unset CLAUDE_CODE_SESSION_ID
@@ -742,4 +743,187 @@ EOF
   run "$POD" --record --tag tests "$wt"
   [ "$status" -eq 0 ]
   [[ "$output" != *"already"* ]]
+}
+
+# ── Codex source (--codex) ──────────────────────────────────────────────────────
+#
+# Codex (the OpenAI CLI) stores sessions under ~/.codex/sessions/YYYY/MM/DD/ with
+# no per-worktree directory: the worktree is recorded as payload.cwd in a
+# session_meta header line. Turns are response_item/message lines. These fixtures
+# and tests exercise the --codex source (issue #18). CLAUDE_POD_CODEX_DIR is
+# redirected into BATS_TEST_TMPDIR by setup().
+
+# write_codex_session CWD SID [ROLE:TEXT ...]
+#   Writes a Codex rollout file whose session_meta header records CWD, followed by
+#   one response_item/message turn per ROLE:TEXT pair (default: a user + assistant
+#   turn). Filename ends in the SID, mirroring Codex's rollout-<ts>-<uuid>.jsonl.
+#   Echoes the file path.
+write_codex_session() {
+  local cwd="$1" sid="$2"; shift 2
+  local day="$CLAUDE_POD_CODEX_DIR/2026/07/15"
+  mkdir -p "$day"
+  local file="$day/rollout-2026-07-15T10-00-00-$sid.jsonl"
+  {
+    printf '{"timestamp":"2026-07-15T10:00:00.000Z","type":"session_meta","payload":{"id":"%s","cwd":"%s","cli_version":"0.38.0"}}\n' "$sid" "$cwd"
+    if [[ $# -eq 0 ]]; then
+      set -- "user:hello from codex" "assistant:hi from codex"
+    fi
+    local i=1 pair role text ct
+    for pair in "$@"; do
+      role="${pair%%:*}"; text="${pair#*:}"
+      if [[ "$role" == user ]]; then ct=input_text; else ct=output_text; fi
+      printf '{"timestamp":"2026-07-15T10:00:0%d.000Z","type":"response_item","payload":{"type":"message","role":"%s","content":[{"type":"%s","text":"%s"}]}}\n' "$i" "$role" "$ct" "$text"
+      i=$((i + 1))
+    done
+  } > "$file"
+  echo "$file"
+}
+
+# write_codex_subagent CWD SID
+#   Like write_codex_session but tags the header as a subagent rollout, which
+#   --codex discovery must exclude.
+write_codex_subagent() {
+  local cwd="$1" sid="$2"
+  local day="$CLAUDE_POD_CODEX_DIR/2026/07/15"
+  mkdir -p "$day"
+  local file="$day/rollout-2026-07-15T10-00-00-$sid.jsonl"
+  {
+    printf '{"timestamp":"2026-07-15T10:00:00.000Z","type":"session_meta","payload":{"id":"%s","cwd":"%s","source":{"subagent":{"other":"guardian"}}}}\n' "$sid" "$cwd"
+    printf '{"timestamp":"2026-07-15T10:00:01.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"subagent output"}]}}\n'
+  } > "$file"
+  echo "$file"
+}
+
+@test "--codex renders the most-recent codex session in a worktree" {
+  wt=$(make_worktree cwt1)
+  write_codex_session "$wt" "aaaaaaaa-1111-2222-3333-444444444444" >/dev/null
+  run "$POD" --codex "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"hello from codex"* ]]
+  [[ "$output" == *"hi from codex"* ]]
+}
+
+@test "--codex matches on the header cwd, not a per-worktree directory" {
+  wt1=$(make_worktree cwt1)
+  wt2=$(make_worktree cwt2)
+  write_codex_session "$wt1" "aaaaaaaa-1111-2222-3333-444444444444" "user:in wt1" >/dev/null
+  write_codex_session "$wt2" "bbbbbbbb-1111-2222-3333-444444444444" "user:in wt2" >/dev/null
+  run "$POD" --codex "$wt1"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"in wt1"* ]]
+  [[ "$output" != *"in wt2"* ]]
+}
+
+@test "--codex --all lists codex sessions for the worktree" {
+  wt=$(make_worktree cwt1)
+  write_codex_session "$wt" "aaaaaaaa-1111-2222-3333-444444444444" >/dev/null
+  run "$POD" --codex --all "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"aaaaaaaa-1111-2222-3333-444444444444"* ]]
+}
+
+@test "--codex --all excludes subagent rollouts" {
+  wt=$(make_worktree cwt1)
+  write_codex_session "$wt" "aaaaaaaa-1111-2222-3333-444444444444" >/dev/null
+  write_codex_subagent "$wt" "99999999-1111-2222-3333-444444444444" >/dev/null
+  run "$POD" --codex --all "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"aaaaaaaa-1111-2222-3333-444444444444"* ]]
+  [[ "$output" != *"99999999-1111-2222-3333-444444444444"* ]]
+}
+
+@test "--codex --session renders a codex session by UUID, cross-worktree" {
+  wt=$(make_worktree cwt1)
+  write_codex_session "$wt" "aaaaaaaa-1111-2222-3333-444444444444" "user:find me by id" >/dev/null
+  # Run from a different directory to prove the lookup isn't worktree-scoped.
+  run "$POD" --codex --session "aaaaaaaa-1111-2222-3333-444444444444" "$BATS_TEST_TMPDIR"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"find me by id"* ]]
+}
+
+@test "--codex --session rejects a /rename name (unsupported for codex)" {
+  wt=$(make_worktree cwt1)
+  write_codex_session "$wt" "aaaaaaaa-1111-2222-3333-444444444444" >/dev/null
+  run "$POD" --codex --session some-name "$wt"
+  [ "$status" -ne 0 ]
+}
+
+@test "--codex with no matching sessions → exit 0, message on stderr" {
+  wt=$(make_worktree cwt1)
+  run --separate-stderr "$POD" --codex --all "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"no matching"* ]]
+}
+
+@test "--codex with --console → exit 2" {
+  wt=$(make_worktree cwt1)
+  run "$POD" --codex --console "$wt"
+  [ "$status" -eq 2 ]
+}
+
+@test "--codex --since filters by timestamp" {
+  wt=$(make_worktree cwt1)
+  write_codex_session "$wt" "aaaaaaaa-1111-2222-3333-444444444444" \
+    "user:ancient turn" "assistant:ancient reply" >/dev/null
+  # The fixture's turns are dated 2026-07-15; a 1s window excludes them.
+  file="$CLAUDE_POD_CODEX_DIR/2026/07/15/rollout-2026-07-15T10-00-00-aaaaaaaa-1111-2222-3333-444444444444.jsonl"
+  touch -t 202401010000 "$file"
+  run "$POD" --codex --since 1s "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"ancient turn"* ]]
+}
+
+@test "--codex --all --new renders each codex session's new turns" {
+  wt=$(make_worktree cwt1)
+  write_codex_session "$wt" "aaaaaaaa-1111-2222-3333-444444444444" \
+    "user:fresh codex turn" "assistant:fresh codex reply" >/dev/null
+  run "$POD" --codex --all --new "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"fresh codex turn"* ]]
+}
+
+@test "--codex --peers -f (firehose) → exit 2, points at --new" {
+  wt=$(make_worktree cwt1)
+  write_codex_session "$wt" "aaaaaaaa-1111-2222-3333-444444444444" >/dev/null
+  export CLAUDE_CODE_SESSION_ID=observer-session
+  run "$POD" --codex --peers -f "$wt"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--new"* ]]
+}
+
+# Regression: render_session_new keys its filter on the global CURSOR_TS. In the
+# --all/--peers --new loop it's called once per session; if a session that HAS a
+# cursor is processed before one that has NONE, the first session's cursor must
+# not leak into the second and filter away its first read.
+@test "--codex --all --new: a read peer's cursor doesn't suppress an unread peer's first read" {
+  wt=$(make_worktree cwt1)
+  A=aaaaaaaa-1111-2222-3333-444444444444
+  B=bbbbbbbb-1111-2222-3333-444444444444
+  write_codex_session "$wt" "$B" "user:unread peer turn" >/dev/null
+  fA=$(write_codex_session "$wt" "$A" "user:read peer turn")
+  # Make A the newest so --all iterates it first (and it carries a cursor).
+  touch "$fA"
+  # Give A a cursor by reading it alone; B stays unread.
+  run "$POD" --codex --session "$A" --new "$wt"
+  [ "$status" -eq 0 ]
+  # Now catch up on every peer. B has never been read, so its turn must appear
+  # even though A (processed first) advanced CURSOR_TS.
+  run "$POD" --codex --all --new "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"unread peer turn"* ]]
+}
+
+# A worktree reached through a symlink has a logical path (the symlink) and a
+# physical one (the target). Codex may record either; discovery must match a
+# session recorded under the physical path when queried via the logical one.
+@test "--codex matches a worktree whose recorded cwd is the physical path" {
+  realwt="$BATS_TEST_TMPDIR/realdir"
+  mkdir -p "$realwt"
+  link="$BATS_TEST_TMPDIR/linkdir"
+  ln -s "$realwt" "$link"
+  phys="$(cd "$realwt" && pwd -P)"
+  write_codex_session "$phys" "aaaaaaaa-1111-2222-3333-444444444444" "user:via symlink" >/dev/null
+  run "$POD" --codex "$link"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"via symlink"* ]]
 }

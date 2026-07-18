@@ -100,6 +100,14 @@ usage() {
 	  --session <id-or-name> show a specific session by UUID or /rename name
 	  --exclude <id-or-name> skip this session (repeatable; with --all/--peers)
 
+	Source:
+	  --codex                read Codex (~/.codex) sessions instead of Claude's.
+	                         Works with the selection and render flags above; the
+	                         worktree is matched on each rollout's recorded cwd.
+	                         Not supported for Codex: --session by /rename name (no
+	                         rename source), --all/--peers -f firehose (no per-turn
+	                         session id to tag the merged stream), and console/record.
+
 	Render flags:
 	  --new                only what arrived since THIS reader last looked. Works on
 	                       sessions and consoles; keeps a cursor per (reader, stream).
@@ -136,11 +144,25 @@ usage() {
 	  claude-pod --console --tag tests                    # only the test pane
 	  claude-pod --console --tag tests --new              # …only what's new since I looked
 	  claude-pod --peers --new                            # what peers said since I looked
+	  claude-pod --codex --peers                          # Codex sessions in this worktree
+	  claude-pod --codex --peers --new                    # what Codex peers said since I looked
 	  claude-pod --record --tag server                    # how they start a pane
 	EOF
 }
 
 projects_dir="${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
+
+# Codex (the OpenAI CLI) mirrors Claude's on-disk convention under ~/.codex, but
+# with two structural differences claude-pod has to bridge (issue #18):
+#   1. Sessions are date-partitioned (YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl), not
+#      per-worktree — the worktree lives inside each file as payload.cwd.
+#   2. Turns are typed lines (session_meta header, response_item/message turns),
+#      not Claude's top-level {type:user|assistant, message}.
+# --codex flips $SOURCE, and the discovery/render seams below dispatch on it. The
+# cursor, --since, --follow, and --new machinery is reused unchanged: Codex lines
+# carry the same top-level `timestamp` field Claude's do.
+codex_sessions_dir="${CLAUDE_POD_CODEX_DIR:-$HOME/.codex/sessions}"
+SOURCE=claude
 
 # ── Read cursors ───────────────────────────────────────────────────────────────
 #
@@ -352,6 +374,13 @@ resolve_session_id() {
     echo "$arg"
     return 0
   fi
+  # Codex has no /rename source (no live-session metadata, no rename event), so a
+  # non-UUID can't be resolved. Say so rather than falling through to the Claude
+  # name maps, which would silently search the wrong source.
+  if [[ "$SOURCE" == codex ]]; then
+    echo "claude-pod: --codex takes a session UUID; /rename names aren't recorded by Codex: $arg" >&2
+    return 1
+  fi
   local sid
   if sid=$(sid_from_live_sessions "$arg"); then
     echo "$sid"
@@ -386,6 +415,31 @@ filtered_sessions_in() {
 
 list_sessions() {
   local target="${1:-$PWD}"
+
+  if [[ "$SOURCE" == codex ]]; then
+    local cwd
+    cwd="$(cd "$target" 2>/dev/null && pwd)" || {
+      echo "claude-pod: not a directory: $target" >&2
+      exit 1
+    }
+    local any=0 f sid mtime turns
+    while IFS= read -r f; do
+      if [[ $any -eq 0 ]]; then
+        printf '%-19s  %-36s  %-5s  %s\n' 'modified' 'sessionId' 'lines' 'name'
+      fi
+      any=1
+      sid="$(codex_sid_for "$f")"
+      mtime=$(stat -f '%Sm' -t '%Y-%m-%d %H:%M:%S' "$f")
+      turns=$(wc -l < "$f" | tr -d ' ')
+      # No name column: Codex records no /rename equivalent.
+      printf '%-19s  %-36s  %-5s  %s\n' "$mtime" "$sid" "$turns" ""
+    done < <(codex_filtered_files "$cwd")
+    if [[ $any -eq 0 ]]; then
+      echo "claude-pod: no matching Codex sessions for $cwd" >&2
+    fi
+    return 0
+  fi
+
   local dir
   dir="$(project_dir_for "$target")"
   # Bad path / never-used worktree is an error (the user pointed somewhere
@@ -426,6 +480,112 @@ find_by_session_id() {
   local matches=("$projects_dir"/*/"$sid".jsonl)
   if [[ ${#matches[@]} -eq 0 ]]; then
     echo "claude-pod: no session file for ID $sid" >&2
+    exit 1
+  fi
+  echo "${matches[0]}"
+}
+
+# ── Codex discovery ──────────────────────────────────────────────────────────────
+
+# The rollout's UUID is the tail of its filename (rollout-<ts>-<uuid>.jsonl) and
+# equals payload.id — so a session can be addressed by UUID without opening the
+# file, exactly like Claude's <uuid>.jsonl.
+codex_sid_for() {
+  local b="${1##*/}"
+  b="${b%.jsonl}"
+  echo "${b: -36}"
+}
+
+# Every Codex rollout for a worktree, newest mtime first (mirroring the claude
+# path's `ls -t`). Codex has no per-worktree directory, so the worktree is matched
+# against payload.cwd in each file's session_meta header.
+#
+# Cost is kept to O(files): only line 1 (the header) of each candidate is read,
+# not the whole transcript. One super pass over those headers emits id<TAB>cwd;
+# the cwd match is done in the shell so a worktree path with an odd character
+# never has to be interpolated into a super program. Subagent rollouts are
+# dropped by string-matching the stringified payload for "subagent" — older Codex
+# builds omit payload.source entirely, and has(payload.source) would error at
+# schema resolution when the field appears in no header at all.
+codex_files_for_cwd() {
+  local cwd="$1"
+  # A worktree under a symlinked parent (/tmp, /var on macOS) has a logical path
+  # and a physical one; if Codex recorded the physical form and the shell reports
+  # the logical (or vice-versa), an exact match silently finds nothing — the
+  # issue-#17 class of false negative. Match either form, the way the console
+  # path resolves with physical_path() before comparing.
+  local cwd_phys
+  cwd_phys="$(cd "$cwd" 2>/dev/null && pwd -P)" || cwd_phys="$cwd"
+  local files=("$codex_sessions_dir"/*/*/*/*.jsonl)
+  [[ -e "${files[0]:-}" ]] || return 0
+
+  local ordered=()
+  local f
+  while IFS= read -r f; do ordered+=("$f"); done < <(ls -t "${files[@]}")
+  [[ ${#ordered[@]} -gt 0 ]] || return 0
+
+  local headers rows
+  headers="$(for f in "${ordered[@]}"; do head -n 1 "$f"; done)"
+  # The trailing '-' is required: super reads stdin only when a '-' path is given
+  # explicitly; without it, piped input is silently seen as empty.
+  # cast(payload, <string>) renders ZSON with unquoted keys, so a subagent header
+  # stringifies as `…source:{subagent:{…}}`. Match the bare `subagent` key. (The
+  # only false positive would be a worktree path literally containing "subagent",
+  # which would merely hide that one session — acceptable, and vanishingly rare.)
+  rows="$(
+    printf '%s\n' "$headers" | super -i json -f line -c "
+      where type == 'session_meta'
+        and not grep('subagent', cast(payload, <string>))
+      | values f'{payload.id}\t{payload.cwd}'
+    " - 2>/dev/null
+  )" || return 0
+  [[ -n "$rows" ]] || return 0
+
+  # ids matching this cwd, as a newline-delimited set the membership check walks.
+  local matching_ids="" line
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    if [[ "$line" == *$'\t'"$cwd" || "$line" == *$'\t'"$cwd_phys" ]]; then
+      matching_ids+="${line%%$'\t'*}"$'\n'
+    fi
+  done <<< "$rows"
+  [[ -n "$matching_ids" ]] || return 0
+
+  # Re-emit files in mtime order, keeping only those whose UUID matched.
+  local sid id
+  for f in "${ordered[@]}"; do
+    sid="$(codex_sid_for "$f")"
+    while IFS= read -r id; do
+      [[ -n "$id" ]] || continue
+      [[ "$sid" == "$id" ]] && { echo "$f"; break; }
+    done <<< "$matching_ids"
+  done
+}
+
+# codex_files_for_cwd narrowed by the active --exclude / --since filters, so the
+# Codex path honours the same selection flags as filtered_sessions_in does for
+# Claude.
+codex_filtered_files() {
+  local cwd="$1"
+  local f sid f_mtime
+  while IFS= read -r f; do
+    sid="$(codex_sid_for "$f")"
+    is_excluded "$sid" && continue
+    if [[ -n "${SINCE_EPOCH:-}" ]]; then
+      f_mtime=$(stat -f '%m' "$f")
+      [[ $f_mtime -ge $SINCE_EPOCH ]] || continue
+    fi
+    echo "$f"
+  done < <(codex_files_for_cwd "$cwd")
+}
+
+# The rollout file for a Codex UUID, searched across every date partition —
+# cross-worktree by design, like find_by_session_id.
+find_codex_by_session_id() {
+  local sid="$1"
+  local matches=("$codex_sessions_dir"/*/*/*/*"$sid".jsonl)
+  if [[ ${#matches[@]} -eq 0 ]]; then
+    echo "claude-pod: no Codex session file for ID $sid" >&2
     exit 1
   fi
   echo "${matches[0]}"
@@ -472,17 +632,27 @@ since_to_epoch() {
 # both shapes. An earlier `switch` design hit a SuperDB quirk where the
 # unnest-branch was evaluated against string rows even when the type guard
 # routed them to the other case.
-filter_pipeline() {
-  local since_clause=""
+# The SINCE/CURSOR guard shared by every filter variant. Both --since and cursors
+# key on the top-level `timestamp`, which Claude and Codex lines both carry, so
+# this clause is identical across sources.
+#
+# A cursor is exclusive where --since is inclusive: the turn at the cursor is the
+# last one already rendered, so re-emitting it would double-charge the reader for
+# output it has seen.
+since_and_cursor_clause() {
+  local c=""
   if [[ -n "${SINCE:-}" ]]; then
-    since_clause=" and cast(timestamp, <time>) >= $(since_expr "$SINCE")"
+    c=" and cast(timestamp, <time>) >= $(since_expr "$SINCE")"
   fi
-  # A cursor is exclusive where --since is inclusive: the turn at the cursor is
-  # the last one already rendered, so re-emitting it would double-charge the
-  # reader for output it has seen.
   if [[ -n "${CURSOR_TS:-}" ]]; then
-    since_clause+=" and cast(timestamp, <time>) > cast('$CURSOR_TS', <time>)"
+    c+=" and cast(timestamp, <time>) > cast('$CURSOR_TS', <time>)"
   fi
+  echo "$c"
+}
+
+filter_pipeline_claude() {
+  local since_clause
+  since_clause="$(since_and_cursor_clause)"
   cat <<EOF
 where type in ['user','assistant'] and not has(isMeta)${since_clause}
 | put _arr := case
@@ -494,6 +664,29 @@ where type in ['user','assistant'] and not has(isMeta)${since_clause}
 | where len(text) > 0
 | values {ts: timestamp, role: type, text: join(text, '\n')}
 EOF
+}
+
+# Codex turns are response_item/message lines; the role and content live under
+# payload. Content blocks are always an array (no string coercion needed), typed
+# input_text (user), output_text (assistant), or text. Emits the same
+# {ts, role, text} shape as the Claude variant so all downstream machinery —
+# ordering, cursors, follow, format_clause — is reused unchanged.
+filter_pipeline_codex() {
+  local since_clause
+  since_clause="$(since_and_cursor_clause)"
+  cat <<EOF
+where type == 'response_item' and payload.type == 'message'
+  and payload.role in ['user','assistant']${since_clause}
+| put text := (unnest payload.content
+    | where this.type in ['input_text','output_text','text']
+    | values this.text | collect(this))
+| where len(text) > 0
+| values {ts: timestamp, role: payload.role, text: join(text, '\n')}
+EOF
+}
+
+filter_pipeline() {
+  if [[ "$SOURCE" == codex ]]; then filter_pipeline_codex; else filter_pipeline_claude; fi
 }
 
 # Format a {ts, role, text} record stream as readable blocks.
@@ -518,8 +711,12 @@ render_historical() {
 # reader actually saw even when a window (--turns) clipped the render.
 last_turn_ts() {
   local file="$1"
+  local where_clause="type in ['user','assistant'] and not has(isMeta)"
+  if [[ "$SOURCE" == codex ]]; then
+    where_clause="type == 'response_item' and payload.type == 'message' and payload.role in ['user','assistant']"
+  fi
   CURSOR_TS="" SINCE="" super -f line -c "
-    where type in ['user','assistant'] and not has(isMeta)
+    where $where_clause
     | sort -r timestamp
     | head 1
     | values cast(timestamp, <string>)
@@ -532,11 +729,21 @@ last_turn_ts() {
 # nothing at all.
 render_session_new() {
   local file="$1"
-  local sid="${file##*/}"
-  sid="${sid%.jsonl}"
+  local sid
+  if [[ "$SOURCE" == codex ]]; then
+    sid="$(codex_sid_for "$file")"
+  else
+    sid="${file##*/}"
+    sid="${sid%.jsonl}"
+  fi
 
+  # CURSOR_TS is a global that filter_pipeline reads. The --all/--peers --new loop
+  # calls this once per session in the same shell, so a value left over from a
+  # prior (cursored) session would leak into a later session's render and wrongly
+  # filter it. Reset it every call; the else branch sets it for this session.
   local cursor first_read=0
   cursor="$(cursor_get "$sid")"
+  CURSOR_TS=""
   if [[ -z "$cursor" ]]; then
     first_read=1
     TURNS="${TURNS:-$DEFAULT_NEW_TURNS}"
@@ -937,6 +1144,10 @@ while [[ $# -gt 0 ]]; do
       usage
       exit 0
       ;;
+    --codex)
+      SOURCE=codex
+      shift
+      ;;
     --all)
       MODE=list
       shift
@@ -1035,6 +1246,18 @@ if [[ -n "$TAG" && "$MODE" != "console" && "$MODE" != "record" ]]; then
   exit 2
 fi
 
+# --codex selects a session *source*. The console/record modes read the human's
+# terminal typescript, which is provider-agnostic — there's no Codex variant of
+# it, so pairing them is a category error, not a mode.
+if [[ "$SOURCE" == codex ]]; then
+  case "$MODE" in
+    console | console-list | record)
+      echo "claude-pod: --codex selects a session source; it doesn't apply to console/record" >&2
+      exit 2
+      ;;
+  esac
+fi
+
 # Pre-validate --since once; fail fast before any rendering or listing runs.
 if [[ -n "$SINCE" ]]; then
   SINCE_EPOCH=$(since_to_epoch "$SINCE")
@@ -1045,7 +1268,11 @@ fi
 if [[ -n "$SESSION_ID" ]]; then
   SESSION_ID=$(resolve_session_id "$SESSION_ID")
 fi
-if [[ ${#EXCLUDES[@]} -gt 0 ]]; then
+# Codex records no /rename names, so its excludes are matched literally by UUID —
+# no resolution step. This also lets --peers work: the excluded observer id is a
+# Claude session id, which simply never matches a Codex UUID (so --peers ≡ --all
+# for Codex), instead of erroring in resolve_session_id as a non-UUID name.
+if [[ ${#EXCLUDES[@]} -gt 0 && "$SOURCE" != codex ]]; then
   resolved=()
   for ex in "${EXCLUDES[@]}"; do
     resolved+=("$(resolve_session_id "$ex")")
@@ -1061,11 +1288,32 @@ RENDER_FILE=""
 resolve_render_file() {
   case "$MODE" in
     session)
-      RENDER_FILE=$(find_by_session_id "$SESSION_ID")
+      if [[ "$SOURCE" == codex ]]; then
+        RENDER_FILE=$(find_codex_by_session_id "$SESSION_ID")
+      else
+        RENDER_FILE=$(find_by_session_id "$SESSION_ID")
+      fi
       ;;
     worktree)
-      local target dir
+      local target dir cwd
       target="${POSITIONAL:-$PWD}"
+      if [[ "$SOURCE" == codex ]]; then
+        cwd="$(cd "$target" 2>/dev/null && pwd)" || {
+          echo "claude-pod: not a directory: $target" >&2
+          exit 1
+        }
+        # Capture the full list, then take the first line by expansion. Piping the
+        # (comparatively slow) Codex discovery into `head -n 1` lets head close the
+        # pipe after one line while the producer is still emitting, and the PIPE
+        # trap surfaces that as a spurious "write error: Broken pipe".
+        local codex_out
+        codex_out="$(codex_filtered_files "$cwd")"
+        RENDER_FILE="${codex_out%%$'\n'*}"
+        if [[ -z "$RENDER_FILE" ]]; then
+          echo "claude-pod: no matching Codex sessions for $cwd" >&2
+        fi
+        return 0
+      fi
       dir="$(project_dir_for "$target")"
       if [[ ! -d "$dir" ]]; then
         echo "claude-pod: no Claude sessions for $target" >&2
@@ -1129,19 +1377,44 @@ case "$MODE" in
   list)
     if [[ "$FOLLOW" -eq 1 || "$NEW" -eq 1 ]]; then
       target="${POSITIONAL:-$PWD}"
+      # The firehose (render_follow_all) tags each streamed turn with its source
+      # session's id. Codex lines carry no per-line sessionId — the id is only in
+      # the filename — and tail -qf merges the files, erasing which one each append
+      # came from. So Codex can't do firehose-follow; --new (per-file, cursored) is
+      # the supported way to catch up on several Codex peers, and it's cheaper too.
+      if [[ "$SOURCE" == codex && "$FOLLOW" -eq 1 ]]; then
+        echo "claude-pod: --codex --all/--peers -f (firehose) isn't supported — Codex" >&2
+        echo "  lines carry no per-turn session id to tag the merged stream with." >&2
+        echo "  use --codex --peers --new to catch up on every Codex peer instead." >&2
+        exit 2
+      fi
+      files=()
+      if [[ "$SOURCE" == codex ]]; then
+        cwd="$(cd "$target" 2>/dev/null && pwd)" || {
+          echo "claude-pod: not a directory: $target" >&2
+          exit 1
+        }
+        while IFS= read -r f; do
+          files+=("$f")
+        done < <(codex_filtered_files "$cwd")
+        if [[ ${#files[@]} -eq 0 ]]; then
+          echo "claude-pod: no matching Codex sessions for $cwd" >&2
+          exit 0
+        fi
+      else
       dir="$(project_dir_for "$target")"
       if [[ ! -d "$dir" ]]; then
         echo "claude-pod: no Claude sessions for $target" >&2
         echo "  expected: $dir" >&2
         exit 1
       fi
-      files=()
       while IFS= read -r f; do
         files+=("$f")
       done < <(filtered_sessions_in "$dir")
       if [[ ${#files[@]} -eq 0 ]]; then
         echo "claude-pod: no matching sessions in $dir" >&2
         exit 0
+      fi
       fi
       if [[ "$NEW" -eq 1 ]]; then
         # Catch up on every peer at once: each session gets its own cursor, so
