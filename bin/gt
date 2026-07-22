@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+#
+# gt - Fuzzy-select a Ghostty tab or window and jump to it.
+#
+# The sibling of `wt` (worktree selector), but for Ghostty surfaces instead of
+# git worktrees. Ghostty has no tab-switching API, but as a native macOS app it
+# lists every tab AND window as a clickable item at the bottom of the Window
+# menu, labeled with the titles set-title.sh produces (emoji + "dir (branch)").
+# We enumerate those items via System Events, fuzzy-select with fzf, then click
+# the chosen item to focus it.
+#
+# Selection is by menu-item INDEX, not title: titles are not unique (two
+# "dscout (main)" tabs are common), so matching by name would always click the
+# first. fzf shows the title; the index rides along in a hidden first field.
+#
+# Usage: gt
+#
+# Requires: fzf, macOS System Events (Ghostty must be the frontmost app's
+# process "Ghostty"). Accessibility permission is needed for System Events to
+# read/click menus — grant it to whatever runs gt (your terminal) if prompted.
+
+set -euo pipefail
+
+# Where worktrees live, so a title's dir leaf resolves to a real path for the
+# preview. Matches how claude-slot resolves worktrees (~/dev/<name>).
+DEV_ROOT="${DEV_ROOT:-$HOME/dev}"
+
+# ── pure helpers (unit-tested in gt.bats) ─────────────────────────────────────
+
+# Extract the "dir" leaf from a menu title.
+#   "🔵 claude-rig (main)"  -> "claude-rig"
+#   "dscout (main)"         -> "dscout"
+#   "⚪ dscout-finance"     -> "dscout-finance"
+#   "devops-2081-foo"       -> "devops-2081-foo"
+# Strips a leading status emoji + space (if present) and a trailing
+# " (branch)" suffix (if present).
+gt_title_leaf() {
+  local title="$1"
+  # Drop a leading non-space "emoji" token followed by a space, but only when
+  # what remains still has content. Status emojis are 🔵🟡🟢⚪🔴; matching the
+  # generic "first token is followed by more tokens and isn't itself the dir"
+  # is fragile, so key off the known emoji set.
+  case "$title" in
+    "🔵 "*|"🟡 "*|"🟢 "*|"⚪ "*|"🔴 "*) title="${title#* }" ;;
+  esac
+  # Drop a trailing " (branch)" suffix.
+  title="${title% (*)}"
+  printf '%s\n' "$title"
+}
+
+# Passthrough filter over the AppleScript dump: keep "index<TAB>title" lines,
+# drop blanks. Kept as a seam so fzf input is defined in one place.
+# `|| true`: grep exits 1 when nothing matches (all-blank/empty input). That
+# empty case is expected and handled by the caller's `[[ -z "$dump" ]]` check,
+# so it must not propagate as a pipeline failure under set -e/pipefail.
+gt_parse_menu() {
+  grep -v '^[[:space:]]*$' || true
+}
+
+# Print a preview for a title: the resolved worktree path plus a short git
+# status, or a graceful fallback if the dir does not resolve under DEV_ROOT.
+gt_preview() {
+  local title="$1" leaf path
+  leaf="$(gt_title_leaf "$title")"
+  path="$DEV_ROOT/$leaf"
+
+  printf '%s\n' "$title"
+  if [[ -d "$path" ]]; then
+    printf '%s\n\n' "$path"
+    # `|| true` on these pipes: `head` closes the pipe early, giving the
+    # upstream command SIGPIPE (exit 141), which pipefail would turn into a
+    # non-zero return and blank the preview pane for large repos.
+    if git -C "$path" rev-parse --git-dir >/dev/null 2>&1; then
+      git -C "$path" -c color.status=always status --short --branch 2>/dev/null | head -40 || true
+    else
+      ls -A "$path" 2>/dev/null | head -40 || true
+    fi
+  else
+    printf '(no worktree at %s)\n' "$path"
+  fi
+}
+
+# ── AppleScript integration (not unit-tested) ─────────────────────────────────
+
+# Dump the Window menu's trailing tab/window entries as "index<TAB>title".
+# The Window menu holds window-management commands first, then a separator,
+# then the list of open windows/tabs. We take everything after the LAST
+# separator (missing-value name), which is that list.
+gt_dump_menu() {
+  osascript <<'APPLESCRIPT'
+tell application "System Events" to tell process "Ghostty"
+  set menuItems to menu items of menu 1 of (menu bar item "Window" of menu bar 1)
+  set n to count of menuItems
+  set lastSep to 0
+  repeat with j from 1 to n
+    if (name of (item j of menuItems)) is missing value then set lastSep to j
+  end repeat
+  set out to ""
+  repeat with j from (lastSep + 1) to n
+    set nm to name of (item j of menuItems)
+    if nm is not missing value then set out to out & j & tab & nm & linefeed
+  end repeat
+  return out
+end tell
+APPLESCRIPT
+}
+
+# Click the Window-menu item at the given 1-based index, focusing that surface.
+gt_click_index() {
+  local idx="$1"
+  osascript - "$idx" <<'APPLESCRIPT'
+on run argv
+  set idx to (item 1 of argv) as integer
+  tell application "Ghostty" to activate
+  tell application "System Events" to tell process "Ghostty"
+    set menuItems to menu items of menu 1 of (menu bar item "Window" of menu bar 1)
+    click (item idx of menuItems)
+  end tell
+end run
+APPLESCRIPT
+}
+
+# ── main ──────────────────────────────────────────────────────────────────────
+
+gt_main() {
+  if ! command -v fzf >/dev/null 2>&1; then
+    echo "gt: fzf not found" >&2
+    return 1
+  fi
+
+  # `|| true`: a bare `dump=$(...)` assignment whose pipeline exits non-zero
+  # would abort under set -e before the empty check below could run.
+  local dump
+  dump="$(gt_dump_menu | gt_parse_menu)" || true
+  if [[ -z "$dump" ]]; then
+    echo "gt: no Ghostty tabs/windows found (is Ghostty running?)" >&2
+    return 1
+  fi
+
+  # fzf shows only the title (field 2+), previews via gt_preview, and returns
+  # the full "index<TAB>title" line so we can recover the index.
+  local selected rc
+  selected="$(
+    printf '%s\n' "$dump" | fzf \
+      --height=40% --reverse \
+      --with-nth=2.. --delimiter='\t' \
+      --preview "'$0' --preview {2..}" --preview-window=right,50%,wrap
+  )" || {
+    rc=$?
+    # 130 = user aborted (Esc/Ctrl-C), 1 = no match: both clean exits.
+    # Anything else is a real fzf failure worth surfacing.
+    [[ "$rc" -eq 130 || "$rc" -eq 1 ]] && return 0
+    return "$rc"
+  }
+
+  [[ -z "$selected" ]] && return 0
+
+  # Click by the index captured at dump time. macOS reorders the Window menu
+  # when a window gains focus, which would stale the index — but focusing
+  # another Ghostty surface requires leaving the tab where fzf is running,
+  # which dismisses fzf first. So between dump and click the order is stable.
+  local idx="${selected%%$'\t'*}"
+  gt_click_index "$idx"
+}
+
+# Sourced (by bats) → expose functions only. Executed → run main, or serve a
+# preview request for fzf's --preview callback.
+if [[ "${BASH_SOURCE[0]:-}" == "${0}" ]]; then
+  if [[ "${1:-}" == "--preview" ]]; then
+    shift
+    gt_preview "$*"
+  else
+    gt_main "$@"
+  fi
+fi
