@@ -35,7 +35,6 @@ CLI tools symlinked into `~/.local/bin/`:
 User-level skills symlinked into `~/.claude/skills/`:
 
 - **/goal-compose** — turn a rough intent into a paste-ready condition for the built-in `/goal` command (measurable, self-verifying, self-terminating)
-- **/claude-rig-init** — scaffolding helper for new claude-rig setups
 
 **Tip:** Skills support inline shell execution with `` !`command` `` syntax in the markdown body. The command runs at invocation time and its output is injected as context before Claude sees the prompt. The built-in `/commit` skill uses this to pre-load `git status`, `git diff HEAD`, etc. Useful for building skills that need live system state.
 
@@ -70,6 +69,13 @@ Requires `super` (`brew install superdb/tap/super`).
 ### `hooks/`
 
 **Auto-sandbox** (`ensure-sandbox.sh`) — a `SessionStart` hook that ensures sandbox mode is enabled on every new session, resume, and clear. Merges `sandbox.enabled: true` into `.claude/settings.local.json` using `super`. This is necessary because sandbox config only takes effect from `settings.local.json` — user-level and project-level `settings.json` are ignored.
+
+*Per-repo setup:* the hook also writes `sandbox.filesystem.allowWrite: [".claude/tmp", "tmp"]`, so a repo relying on it should have both directories present and gitignored — otherwise bash writes there are sandbox violations. Gitignore `.claude/settings.local.json` too, since that's the file the hook rewrites on every session:
+
+```bash
+mkdir -p tmp .claude/tmp
+printf '%s\n' '.claude/settings.local.json' '.claude/tmp/' 'tmp/' >> .gitignore
+```
 
 **Dedicated tool enforcement** (`use-dedicated-tools.sh`) — a `PreToolUse` hook that intercepts Bash tool calls and denies commands that should use Claude Code's dedicated tools instead. This keeps Claude using the right tool for the job and avoids unnecessary permission prompts.
 
