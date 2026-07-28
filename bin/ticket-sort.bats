@@ -727,6 +727,78 @@ FULL_TICKET='{"id":"ENG-412","title":"Fix checkout timeout","priority":"Urgent",
   [[ "$output" == *"7d"* ]]
 }
 
+# SLA is a breach deadline in Linear, stored like any other datetime - only
+# its behavior differs. So it renders on the same clock as the due date.
+
+@test "ts_days_until parses a plain date" {
+  TS_TODAY=2026-07-27
+  run ts_days_until 2026-08-03
+  [ "$status" -eq 0 ]
+  [ "$output" = "7" ]
+}
+
+@test "ts_days_until parses an ISO datetime" {
+  TS_TODAY=2026-07-27
+  run ts_days_until "2026-08-03T17:00:00.000Z"
+  [ "$status" -eq 0 ]
+  [ "$output" = "7" ]
+}
+
+@test "ts_days_until rejects something that is not a date" {
+  TS_TODAY=2026-07-27
+  run ts_days_until "P1 - 2 business days"
+  [ "$status" -ne 0 ]
+}
+
+@test "ts_render counts down an SLA the way it counts down a due date" {
+  TS_TODAY=2026-07-27
+  run ts_render '{"id":"E-1","title":"t","sla":"2026-08-03T17:00:00.000Z"}'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"in 7d"* ]]
+}
+
+@test "ts_render flags a breached SLA" {
+  TS_TODAY=2026-08-10
+  run ts_render '{"id":"E-1","title":"t","sla":"2026-08-03T17:00:00.000Z"}'
+  [[ "$output" == *"OVERDUE"* ]]
+  [[ "$output" == *"7d"* ]]
+}
+
+@test "ts_render flags an SLA breaching today" {
+  TS_TODAY=2026-08-03
+  run ts_render '{"id":"E-1","title":"t","sla":"2026-08-03T17:00:00.000Z"}'
+  [[ "$output" == *"DUE TODAY"* ]]
+}
+
+@test "ts_render shows a parsed datetime as a plain date" {
+  # An SLA and a due date should read the same; the time component adds
+  # nothing at day granularity.
+  TS_TODAY=2026-07-27
+  run ts_render '{"id":"E-1","title":"t","sla":"2026-08-03T17:00:00.000Z"}'
+  [[ "$output" == *"2026-08-03"* ]]
+  [[ "$output" != *"T17:00:00"* ]]
+}
+
+@test "ts_render leaves a non-date SLA as written" {
+  # Some sources put free text here; show it rather than dropping it.
+  TS_TODAY=2026-07-27
+  run ts_render '{"id":"E-1","title":"t","sla":"P1 - 2 business days"}'
+  [[ "$output" == *"P1 - 2 business days"* ]]
+}
+
+@test "ts_render counts down a due date given as an ISO datetime" {
+  TS_TODAY=2026-07-27
+  run ts_render '{"id":"E-1","title":"t","due":"2026-07-30T00:00:00.000Z"}'
+  [[ "$output" == *"in 3d"* ]]
+}
+
+@test "demo tickets carry SLA dates that render as deadlines" {
+  TS_TODAY=2026-07-27
+  local sla_dates
+  sla_dates=$(ts_demo_data | jq -r '.sla // empty' | grep -c 'T')
+  [ "$sla_dates" -gt 3 ]
+}
+
 @test "ts_render tolerates missing fields" {
   TS_TODAY=2026-07-27
   run ts_render '{"id":"ENG-9","title":"bare"}'

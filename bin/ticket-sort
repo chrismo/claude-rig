@@ -29,6 +29,8 @@
 #
 # Input is a JSON array or NDJSON, one object per ticket. Recognized fields:
 #   id, title, priority, due, sla, labels[], project, url
+# due and sla are both deadlines - a plain date or an ISO datetime. A value
+# that will not parse as a date is shown as written.
 # Everything except id/title is optional.
 #
 # The UI goes to stderr and the ranking to stdout, so piping works:
@@ -210,17 +212,25 @@ ts_field() {
 }
 
 # Days from TS_TODAY (default: actual today) to $1, negative when past.
+# Accepts a plain date or an ISO datetime - Linear stores due dates and SLA
+# breach times both as datetimes. BSD date happens to parse the prefix of an
+# ISO string anyway, but trimming it here is explicit rather than lucky.
 ts_days_until() {
-  local target="$1" today="${TS_TODAY:-$(date +%F)}" t n
+  local target="${1%%T*}" today="${TS_TODAY:-$(date +%F)}" t n
   t=$(date -j -f %Y-%m-%d "$target" +%s 2>/dev/null) || return 1
   n=$(date -j -f %Y-%m-%d "$today" +%s 2>/dev/null) || return 1
   echo $(( (t - n) / 86400 ))
 }
 
-ts_due_note() {
+ts_date_note() {
   local due="$1" days
   [[ "$due" == "—" ]] && { printf '%s' "$due"; return; }
+  # Unparseable values are shown as written rather than dropped - some
+  # sources put free text where a deadline belongs.
   days=$(ts_days_until "$due") || { printf '%s' "$due"; return; }
+  # Past here it parsed, so show the date part only. A breach time of day
+  # adds nothing at day granularity, and an SLA should read like a due date.
+  due="${due%%T*}"
   if (( days < 0 )); then
     printf '%s %sOVERDUE %dd%s' "$due" "$RED" $(( -days )) "$RESET"
   elif (( days == 0 )); then
@@ -247,8 +257,8 @@ ts_render() {
   printf '%s%s%s %s%s%s\n' "$BOLD$CYAN" "${label:+[$label] }" "$RESET" "$BOLD" "$id" "$RESET"
   printf '  %s\n' "$title"
   printf '  %sPriority%s %s\n' "$DIM" "$RESET" "$priority"
-  printf '  %sDue     %s %s\n' "$DIM" "$RESET" "$(ts_due_note "$due")"
-  printf '  %sSLA     %s %s\n' "$DIM" "$RESET" "$sla"
+  printf '  %sDue     %s %s\n' "$DIM" "$RESET" "$(ts_date_note "$due")"
+  printf '  %sSLA     %s %s\n' "$DIM" "$RESET" "$(ts_date_note "$sla")"
   printf '  %sProject %s %s\n' "$DIM" "$RESET" "$project"
   printf '  %sLabels  %s %s\n' "$DIM" "$RESET" "$labels"
 }
@@ -463,17 +473,17 @@ ts_report() {
 # obvious you would learn nothing from playing with it.
 ts_demo_data() {
   cat <<'EOF'
-{"id":"DEVOPS-1904","title":"RDS Postgres 14 -> 16 major version upgrade (prod)","priority":"High","due":"2026-08-14","sla":"AWS forces the upgrade 2026-09-01","labels":["database","planned-work","risk-high"],"project":"Postgres 16 Upgrade"}
+{"id":"DEVOPS-1904","title":"RDS Postgres 14 -> 16 major version upgrade (prod)","priority":"High","due":"2026-08-14","sla":"2026-09-01T00:00:00.000Z","labels":["database","planned-work","risk-high"],"project":"Postgres 16 Upgrade"}
 {"id":"DEVOPS-2077","title":"Review and tune the 42 always-firing CloudWatch alarms","priority":"Medium","due":null,"sla":null,"labels":["observability","alert-fatigue","toil"],"project":"Observability Enhancements"}
-{"id":"DEVOPS-2140","title":"Rotate the expiring wildcard TLS cert on the edge ALBs","priority":"Urgent","due":"2026-08-02","sla":"Cert expires 2026-08-04 - hard stop","labels":["security","certs","customer-facing"],"project":"Platform Reliability"}
-{"id":"DEVOPS-1988","title":"EKS 1.29 -> 1.31 control plane upgrade","priority":"High","due":"2026-09-30","sla":"1.29 goes EOL 2026-10-15","labels":["kubernetes","planned-work","risk-high"],"project":"Cluster Lifecycle"}
-{"id":"DEVOPS-2201","title":"Nightly backup verification job has been silently failing for 3 weeks","priority":"Urgent","due":"2026-07-28","sla":"P1 - RPO unverified","labels":["backups","incident-followup","data-loss-risk"],"project":"Platform Reliability"}
+{"id":"DEVOPS-2140","title":"Rotate the expiring wildcard TLS cert on the edge ALBs","priority":"Urgent","due":"2026-08-02","sla":"2026-08-04T12:00:00.000Z","labels":["security","certs","customer-facing"],"project":"Platform Reliability"}
+{"id":"DEVOPS-1988","title":"EKS 1.29 -> 1.31 control plane upgrade","priority":"High","due":"2026-09-30","sla":"2026-10-15T00:00:00.000Z","labels":["kubernetes","planned-work","risk-high"],"project":"Cluster Lifecycle"}
+{"id":"DEVOPS-2201","title":"Nightly backup verification job has been silently failing for 3 weeks","priority":"Urgent","due":"2026-07-28","sla":"2026-07-25T17:00:00.000Z","labels":["backups","incident-followup","data-loss-risk"],"project":"Platform Reliability"}
 {"id":"DEVOPS-2095","title":"Terraform state drift on the shared VPC module","priority":"Medium","due":null,"sla":null,"labels":["terraform","tech-debt"],"project":"IaC Cleanup"}
-{"id":"DEVOPS-2166","title":"Pen test finding: SSH open to 0.0.0.0/0 on 3 bastion hosts","priority":"Urgent","due":"2026-08-08","sla":"P1 - remediation due to auditor","labels":["security","compliance","pen-test"],"project":"Pen Test Remediation"}
+{"id":"DEVOPS-2166","title":"Pen test finding: SSH open to 0.0.0.0/0 on 3 bastion hosts","priority":"Urgent","due":"2026-08-08","sla":"2026-08-08T17:00:00.000Z","labels":["security","compliance","pen-test"],"project":"Pen Test Remediation"}
 {"id":"DEVOPS-2043","title":"CI runners spend 40% of wall clock waiting on Docker layer pulls","priority":"Medium","due":null,"sla":null,"labels":["ci","developer-experience","cost"],"project":"CI Throughput"}
-{"id":"DEVOPS-2188","title":"Datadog spend up 60% MoM - find the cardinality bomb","priority":"High","due":"2026-08-31","sla":"Budget review 2026-09-05","labels":["cost","observability"],"project":"Cloud Cost"}
+{"id":"DEVOPS-2188","title":"Datadog spend up 60% MoM - find the cardinality bomb","priority":"High","due":"2026-08-31","sla":"2026-09-05T00:00:00.000Z","labels":["cost","observability"],"project":"Cloud Cost"}
 {"id":"DEVOPS-1855","title":"Replace the hand-rolled deploy script with an ArgoCD rollout","priority":"Low","due":null,"sla":null,"labels":["deployment","tech-debt","nice-to-have"],"project":"Cluster Lifecycle"}
-{"id":"DEVOPS-2210","title":"Add read replica lag alerting - the last outage went 20min undetected","priority":"High","due":"2026-08-10","sla":"Incident action item","labels":["database","observability","incident-followup"],"project":"Observability Enhancements"}
+{"id":"DEVOPS-2210","title":"Add read replica lag alerting - the last outage went 20min undetected","priority":"High","due":"2026-08-10","sla":"2026-08-10T17:00:00.000Z","labels":["database","observability","incident-followup"],"project":"Observability Enhancements"}
 {"id":"DEVOPS-2119","title":"Prune 8TB of orphaned EBS snapshots","priority":"Low","due":null,"sla":null,"labels":["cost","toil"],"project":"Cloud Cost"}
 EOF
 }
