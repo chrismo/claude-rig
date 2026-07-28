@@ -70,6 +70,33 @@
 # either answering it in a run where it is still unknown, or editing the store -
 # small readable JSON keyed by "<id>|<id>" with the winner in "w":
 #   jq 'del(."DEVOPS-1904|DEVOPS-2140")' "$store" > t && mv t "$store"
+#
+# TODO: this script has outgrown the shell, and the two symptoms are related.
+#
+# It needs three interpreters to work: bash 4.1+ (which macOS does not ship, so
+# there is a re-exec guard above just to find one), jq (17 call sites, including
+# one per field per rendered ticket), and python3 - 75 lines of it embedded as a
+# quoted heredoc in ts_cache_closure, where shellcheck cannot see it and no test
+# can reach it directly.
+#
+# Replacing jq with superdb would fit the rest of the rig - install.sh already
+# pins ASDF_SUPERDB_VERSION and bin/lib/superdb.sh has an ensure_superdb helper.
+# Watch ts_field's fallback semantics (null / "" / [] all collapse to an em
+# dash), ts_load accepting both a JSON array and NDJSON, and rank: null
+# surviving the round trip in --json.
+#
+# The python is NOT replaceable that way: transitive closure needs a fixpoint
+# loop, and superdb rejects WITH RECURSIVE outright ("recursive WITH queries not
+# currently supported", checked 2026-07-28). So the options are a separate
+# properly-shebanged script - lintable, testable, an honest dependency - or
+# going native.
+#
+# Which is the real question: a Rust binary would end all three problems at
+# once. No interpreter hunt, no subprocess per field, closure in microseconds
+# rather than ~140ms at 200 tickets, and a real TUI instead of ANSI printf. The
+# cost is porting a 110-test bats suite. Not urgent - 50 tickets warm-start in
+# about a second today. Revisit when the interactive loop feels slow, or when
+# the embedded python grows past this one function.
 
 # This script needs bash 4.1+ - associative arrays, {fd} allocation, mapfile,
 # ${var,,} - but macOS still ships 3.2 as /bin/bash, and a homebrew bash is
