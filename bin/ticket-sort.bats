@@ -12,6 +12,9 @@ bats_require_minimum_version 1.5.0
 TS="$BATS_TEST_DIRNAME/ticket-sort"
 
 setup() {
+  # Point the verdict cache at this test's tmpdir before sourcing, so no test
+  # can read or write the real one beside the script.
+  export TS_CACHE="${BATS_TEST_TMPDIR:-/dev/null}/verdicts.json"
   source "$TS"
 }
 
@@ -686,6 +689,103 @@ EOF
   [[ "$stderr" == *"coin flip"* ]]
 }
 
+# ── verdict cache ─────────────────────────────────────────────────────────────
+# Verdicts persist between runs keyed by ticket id pair, so a backlog you have
+# already ranked does not re-ask what it already knows. TS_MEMO is keyed by
+# array index, so load/save translate id <-> index.
+
+@test "ts_cache_save writes the verdicts it was given" {
+  TS_CACHE="$BATS_TEST_TMPDIR/v.json"
+  ts_load <<< '[{"id":"A-1","title":"one"},{"id":"A-2","title":"two"}]'
+  TS_MEMO[0:1]=0
+  TS_MEMO[1:0]=1
+  ts_cache_save
+  [ -f "$TS_CACHE" ]
+  run jq -r '.["A-1|A-2"].w' "$TS_CACHE"
+  [ "$output" = "A-1" ]
+}
+
+@test "ts_cache_load restores a verdict as a memo hit" {
+  TS_CACHE="$BATS_TEST_TMPDIR/v.json"
+  cat > "$TS_CACHE" <<'EOF'
+{"A-1|A-2":{"w":"A-1","at":"2026-07-01T00:00:00Z"}}
+EOF
+  ts_load <<< '[{"id":"A-1","title":"one"},{"id":"A-2","title":"two"}]'
+  ts_cache_load
+  [ "${TS_MEMO[0:1]}" -eq 0 ]
+  [ "${TS_MEMO[1:0]}" -eq 1 ]
+}
+
+@test "ts_cache_load survives a missing cache file" {
+  TS_CACHE="$BATS_TEST_TMPDIR/does-not-exist.json"
+  ts_load <<< '[{"id":"A-1","title":"one"}]'
+  run ts_cache_load
+  [ "$status" -eq 0 ]
+}
+
+@test "ts_cache_load ignores pairs whose tickets are absent" {
+  TS_CACHE="$BATS_TEST_TMPDIR/v.json"
+  cat > "$TS_CACHE" <<'EOF'
+{"GONE-1|GONE-2":{"w":"GONE-1","at":"2026-07-01T00:00:00Z"}}
+EOF
+  ts_load <<< '[{"id":"A-1","title":"one"},{"id":"A-2","title":"two"}]'
+  ts_cache_load
+  [ -z "${TS_MEMO[0:1]:-}" ]
+}
+
+@test "ts_cache_load tolerates a corrupt cache file" {
+  TS_CACHE="$BATS_TEST_TMPDIR/v.json"
+  printf 'not json at all' > "$TS_CACHE"
+  ts_load <<< '[{"id":"A-1","title":"one"},{"id":"A-2","title":"two"}]'
+  run ts_cache_load
+  [ "$status" -eq 0 ]
+}
+
+@test "a re-run reuses cached verdicts instead of asking" {
+  local cache="$BATS_TEST_TMPDIR/reuse.json"
+  printf '%s\n' '[{"id":"A-1","title":"one"},{"id":"A-2","title":"two"}]' \
+    > "$BATS_TEST_TMPDIR/tickets"
+  printf 'l\n' > "$BATS_TEST_TMPDIR/answers"
+
+  # first run answers the single pair and caches it
+  TS_CACHE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/answers" \
+    bash "$TS" < "$BATS_TEST_TMPDIR/tickets" >/dev/null 2>&1
+
+  # second run gets no answers at all - it must not need any
+  : > "$BATS_TEST_TMPDIR/empty"
+  run env TS_CACHE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/empty" \
+    bash "$TS" < "$BATS_TEST_TMPDIR/tickets"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"A-1"* ]]
+}
+
+@test "a hand-edited verdict is honored on the next run" {
+  # Cached pairs are never re-asked, so editing the file is how you change your
+  # mind about one. Flipping "w" must flip the ranking.
+  local cache="$BATS_TEST_TMPDIR/edited.json"
+  printf '%s\n' '[{"id":"X-1","title":"one"},{"id":"X-2","title":"two"}]' \
+    > "$BATS_TEST_TMPDIR/tickets"
+  cat > "$cache" <<'EOF'
+{"X-1|X-2":{"w":"X-2","at":"2026-07-01T00:00:00Z"}}
+EOF
+  : > "$BATS_TEST_TMPDIR/empty"
+  run --separate-stderr env TS_CACHE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/empty" \
+    bash "$TS" < "$BATS_TEST_TMPDIR/tickets"
+  [ "$status" -eq 0 ]
+  # X-2 was declared the winner, so it ranks first without any question asked.
+  [[ "$(head -1 <<< "$output")" == *"X-2"* ]]
+  [[ "$stderr" == *"1 answer reused"* ]]
+}
+
+@test "TS_CACHE=none disables persistence" {
+  TS_CACHE=none
+  ts_load <<< '[{"id":"A-1","title":"one"},{"id":"A-2","title":"two"}]'
+  TS_MEMO[0:1]=0
+  run ts_cache_save
+  [ "$status" -eq 0 ]
+  [ ! -e none ]
+}
+
 # ── ticket parsing ────────────────────────────────────────────────────────────
 
 @test "ts_load reads a JSON array" {
@@ -853,7 +953,10 @@ FULL_TICKET='{"id":"ENG-412","title":"Fix checkout timeout","priority":"Urgent",
 run_sort() {
   local answers="$1"; shift
   printf '%s\n' "$answers" > "$BATS_TEST_TMPDIR/answers"
+  # TS_CACHE per test dir: the real cache lives beside the script, and a test
+  # that inherited it would answer from previous runs instead of asking.
   TS_INPUT="$BATS_TEST_TMPDIR/answers" TS_TODAY=2026-07-27 \
+    TS_CACHE="$BATS_TEST_TMPDIR/verdicts.json" \
     bash "$TS" "$@" < "$BATS_TEST_TMPDIR/tickets"
 }
 

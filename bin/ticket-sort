@@ -44,6 +44,16 @@
 #   TS_OPEN        how o1/o2 launch a ticket (default: open)
 #   TS_TODAY       pin "today" for due-date math (default: actual today)
 #   TS_BASH        bash 4.1+ to re-exec under, if it isn't on the usual paths
+#   TS_CACHE       verdict cache path, or "none" to answer fresh every time
+#
+# Answers persist between runs. Every comparison you make is remembered by
+# ticket id pair, so re-ranking a backlog you have already ranked asks nothing,
+# and adding a ticket to it only asks about the new one.
+#
+# A cached pair is never asked again, so changing your mind means editing the
+# cache - it is small, readable JSON keyed by "<id>|<id>" with the winner in
+# "w". Flip that value to invert a verdict, or drop the entry to be asked again:
+#   jq 'del(."DEVOPS-1904|DEVOPS-2140")' "$cache" > t && mv t "$cache"
 
 # This script needs bash 4.1+ - associative arrays, {fd} allocation, mapfile,
 # ${var,,} - but macOS still ships 3.2 as /bin/bash, and a homebrew bash is
@@ -104,6 +114,20 @@ TS_FD=                 # answer stream, assigned by `exec {TS_FD}<` at startup
 : "${TS_OPEN:=open}"        # how ol/or launch a ticket
 : "${TS_PREVIEW:=}"         # standing-list rows; 0 disables
 : "${TS_WORKSPACE:=}"       # linear.app/<slug>, for tickets with no url field
+# Verdicts persist next to the script, not relative to $PWD: ticket-sort runs
+# from a ~/.local/bin symlink against tickets from anywhere, and a
+# per-directory cache would scatter files and forget what it already knew.
+# Resolve the symlink so the cache lands in the repo beside the real script,
+# where .gitignore covers it. Set TS_CACHE=none to answer fresh every time.
+if [[ -z "${TS_CACHE:-}" ]]; then
+  _ts_self="${BASH_SOURCE[0]}"
+  while [[ -L "$_ts_self" ]]; do
+    _ts_link=$(readlink "$_ts_self")
+    [[ "$_ts_link" == /* ]] && _ts_self="$_ts_link" ||
+      _ts_self="$(cd -P "$(dirname "$_ts_self")" && pwd)/$_ts_link"
+  done
+  TS_CACHE="$(cd -P "$(dirname "$_ts_self")" && pwd)/.ticket-sort-verdicts.json"
+fi
 
 BOLD=$'\033[1m'
 DIM=$'\033[2m'
@@ -226,6 +250,114 @@ ts_load() {
     echo "ticket-sort: no tickets on input" >&2
     return 1
   fi
+}
+
+# ── verdict cache ─────────────────────────────────────────────────────────────
+# Every answer you give is a fact about two tickets, and it stays true after the
+# run ends. Persisting them means a backlog you have already ranked re-ranks for
+# free, and adding one ticket to a ranked list costs only the questions that new
+# ticket is actually in.
+#
+# On disk: {"<id>|<id>": {"w": "<winning id>", "at": "<when>"}}, pair key sorted
+# so A|B and B|A are the same entry. A saved run merges onto what is already
+# there, so verdicts about tickets outside this run survive. Note that a cached
+# pair is never re-asked, so the only way a stored verdict changes is a hand
+# edit - see the header. Contradictory verdicts across three or more pairs are
+# not detected; the sort just consumes each pair as it finds it.
+#
+# TS_MEMO is keyed by array index because that is what the sort works in, so
+# load and save translate between index and ticket id.
+
+# Pair key is order-independent: the same two tickets always hash to one entry
+# no matter which side each landed on this run.
+ts_cache_key() {
+  if [[ "$1" < "$2" ]]; then
+    printf '%s|%s\n' "$1" "$2"
+  else
+    printf '%s|%s\n' "$2" "$1"
+  fi
+}
+
+# index -> ticket id, for the tickets currently loaded.
+ts_cache_id() {
+  jq -r '.id // empty' <<< "${TS_TICKETS[$1]}"
+}
+
+ts_cache_path() {
+  [[ "$TS_CACHE" == none ]] && return 1
+  printf '%s\n' "$TS_CACHE"
+}
+
+# Cached verdicts become memo entries, which ts_ask already checks before
+# asking - so a hit is indistinguishable from a question you answered this run.
+ts_cache_load() {
+  local path id_a id_b key winner i j n
+  path=$(ts_cache_path) || return 0
+  [[ -f "$path" ]] || return 0
+
+  # A hand-edited or truncated cache should cost you nothing but the cache.
+  if ! jq -e . "$path" >/dev/null 2>&1; then
+    printf '%signoring unreadable verdict cache%s %s\n' "$YELLOW" "$RESET" "$path" >&2
+    return 0
+  fi
+
+  n=${#TS_TICKETS[@]}
+  for (( i = 0; i < n; i++ )); do
+    id_a=$(ts_cache_id "$i")
+    [[ -n "$id_a" ]] || continue
+    for (( j = i + 1; j < n; j++ )); do
+      id_b=$(ts_cache_id "$j")
+      [[ -n "$id_b" ]] || continue
+      key=$(ts_cache_key "$id_a" "$id_b")
+      winner=$(jq -r --arg k "$key" '.[$k].w // empty' "$path")
+      [[ -n "$winner" ]] || continue
+      # Ignore a verdict naming a ticket that is not in this pair - a stale
+      # cache should not silently invert an answer.
+      if [[ "$winner" == "$id_a" ]]; then
+        TS_MEMO[$i:$j]=0; TS_MEMO[$j:$i]=1
+      elif [[ "$winner" == "$id_b" ]]; then
+        TS_MEMO[$i:$j]=1; TS_MEMO[$j:$i]=0
+      fi
+    done
+  done
+}
+
+ts_cache_save() {
+  local path tmp now updates key i j n id_a id_b verdict winner
+  path=$(ts_cache_path) || return 0
+
+  n=${#TS_TICKETS[@]}
+  now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  updates=$(
+    for (( i = 0; i < n; i++ )); do
+      id_a=$(ts_cache_id "$i")
+      [[ -n "$id_a" ]] || continue
+      for (( j = i + 1; j < n; j++ )); do
+        verdict="${TS_MEMO[$i:$j]:-}"
+        [[ -n "$verdict" ]] || continue
+        id_b=$(ts_cache_id "$j")
+        [[ -n "$id_b" ]] || continue
+        (( verdict == 0 )) && winner="$id_a" || winner="$id_b"
+        key=$(ts_cache_key "$id_a" "$id_b")
+        jq -n -c --arg k "$key" --arg w "$winner" --arg at "$now" \
+          '{($k): {w: $w, at: $at}}'
+      done
+    done
+  )
+  [[ -n "$updates" ]] || return 0
+
+  mkdir -p "$(dirname "$path")" || return 0
+  tmp="$path.$$"
+  # Merge onto whatever is already there so verdicts about tickets outside this
+  # run survive, and this run's answers win where they overlap.
+  if ! { [[ -f "$path" ]] && jq -e . "$path" >/dev/null 2>&1 && cat "$path" || echo '{}'; } \
+       | jq -s --slurpfile u <(printf '%s\n' "$updates") \
+           '.[0] + (reduce $u[] as $x ({}; . + $x))' > "$tmp" 2>/dev/null; then
+    rm -f "$tmp"
+    printf '%scould not write verdict cache%s %s\n' "$YELLOW" "$RESET" "$path" >&2
+    return 0
+  fi
+  mv -f "$tmp" "$path" 2>/dev/null || rm -f "$tmp"
 }
 
 # ── rendering ─────────────────────────────────────────────────────────────────
@@ -575,6 +707,20 @@ main() {
     ts_report "$as_json" "${top:-$n}"
     return 0
   fi
+
+  # Verdicts from previous runs become memo entries, so the sort never asks
+  # what you have already decided. Done after --list returns: a run that asks
+  # nothing needs no cache.
+  ts_cache_load
+
+  # Save on the way out however that happens. Quitting with q, or running out
+  # of piped answers, exits straight from ts_ask - and the answers given before
+  # that point are exactly the ones worth not asking again.
+  #
+  # The trap must hand back the status it was called with: an EXIT handler's own
+  # result becomes the script's exit code, which would turn `q` (130) into 0.
+  # shellcheck disable=SC2154  # assigned inside the trap body, one command earlier
+  trap 'ts_cache_exit=$?; ts_cache_save; exit "$ts_cache_exit"' EXIT
 
   # Ballpark, so the size of the job is clear before it starts: a full sort
   # is ~n log2(n); quickselect is ~n to isolate the head, plus k log2(k) to

@@ -2,3 +2,4 @@
 .claude/tmp/
 .tmp/
 tmp/
+bin/.ticket-sort-verdicts.json
