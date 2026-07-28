@@ -10,6 +10,7 @@
 #   linear.sh json | ticket-sort           # ranked list to stdout
 #   linear.sh json | ticket-sort --json    # ranked JSON to stdout
 #   linear.sh json | ticket-sort --top 5   # rank the top 5, quickselect
+#   ticket-sort --top 2 --show 10          # rank 2, list 10
 #   ticket-sort --demo                     # play with fake tickets
 #   ticket-sort -f tickets.json
 #   ticket-sort --list                     # no sorting, just show them
@@ -26,6 +27,13 @@
 # --top K uses quickselect: it only partitions far enough to isolate the top K,
 # then ranks those. Roughly n + K log K questions instead of n log n, and the
 # unranked tail is not printed - it has no order to report.
+#
+# --show N prints N rows even though only K are ranked. Spending questions and
+# seeing tickets are different needs: --top 2 --show 10 asks two positions'
+# worth and still lists ten, which is often enough to decide the head is right
+# and stop. The rows past K are marked with a dot rather than numbered, because
+# partitioning left them in an order nobody chose - they are above the cut, not
+# ranked among themselves.
 #
 # Input is a JSON array or NDJSON, one object per ticket. Recognized fields:
 #   id, title, priority, status, due, sla, labels[], project, url
@@ -611,25 +619,57 @@ ts_ask() {
 
 # Prints at most $2 entries. With --top the tail is deliberately unranked,
 # so printing it would dress up partition order as a ranking.
+# Prints the ranked head, and optionally more rows past it.
+#
+# `shown` exists because spending questions and seeing tickets are different
+# needs: --top 2 buys two ranked positions, but the partitioning that isolated
+# them also proved things about everything else, and seeing that is often enough
+# to decide you are done. Those extra rows are NOT ranked - quickselect leaves
+# the tail in whatever order partitioning happened to produce, so numbering them
+# would assert an order nobody established. They are marked, not numbered, the
+# same way the standing preview marks positions no pivot has settled.
 ts_report() {
-  local as_json="$1" limit="${2:-${#TS_ARR[@]}}" rank=1 idx
+  local as_json="$1" limit="${2:-${#TS_ARR[@]}}" shown="${3:-0}" rank=1 idx i
+  local total=${#TS_ARR[@]}
 
-  local head=("${TS_ARR[@]:0:$limit}")
+  (( shown < limit )) && shown=$limit
+  (( shown > total )) && shown=$total
 
   if [[ "$as_json" == yes ]]; then
-    for idx in "${head[@]}"; do
-      jq -c --argjson r "$rank" '. + {rank: $r}' <<< "${TS_TICKETS[$idx]}"
-      rank=$(( rank + 1 ))
+    for (( i = 0; i < shown; i++ )); do
+      idx="${TS_ARR[$i]}"
+      if (( i < limit )); then
+        jq -c --argjson r "$rank" '. + {rank: $r}' <<< "${TS_TICKETS[$idx]}"
+        rank=$(( rank + 1 ))
+      else
+        # null rather than a number: a consumer must be able to tell an
+        # established rank from a row that is merely above the cut.
+        jq -c '. + {rank: null}' <<< "${TS_TICKETS[$idx]}"
+      fi
     done | jq -s '.'
     return
   fi
 
-  for idx in "${head[@]}"; do
-    printf '%2d. %-10s %s\n' "$rank" \
-      "$(ts_field "${TS_TICKETS[$idx]}" id '?')" \
-      "$(ts_field "${TS_TICKETS[$idx]}" title '(untitled)')"
-    rank=$(( rank + 1 ))
+  for (( i = 0; i < shown; i++ )); do
+    idx="${TS_ARR[$i]}"
+    if (( i < limit )); then
+      printf '%2d. %-10s %s\n' "$rank" \
+        "$(ts_field "${TS_TICKETS[$idx]}" id '?')" \
+        "$(ts_field "${TS_TICKETS[$idx]}" title '(untitled)')"
+      rank=$(( rank + 1 ))
+    else
+      printf '%s  ·  %-10s %s%s\n' "$DIM" \
+        "$(ts_field "${TS_TICKETS[$idx]}" id '?')" \
+        "$(ts_field "${TS_TICKETS[$idx]}" title '(untitled)')" "$RESET"
+    fi
   done
+
+  # Say plainly that the marked rows are unranked, or the dot is just decoration.
+  if (( shown > limit )); then
+    printf '\n%s%d ranked, %d more shown above the cut but not ranked among%s\n' \
+      "$DIM" "$limit" $(( shown - limit )) "$RESET" >&2
+    printf '%sthemselves - ask for more with --top.%s\n' "$DIM" "$RESET" >&2
+  fi
 }
 
 # ── demo data ─────────────────────────────────────────────────────────────────
@@ -661,7 +701,7 @@ ts_usage() {
 }
 
 main() {
-  local as_json=no source=stdin file='' list_only=no top='' n i
+  local as_json=no source=stdin file='' list_only=no top='' show='' n i
 
   while (( $# )); do
     case "$1" in
@@ -669,6 +709,7 @@ main() {
       --demo)     source=demo ;;
       --list)     list_only=yes ;;
       --top)      shift; top="${1:-}" ;;
+      --show)     shift; show="${1:-}" ;;
       -f|--file)  shift; file="$1"; source=file ;;
       -h|--help)  ts_usage; return 0 ;;
       *)          echo "ticket-sort: unknown option: $1" >&2; return 2 ;;
@@ -678,6 +719,11 @@ main() {
 
   if [[ -n "$top" && ! "$top" =~ ^[1-9][0-9]*$ ]]; then
     echo "ticket-sort: --top needs a positive count" >&2
+    return 2
+  fi
+
+  if [[ -n "$show" && ! "$show" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ticket-sort: --show needs a positive count" >&2
     return 2
   fi
 
@@ -704,7 +750,7 @@ main() {
   (( TS_PREVIEW > n )) && TS_PREVIEW=$n
 
   if [[ "$list_only" == yes ]]; then
-    ts_report "$as_json" "${top:-$n}"
+    ts_report "$as_json" "${top:-$n}" "${show:-0}"
     return 0
   fi
 
@@ -757,7 +803,7 @@ main() {
     printf ', %d settled by t/b' "$TS_BULK_RESOLVED" >&2
   printf '.%s\n\n' "$RESET" >&2
 
-  ts_report "$as_json" "${top:-$n}"
+  ts_report "$as_json" "${top:-$n}" "${show:-0}"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

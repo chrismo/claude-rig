@@ -1014,6 +1014,71 @@ EOF
   [ "$(grep -c . <<< "$output")" -eq 2 ]
 }
 
+@test "--show lists more rows than --top ranked" {
+  cat > "$BATS_TEST_TMPDIR/tickets" <<'EOF'
+{"id":"A","title":"alpha"}
+{"id":"B","title":"bravo"}
+{"id":"C","title":"charlie"}
+{"id":"D","title":"delta"}
+{"id":"E","title":"echo"}
+EOF
+  run --separate-stderr run_sort $'1\n1\n1\n1\n1\n1\n1\n1\n1\n1\n1\n1' --top 2 --show 5
+  [ "$status" -eq 0 ]
+  [ "$(grep -c . <<< "$output")" -gt 2 ]
+}
+
+@test "--show marks unranked rows instead of numbering them" {
+  cat > "$BATS_TEST_TMPDIR/tickets" <<'EOF'
+{"id":"A","title":"alpha"}
+{"id":"B","title":"bravo"}
+{"id":"C","title":"charlie"}
+{"id":"D","title":"delta"}
+{"id":"E","title":"echo"}
+EOF
+  run --separate-stderr run_sort $'1\n1\n1\n1\n1\n1\n1\n1\n1\n1\n1\n1' --top 2 --show 5
+  [ "$status" -eq 0 ]
+  # The two ranked rows are numbered; everything past the ranked head must not
+  # claim a rank it does not have.
+  [ "$(grep -cE '^ *[0-9]+\.' <<< "$output")" -eq 2 ]
+  [ "$(grep -c '·' <<< "$output")" -gt 0 ]
+}
+
+@test "--show smaller than --top does not shrink the ranked head" {
+  three_tickets
+  run --separate-stderr run_sort $'1\n1\n1\n1\n1\n1' --top 2 --show 1
+  [ "$status" -eq 0 ]
+  [ "$(grep -cE '^ *[0-9]+\.' <<< "$output")" -eq 2 ]
+}
+
+@test "--show rejects a non-positive count" {
+  three_tickets
+  run run_sort $'1' --show 0
+  [ "$status" -eq 2 ]
+}
+
+@test "--show with --json marks unranked rows with a null rank" {
+  cat > "$BATS_TEST_TMPDIR/tickets" <<'EOF'
+{"id":"A","title":"alpha"}
+{"id":"B","title":"bravo"}
+{"id":"C","title":"charlie"}
+{"id":"D","title":"delta"}
+{"id":"E","title":"echo"}
+EOF
+  run --separate-stderr run_sort $'1\n1\n1\n1\n1\n1\n1\n1\n1\n1\n1\n1' --top 2 --show 5 --json
+  [ "$status" -eq 0 ]
+  # Ranked entries carry a number; shown-but-unranked ones carry null, so a
+  # consumer can tell an established rank from a partition artifact.
+  [ "$(jq '[.[] | select(.rank != null)] | length' <<< "$output")" -eq 2 ]
+  [ "$(jq '[.[] | select(.rank == null)] | length' <<< "$output")" -gt 0 ]
+}
+
+@test "--show without --top is just a longer ranked list" {
+  three_tickets
+  run --separate-stderr run_sort $'1\n1\n1\n1\n1\n1' --show 3
+  [ "$status" -eq 0 ]
+  [ "$(grep -cE '^ *[0-9]+\.' <<< "$output")" -eq 3 ]
+}
+
 @test "--top with --json emits only the ranked head" {
   three_tickets
   run --separate-stderr run_sort $'1\n1\n1\n1\n1' --top 1 --json
