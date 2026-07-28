@@ -307,6 +307,25 @@ EOF
   [[ "$target" == "$BATS_TEST_DIRNAME/bin/claude-tabs" ]]
 }
 
+@test "bin: ticket-sort is symlinked from bin/" {
+  run_installer
+  [ "$status" -eq 0 ]
+  [ -L "$LOCAL_BIN/ticket-sort" ]
+  local target
+  target=$(readlink "$LOCAL_BIN/ticket-sort")
+  [[ "$target" == "$BATS_TEST_DIRNAME/bin/ticket-sort" ]]
+}
+
+@test "bin: analysis scripts in bin/ are not installed as commands" {
+  # The install list is an allowlist for exactly this reason - adding a
+  # user-facing command means adding it there, and a new .sh left in bin/
+  # must not silently become a user command.
+  run_installer
+  [ "$status" -eq 0 ]
+  [ ! -e "$LOCAL_BIN/harvest.sh" ]
+  [ ! -e "$LOCAL_BIN/ticket-sort.bats" ]
+}
+
 @test "bin: tab-status is symlinked from tab-status/" {
   run_installer
   [ "$status" -eq 0 ]
