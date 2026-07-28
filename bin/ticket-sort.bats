@@ -745,6 +745,104 @@ EOF
   [ "$status" -eq 0 ]
 }
 
+@test "ts_cache_load derives a pair you never answered" {
+  # A > B and B > C means A > C. The sort would otherwise ask, and at 50
+  # tickets that re-asking dominates: a warm re-run of the same list costs
+  # ~144 questions without this, and 0 with it.
+  TS_CACHE="$BATS_TEST_TMPDIR/v.json"
+  cat > "$TS_CACHE" <<'EOF'
+{"A|B":{"w":"A","at":"2026-07-01T00:00:00Z"},
+ "B|C":{"w":"B","at":"2026-07-02T00:00:00Z"}}
+EOF
+  ts_load <<< '[{"id":"A","title":"a"},{"id":"B","title":"b"},{"id":"C","title":"c"}]'
+  ts_cache_load
+  # A|C was never stored, but it follows.
+  [ "${TS_MEMO[0:2]}" -eq 0 ]
+  [ "${TS_MEMO[2:0]}" -eq 1 ]
+}
+
+@test "ts_cache_load derives across a longer chain" {
+  TS_CACHE="$BATS_TEST_TMPDIR/v.json"
+  cat > "$TS_CACHE" <<'EOF'
+{"A|B":{"w":"A","at":"2026-07-01T00:00:00Z"},
+ "B|C":{"w":"B","at":"2026-07-01T00:00:00Z"},
+ "C|D":{"w":"C","at":"2026-07-01T00:00:00Z"},
+ "D|E":{"w":"D","at":"2026-07-01T00:00:00Z"}}
+EOF
+  ts_load <<< '[{"id":"A","title":"a"},{"id":"B","title":"b"},{"id":"C","title":"c"},{"id":"D","title":"d"},{"id":"E","title":"e"}]'
+  ts_cache_load
+  # A beats everything downstream of it, four links away included.
+  [ "${TS_MEMO[0:4]}" -eq 0 ]
+  [ "${TS_MEMO[1:4]}" -eq 0 ]
+}
+
+@test "the newest verdict wins a contradiction" {
+  # Priorities drift: today's call must beat the older one it contradicts.
+  # A>B and B>C are old; C>A is today. Keeping all three would be a cycle, so
+  # the oldest edge in it yields.
+  TS_CACHE="$BATS_TEST_TMPDIR/v.json"
+  cat > "$TS_CACHE" <<'EOF'
+{"A|B":{"w":"A","at":"2026-07-01T00:00:00Z"},
+ "B|C":{"w":"B","at":"2026-07-02T00:00:00Z"},
+ "A|C":{"w":"C","at":"2026-07-28T00:00:00Z"}}
+EOF
+  ts_load <<< '[{"id":"A","title":"a"},{"id":"B","title":"b"},{"id":"C","title":"c"}]'
+  ts_cache_load
+  # Today's verdict stands: C beats A.
+  [ "${TS_MEMO[2:0]}" -eq 0 ]
+}
+
+@test "a contradiction leaves a usable order, not a cycle" {
+  TS_CACHE="$BATS_TEST_TMPDIR/v.json"
+  cat > "$TS_CACHE" <<'EOF'
+{"A|B":{"w":"A","at":"2026-07-01T00:00:00Z"},
+ "B|C":{"w":"B","at":"2026-07-02T00:00:00Z"},
+ "A|C":{"w":"C","at":"2026-07-28T00:00:00Z"}}
+EOF
+  printf '%s\n' '[{"id":"A","title":"a"},{"id":"B","title":"b"},{"id":"C","title":"c"}]' \
+    > "$BATS_TEST_TMPDIR/tickets"
+  : > "$BATS_TEST_TMPDIR/empty"
+  # No answers available, so every comparison must come from the store. A cycle
+  # would make the sort ask, and asking aborts.
+  run --separate-stderr env TS_CACHE="$TS_CACHE" TS_INPUT="$BATS_TEST_TMPDIR/empty" \
+    bash "$TS" < "$BATS_TEST_TMPDIR/tickets"
+  [ "$status" -eq 0 ]
+  [ "$(grep -c . <<< "$output")" -eq 3 ]
+  # Today's verdict is the one that survived, so C outranks A.
+  [[ "$output" == *"C"* && "$output" == *"A"* ]]
+  local c_line a_line
+  c_line=$(grep -n ' C ' <<< "$output" | cut -d: -f1)
+  a_line=$(grep -n ' A ' <<< "$output" | cut -d: -f1)
+  [ "$c_line" -lt "$a_line" ]
+}
+
+@test "a direct reversal replaces the older verdict" {
+  # The plainest drift case: same pair, answered the other way later.
+  TS_CACHE="$BATS_TEST_TMPDIR/v.json"
+  cat > "$TS_CACHE" <<'EOF'
+{"A|B":{"w":"B","at":"2026-07-28T00:00:00Z"}}
+EOF
+  ts_load <<< '[{"id":"A","title":"a"},{"id":"B","title":"b"}]'
+  ts_cache_load
+  [ "${TS_MEMO[1:0]}" -eq 0 ]
+  [ "${TS_MEMO[0:1]}" -eq 1 ]
+}
+
+@test "derived pairs are not written back to the store" {
+  # The store stays a record of what you answered. Persisting derivations would
+  # bloat it and freeze inferences that a later verdict should be free to undo.
+  TS_CACHE="$BATS_TEST_TMPDIR/v.json"
+  cat > "$TS_CACHE" <<'EOF'
+{"A|B":{"w":"A","at":"2026-07-01T00:00:00Z"},
+ "B|C":{"w":"B","at":"2026-07-02T00:00:00Z"}}
+EOF
+  ts_load <<< '[{"id":"A","title":"a"},{"id":"B","title":"b"},{"id":"C","title":"c"}]'
+  ts_cache_load
+  ts_cache_save
+  [ "$(jq 'length' "$TS_CACHE")" -eq 2 ]
+  [ "$(jq -r '.["A|C"] // "absent"' "$TS_CACHE")" = "absent" ]
+}
+
 @test "ts_cache_load ignores pairs whose tickets are absent" {
   TS_CACHE="$BATS_TEST_TMPDIR/v.json"
   cat > "$TS_CACHE" <<'EOF'
