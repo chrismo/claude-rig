@@ -43,6 +43,38 @@
 #   TS_WORKSPACE   linear.app slug, for building urls when tickets lack one
 #   TS_OPEN        how o1/o2 launch a ticket (default: open)
 #   TS_TODAY       pin "today" for due-date math (default: actual today)
+#   TS_BASH        bash 4.1+ to re-exec under, if it isn't on the usual paths
+
+# This script needs bash 4.1+ - associative arrays, {fd} allocation, mapfile,
+# ${var,,} - but macOS still ships 3.2 as /bin/bash, and a homebrew bash is
+# often deliberately left off PATH so `bash` stays 3.2 for everyone else. So
+# find a newer one and hand off to it. Homebrew's opt path is used rather than
+# a Cellar path because it survives `brew upgrade bash`.
+#
+# Must stay above the first 4+ construct that actually executes - the
+# `declare -gA` globals below. bash parses command-by-command, so later 4+
+# syntax is not a parse error; it fails when reached. `declare -gA` fails
+# loudly but keeps going, leaving TS_MEMO a plain indexed array that corrupts
+# on its first "a:b" subscript, so an unguarded run misbehaves rather than
+# stopping. Guarding here means it never gets that far.
+if (( BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 1) )); then
+  # Re-exec only when run as a program. When sourced (the test suite does
+  # this) $0 is the caller's shell, not this file, so an exec here would try
+  # to run the bash binary as a script and take the caller down with it.
+  if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+    for _ts_bash in "${TS_BASH:-}" \
+                    /opt/homebrew/opt/bash/bin/bash \
+                    /usr/local/opt/bash/bin/bash \
+                    /opt/homebrew/bin/bash \
+                    /usr/local/bin/bash; do
+      [ -n "$_ts_bash" ] && [ -x "$_ts_bash" ] || continue
+      exec "$_ts_bash" "${BASH_SOURCE[0]}" "$@"
+    done
+  fi
+  echo "ticket-sort needs bash 4.1+, found $BASH_VERSION" >&2
+  echo "  brew install bash    (or point TS_BASH at one)" >&2
+  exit 1
+fi
 
 set -euo pipefail
 

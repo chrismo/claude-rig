@@ -15,6 +15,17 @@ setup() {
   source "$TS"
 }
 
+# ── interpreter ───────────────────────────────────────────────────────────────
+# The script needs bash 4.1+ (associative arrays, {fd} allocation, mapfile) but
+# macOS still ships 3.2 as /bin/bash, so it re-execs itself under a newer bash.
+# Invoking it with an old interpreter must work, not die on `declare -gA`.
+
+@test "runs when invoked by a bash too old for its own syntax" {
+  run /bin/bash "$TS" --help
+  [ "$status" -eq 0 ]
+  [[ "$output" != *'invalid option'* ]]
+}
+
 # ── quicksort ─────────────────────────────────────────────────────────────────
 # ts_sort operates in place on TS_ARR, delegating every comparison to the
 # function named in TS_COMPARE. Tests inject a numeric comparator so the

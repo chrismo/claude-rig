@@ -19,3 +19,11 @@ bats hooks/use-dedicated-tools.bats
 ```
 
 **Important:** The hook writes logs to `~/.claude/logs/`, which is outside the sandbox write-allow list. Bats tests must run with sandbox disabled (`dangerouslyDisableSandbox: true`) or they will all fail because the hook crashes on the blocked log writes.
+
+**`bin/ticket-sort` needs bash 4.1+**, so its suite must run with a newer bash ahead of `bats` on `PATH`:
+
+```bash
+PATH="/opt/homebrew/opt/bash/bin:$PATH" bats bin/ticket-sort.bats
+```
+
+`bats` is `#!/usr/bin/env bash` and the suite sources the script, so a plain `bats` run picks up macOS 3.2 and every test fails at `source`. The script itself re-execs under a newer bash when *run*, so `ticket-sort` works normally from the shell — it's only the sourcing test suite that needs this.
