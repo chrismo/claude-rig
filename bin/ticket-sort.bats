@@ -424,6 +424,28 @@ auditing_before() {
   [[ "$stderr" == *"standing"* ]]
 }
 
+@test "--show widens the standing list, not just the final report" {
+  cat > "$BATS_TEST_TMPDIR/tickets" <<'EOF'
+{"id":"A","title":"alpha"}
+{"id":"B","title":"bravo"}
+{"id":"C","title":"charlie"}
+{"id":"D","title":"delta"}
+{"id":"E","title":"echo"}
+EOF
+  # --top 2 alone would preview 2 rows; --show 5 is the point of asking.
+  run --separate-stderr run_sort $'l\nl\nl\nl\nl\nl\nl\nl\nl\nl' --top 2 --show 5
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"standing top 5"* ]]
+}
+
+@test "TS_PREVIEW still overrides --show" {
+  three_tickets
+  export TS_PREVIEW=1
+  run --separate-stderr run_sort $'l\nl\nl\nl\nl' --show 3
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"standing top 1"* ]]
+}
+
 @test "TS_PREVIEW=0 turns the standing list off" {
   three_tickets
   # Exported, not just assigned - run_sort launches a separate bash.
@@ -1035,12 +1057,55 @@ EOF
 {"id":"D","title":"delta"}
 {"id":"E","title":"echo"}
 EOF
-  run --separate-stderr run_sort $'1\n1\n1\n1\n1\n1\n1\n1\n1\n1\n1\n1' --top 2 --show 5
+  # Driven through ts_report rather than a full run: which positions settle
+  # depends on pivot luck, and with a degenerate answer stream every position
+  # settles and nothing is left to dot. Here only the head is settled, so the
+  # rows past it must not claim a rank.
+  TS_TICKETS=('{"id":"A","title":"alpha"}' '{"id":"B","title":"bravo"}'
+              '{"id":"C","title":"charlie"}' '{"id":"D","title":"delta"}'
+              '{"id":"E","title":"echo"}')
+  TS_ARR=(0 1 2 3 4)
+  TS_SETTLED=()
+  TS_SETTLED[0]=1
+  TS_SETTLED[1]=1
+  run ts_report no 2 5
   [ "$status" -eq 0 ]
-  # The two ranked rows are numbered; everything past the ranked head must not
-  # claim a rank it does not have.
   [ "$(grep -cE '^ *[0-9]+\.' <<< "$output")" -eq 2 ]
-  [ "$(grep -c '·' <<< "$output")" -gt 0 ]
+  [ "$(grep -c '·' <<< "$output")" -eq 3 ]
+}
+
+@test "--show numbers positions a pivot settled past the ranked head" {
+  # A settled position is final - quicksort guarantees a landed pivot never
+  # moves - so the report must number it rather than dot it. Driven through
+  # ts_report directly: which positions settle in a real run depends on pivot
+  # luck, and this asserts the reporting rule, not the sort.
+  TS_TICKETS=('{"id":"A","title":"alpha"}' '{"id":"B","title":"bravo"}'
+              '{"id":"C","title":"charlie"}' '{"id":"D","title":"delta"}')
+  TS_ARR=(0 1 2 3)
+  TS_SETTLED=()
+  TS_SETTLED[0]=1   # ranked head
+  TS_SETTLED[2]=1   # settled past the head - must be numbered
+  run ts_report no 1 4
+  [ "$status" -eq 0 ]
+  [[ "$output" == *" 1. A"* ]]
+  [[ "$output" == *" 3. C"* ]]
+  # B and D were never settled, so they stay dotted.
+  [[ "$output" == *"·  B"* ]]
+  [[ "$output" == *"·  D"* ]]
+}
+
+@test "--show with --json gives settled positions their rank number" {
+  TS_TICKETS=('{"id":"A","title":"alpha"}' '{"id":"B","title":"bravo"}'
+              '{"id":"C","title":"charlie"}')
+  TS_ARR=(0 1 2)
+  TS_SETTLED=()
+  TS_SETTLED[0]=1
+  TS_SETTLED[2]=1
+  run ts_report yes 1 3
+  [ "$status" -eq 0 ]
+  [ "$(jq -r '.[0].rank' <<< "$output")" = "1" ]
+  [ "$(jq -r '.[1].rank' <<< "$output")" = "null" ]
+  [ "$(jq -r '.[2].rank' <<< "$output")" = "3" ]
 }
 
 @test "--show smaller than --top does not shrink the ranked head" {
@@ -1066,10 +1131,14 @@ EOF
 EOF
   run --separate-stderr run_sort $'1\n1\n1\n1\n1\n1\n1\n1\n1\n1\n1\n1' --top 2 --show 5 --json
   [ "$status" -eq 0 ]
-  # Ranked entries carry a number; shown-but-unranked ones carry null, so a
-  # consumer can tell an established rank from a partition artifact.
-  [ "$(jq '[.[] | select(.rank != null)] | length' <<< "$output")" -eq 2 ]
-  [ "$(jq '[.[] | select(.rank == null)] | length' <<< "$output")" -gt 0 ]
+  # End to end, whatever the pivots did: five rows out, every rank is either
+  # null or its own 1-based position - never a renumbering that would promote a
+  # ticket into a rank nothing established.
+  [ "$(jq 'length' <<< "$output")" -eq 5 ]
+  [ "$(jq '[to_entries[] | select(.value.rank != null and .value.rank != .key + 1)] | length' <<< "$output")" -eq 0 ]
+  # The head is always ranked, whatever else happened.
+  [ "$(jq -r '.[0].rank' <<< "$output")" = "1" ]
+  [ "$(jq -r '.[1].rank' <<< "$output")" = "2" ]
 }
 
 @test "--show without --top is just a longer ranked list" {

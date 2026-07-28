@@ -617,30 +617,33 @@ ts_ask() {
 
 # ── output ────────────────────────────────────────────────────────────────────
 
-# Prints at most $2 entries. With --top the tail is deliberately unranked,
-# so printing it would dress up partition order as a ranking.
 # Prints the ranked head, and optionally more rows past it.
 #
 # `shown` exists because spending questions and seeing tickets are different
 # needs: --top 2 buys two ranked positions, but the partitioning that isolated
 # them also proved things about everything else, and seeing that is often enough
-# to decide you are done. Those extra rows are NOT ranked - quickselect leaves
-# the tail in whatever order partitioning happened to produce, so numbering them
-# would assert an order nobody established. They are marked, not numbered, the
-# same way the standing preview marks positions no pivot has settled.
+# to decide you are done.
+#
+# A row gets a number when its position is genuinely established - either it is
+# inside the ranked head, or a pivot landed on it, which quicksort guarantees is
+# final. Everything else gets a dot: quickselect leaves the tail in whatever
+# order partitioning happened to produce, and numbering that would assert an
+# order nobody chose. So the numbering can have gaps, and the gaps are the
+# honest part - position 3 missing means position 3 is genuinely unknown.
 ts_report() {
-  local as_json="$1" limit="${2:-${#TS_ARR[@]}}" shown="${3:-0}" rank=1 idx i
-  local total=${#TS_ARR[@]}
+  local as_json="$1" limit="${2:-${#TS_ARR[@]}}" shown="${3:-0}" idx i
+  local total=${#TS_ARR[@]} settled=0
 
   (( shown < limit )) && shown=$limit
   (( shown > total )) && shown=$total
 
+  # The rank a row would carry is its position, not a running counter - a
+  # counter would renumber around the dots and quietly promote tickets.
   if [[ "$as_json" == yes ]]; then
     for (( i = 0; i < shown; i++ )); do
       idx="${TS_ARR[$i]}"
-      if (( i < limit )); then
-        jq -c --argjson r "$rank" '. + {rank: $r}' <<< "${TS_TICKETS[$idx]}"
-        rank=$(( rank + 1 ))
+      if (( i < limit )) || [[ -n "${TS_SETTLED[$i]:-}" ]]; then
+        jq -c --argjson r "$(( i + 1 ))" '. + {rank: $r}' <<< "${TS_TICKETS[$idx]}"
       else
         # null rather than a number: a consumer must be able to tell an
         # established rank from a row that is merely above the cut.
@@ -652,11 +655,11 @@ ts_report() {
 
   for (( i = 0; i < shown; i++ )); do
     idx="${TS_ARR[$i]}"
-    if (( i < limit )); then
-      printf '%2d. %-10s %s\n' "$rank" \
+    if (( i < limit )) || [[ -n "${TS_SETTLED[$i]:-}" ]]; then
+      (( i >= limit )) && settled=$(( settled + 1 ))
+      printf '%2d. %-10s %s\n' "$(( i + 1 ))" \
         "$(ts_field "${TS_TICKETS[$idx]}" id '?')" \
         "$(ts_field "${TS_TICKETS[$idx]}" title '(untitled)')"
-      rank=$(( rank + 1 ))
     else
       printf '%s  ·  %-10s %s%s\n' "$DIM" \
         "$(ts_field "${TS_TICKETS[$idx]}" id '?')" \
@@ -664,11 +667,16 @@ ts_report() {
     fi
   done
 
-  # Say plainly that the marked rows are unranked, or the dot is just decoration.
+  # Say plainly what the dots mean, or they are just decoration. The settled
+  # count is worth its own clause: those rows cost a question and are final,
+  # which is a different claim from "shown but unordered".
   if (( shown > limit )); then
-    printf '\n%s%d ranked, %d more shown above the cut but not ranked among%s\n' \
-      "$DIM" "$limit" $(( shown - limit )) "$RESET" >&2
-    printf '%sthemselves - ask for more with --top.%s\n' "$DIM" "$RESET" >&2
+    printf '\n%s%d ranked as asked' "$DIM" "$limit" >&2
+    (( settled > 0 )) &&
+      printf ', %d more position%s settled along the way' \
+        "$settled" "$( (( settled == 1 )) || echo s)" >&2
+    printf ', %d shown but not ranked.%s\n' \
+      $(( shown - limit - settled )) "$RESET" >&2
   fi
 }
 
@@ -742,10 +750,14 @@ main() {
   # A --top bigger than the backlog is just a full ranking.
   (( ${top:-0} >= n )) && top=''
 
-  # Preview defaults to whatever you asked to rank, or 5. An explicit
-  # TS_PREVIEW=0 survives this and turns the standing list off.
+  # Preview defaults to whatever you asked to see, then to whatever you asked
+  # to rank, then 5. --show wins over --top here: watching a 2-row window while
+  # ranking is the thing --show exists to fix, and deciding "these are clearly
+  # the important ones" needs the wider list during the run, not just after it.
+  # An explicit TS_PREVIEW still beats both, including TS_PREVIEW=0 to turn the
+  # standing list off.
   if [[ -z "$TS_PREVIEW" ]]; then
-    TS_PREVIEW=${top:-5}
+    TS_PREVIEW=${show:-${top:-5}}
   fi
   (( TS_PREVIEW > n )) && TS_PREVIEW=$n
 
