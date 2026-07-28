@@ -3,16 +3,16 @@
 # ticket-sort - Rank Linear tickets by head-to-head comparison.
 #
 # Quicksort where every comparison is you. Each one dumps two tickets - title,
-# priority, due date, SLA, labels, project - and asks which matters more.
+# priority, status, due date, SLA, labels, project - and asks which matters more.
 # n log n questions later you have a ranked backlog.
 #
 # Usage:
-#   linear.sh issues --json | ticket-sort            # ranked list to stdout
-#   linear.sh issues --json | ticket-sort --json     # ranked JSON to stdout
-#   linear.sh issues --json | ticket-sort --top 5    # rank the top 5, quickselect
-#   ticket-sort --demo                               # play with fake tickets
+#   linear.sh json | ticket-sort           # ranked list to stdout
+#   linear.sh json | ticket-sort --json    # ranked JSON to stdout
+#   linear.sh json | ticket-sort --top 5   # rank the top 5, quickselect
+#   ticket-sort --demo                     # play with fake tickets
 #   ticket-sort -f tickets.json
-#   ticket-sort --list                               # no sorting, just show them
+#   ticket-sort --list                     # no sorting, just show them
 #
 # At each comparison:
 #   l         the left ticket matters more      (Enter defaults to this)
@@ -28,13 +28,13 @@
 # unranked tail is not printed - it has no order to report.
 #
 # Input is a JSON array or NDJSON, one object per ticket. Recognized fields:
-#   id, title, priority, due, sla, labels[], project, url
+#   id, title, priority, status, due, sla, labels[], project, url
 # due and sla are both deadlines - a plain date or an ISO datetime. A value
 # that will not parse as a date is shown as written.
 # Everything except id/title is optional.
 #
 # The UI goes to stderr and the ranking to stdout, so piping works:
-#   linear.sh issues --json | ticket-sort --json > ranked.json
+#   linear.sh json | ticket-sort --json > ranked.json
 #
 # Answers are read from /dev/tty (override with TS_INPUT for scripted runs),
 # so the ticket stream on stdin never collides with the prompt.
@@ -276,11 +276,12 @@ ts_date_note() {
 
 ts_render() {
   local json="$1" label="${2:-}"
-  local id title priority due sla labels project
+  local id title priority status due sla labels project
 
   id=$(ts_field "$json" id "?")
   title=$(ts_field "$json" title "(untitled)")
   priority=$(ts_field "$json" priority)
+  status=$(ts_field "$json" status)
   due=$(ts_field "$json" due)
   sla=$(ts_field "$json" sla)
   labels=$(ts_field "$json" labels)
@@ -289,6 +290,7 @@ ts_render() {
   printf '%s%s%s %s%s%s\n' "$BOLD$CYAN" "${label:+[$label] }" "$RESET" "$BOLD" "$id" "$RESET"
   printf '  %s\n' "$title"
   printf '  %sPriority%s %s\n' "$DIM" "$RESET" "$priority"
+  printf '  %sStatus  %s %s\n' "$DIM" "$RESET" "$status"
   printf '  %sDue     %s %s\n' "$DIM" "$RESET" "$(ts_date_note "$due")"
   printf '  %sSLA     %s %s\n' "$DIM" "$RESET" "$(ts_date_note "$sla")"
   printf '  %sProject %s %s\n' "$DIM" "$RESET" "$project"
@@ -505,18 +507,18 @@ ts_report() {
 # obvious you would learn nothing from playing with it.
 ts_demo_data() {
   cat <<'EOF'
-{"id":"DEVOPS-1904","title":"RDS Postgres 14 -> 16 major version upgrade (prod)","priority":"High","due":"2026-08-14","sla":"2026-09-01T00:00:00.000Z","labels":["database","planned-work","risk-high"],"project":"Postgres 16 Upgrade"}
-{"id":"DEVOPS-2077","title":"Review and tune the 42 always-firing CloudWatch alarms","priority":"Medium","due":null,"sla":null,"labels":["observability","alert-fatigue","toil"],"project":"Observability Enhancements"}
-{"id":"DEVOPS-2140","title":"Rotate the expiring wildcard TLS cert on the edge ALBs","priority":"Urgent","due":"2026-08-02","sla":"2026-08-04T12:00:00.000Z","labels":["security","certs","customer-facing"],"project":"Platform Reliability"}
-{"id":"DEVOPS-1988","title":"EKS 1.29 -> 1.31 control plane upgrade","priority":"High","due":"2026-09-30","sla":"2026-10-15T00:00:00.000Z","labels":["kubernetes","planned-work","risk-high"],"project":"Cluster Lifecycle"}
-{"id":"DEVOPS-2201","title":"Nightly backup verification job has been silently failing for 3 weeks","priority":"Urgent","due":"2026-07-28","sla":"2026-07-25T17:00:00.000Z","labels":["backups","incident-followup","data-loss-risk"],"project":"Platform Reliability"}
-{"id":"DEVOPS-2095","title":"Terraform state drift on the shared VPC module","priority":"Medium","due":null,"sla":null,"labels":["terraform","tech-debt"],"project":"IaC Cleanup"}
-{"id":"DEVOPS-2166","title":"Pen test finding: SSH open to 0.0.0.0/0 on 3 bastion hosts","priority":"Urgent","due":"2026-08-08","sla":"2026-08-08T17:00:00.000Z","labels":["security","compliance","pen-test"],"project":"Pen Test Remediation"}
-{"id":"DEVOPS-2043","title":"CI runners spend 40% of wall clock waiting on Docker layer pulls","priority":"Medium","due":null,"sla":null,"labels":["ci","developer-experience","cost"],"project":"CI Throughput"}
-{"id":"DEVOPS-2188","title":"Datadog spend up 60% MoM - find the cardinality bomb","priority":"High","due":"2026-08-31","sla":"2026-09-05T00:00:00.000Z","labels":["cost","observability"],"project":"Cloud Cost"}
-{"id":"DEVOPS-1855","title":"Replace the hand-rolled deploy script with an ArgoCD rollout","priority":"Low","due":null,"sla":null,"labels":["deployment","tech-debt","nice-to-have"],"project":"Cluster Lifecycle"}
-{"id":"DEVOPS-2210","title":"Add read replica lag alerting - the last outage went 20min undetected","priority":"High","due":"2026-08-10","sla":"2026-08-10T17:00:00.000Z","labels":["database","observability","incident-followup"],"project":"Observability Enhancements"}
-{"id":"DEVOPS-2119","title":"Prune 8TB of orphaned EBS snapshots","priority":"Low","due":null,"sla":null,"labels":["cost","toil"],"project":"Cloud Cost"}
+{"id":"DEVOPS-1904","title":"RDS Postgres 14 -> 16 major version upgrade (prod)","priority":"High","status":"In Progress","due":"2026-08-14","sla":"2026-09-01T00:00:00.000Z","labels":["database","planned-work","risk-high"],"project":"Postgres 16 Upgrade"}
+{"id":"DEVOPS-2077","title":"Review and tune the 42 always-firing CloudWatch alarms","priority":"Medium","status":"Backlog","due":null,"sla":null,"labels":["observability","alert-fatigue","toil"],"project":"Observability Enhancements"}
+{"id":"DEVOPS-2140","title":"Rotate the expiring wildcard TLS cert on the edge ALBs","priority":"Urgent","status":"In Progress","due":"2026-08-02","sla":"2026-08-04T12:00:00.000Z","labels":["security","certs","customer-facing"],"project":"Platform Reliability"}
+{"id":"DEVOPS-1988","title":"EKS 1.29 -> 1.31 control plane upgrade","priority":"High","status":"Todo","due":"2026-09-30","sla":"2026-10-15T00:00:00.000Z","labels":["kubernetes","planned-work","risk-high"],"project":"Cluster Lifecycle"}
+{"id":"DEVOPS-2201","title":"Nightly backup verification job has been silently failing for 3 weeks","priority":"Urgent","status":"In Progress","due":"2026-07-28","sla":"2026-07-25T17:00:00.000Z","labels":["backups","incident-followup","data-loss-risk"],"project":"Platform Reliability"}
+{"id":"DEVOPS-2095","title":"Terraform state drift on the shared VPC module","priority":"Medium","status":"Backlog","due":null,"sla":null,"labels":["terraform","tech-debt"],"project":"IaC Cleanup"}
+{"id":"DEVOPS-2166","title":"Pen test finding: SSH open to 0.0.0.0/0 on 3 bastion hosts","priority":"Urgent","status":"Todo","due":"2026-08-08","sla":"2026-08-08T17:00:00.000Z","labels":["security","compliance","pen-test"],"project":"Pen Test Remediation"}
+{"id":"DEVOPS-2043","title":"CI runners spend 40% of wall clock waiting on Docker layer pulls","priority":"Medium","status":"Backlog","due":null,"sla":null,"labels":["ci","developer-experience","cost"],"project":"CI Throughput"}
+{"id":"DEVOPS-2188","title":"Datadog spend up 60% MoM - find the cardinality bomb","priority":"High","status":"In Review","due":"2026-08-31","sla":"2026-09-05T00:00:00.000Z","labels":["cost","observability"],"project":"Cloud Cost"}
+{"id":"DEVOPS-1855","title":"Replace the hand-rolled deploy script with an ArgoCD rollout","priority":"Low","status":"Backlog","due":null,"sla":null,"labels":["deployment","tech-debt","nice-to-have"],"project":"Cluster Lifecycle"}
+{"id":"DEVOPS-2210","title":"Add read replica lag alerting - the last outage went 20min undetected","priority":"High","status":"Todo","due":"2026-08-10","sla":"2026-08-10T17:00:00.000Z","labels":["database","observability","incident-followup"],"project":"Observability Enhancements"}
+{"id":"DEVOPS-2119","title":"Prune 8TB of orphaned EBS snapshots","priority":"Low","status":"Backlog","due":null,"sla":null,"labels":["cost","toil"],"project":"Cloud Cost"}
 EOF
 }
 

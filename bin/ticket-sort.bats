@@ -810,6 +810,20 @@ FULL_TICKET='{"id":"ENG-412","title":"Fix checkout timeout","priority":"Urgent",
   [ "$sla_dates" -gt 3 ]
 }
 
+@test "ts_render shows status" {
+  TS_TODAY=2026-07-27
+  run ts_render '{"id":"ENG-9","title":"bare","status":"In Progress"}'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Status"* ]]
+  [[ "$output" == *"In Progress"* ]]
+}
+
+@test "demo tickets carry a status" {
+  local with_status
+  with_status=$(ts_demo_data | jq -r '.status // empty' | grep -c .)
+  [ "$with_status" -gt 3 ]
+}
+
 @test "ts_render tolerates missing fields" {
   TS_TODAY=2026-07-27
   run ts_render '{"id":"ENG-9","title":"bare"}'
@@ -821,7 +835,7 @@ FULL_TICKET='{"id":"ENG-412","title":"Fix checkout timeout","priority":"Urgent",
 
 @test "ts_render tolerates explicit nulls" {
   TS_TODAY=2026-07-27
-  run ts_render '{"id":"ENG-9","title":"bare","priority":null,"due":null,"labels":null}'
+  run ts_render '{"id":"ENG-9","title":"bare","priority":null,"due":null,"labels":null,"status":null}'
   [ "$status" -eq 0 ]
   [[ "$output" != *"null"* ]]
 }
