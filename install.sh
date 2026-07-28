@@ -48,15 +48,20 @@ echo ""
 
 # Merge claude-rig hooks into settings.json.
 #
-# Pattern: `put hooks := {} | drop hooks.X | values {...this, hooks: {...this.hooks, Y: [...], Z: [...]}}`
-#   - `put hooks := {}` ensures hooks exists (no-op if it already does — put merges
-#     records). Needed so `drop` and `this.hooks` work on a fresh settings.json.
-#   - `drop hooks.X` removes hook event types claude-rig used to manage but no longer
-#     does (otherwise stale entries would linger forever — spread can't subtract).
+# Pattern: `values {...{hooks:{}}, ...this} | values {...this, hooks: {...this.hooks, Y: [...]}} | drop hooks.X`
+#   - `values {...{hooks:{}}, ...this}` defaults hooks to {} only when it is absent:
+#     the spread of `this` comes second, so a real hooks record wins. Do NOT use
+#     `put hooks := {}` here — put REPLACES the field rather than merging into it,
+#     which silently wiped every user-managed hook event on install.
 #   - `...this.hooks` preserves any hook event types claude-rig does NOT manage (e.g.,
 #     user's own SubagentStop, PreCompact, etc.).
 #   - Named keys after the spread (Y, Z, ...) override per-event-type: claude-rig owns
 #     those event types entirely, replacing whatever was there.
+#   - `drop hooks.X` removes hook event types claude-rig used to manage but no longer
+#     does (otherwise stale entries would linger forever — spread can't subtract).
+#     It runs LAST, after the named keys above have guaranteed hooks is non-empty:
+#     dropping the sole field of a nested record makes super emit no record at all,
+#     which would write an empty settings.json.
 # When retiring a hook event type from claude-rig, ADD it to the `drop` list so it
 # disappears from existing settings.json on next install.
 # tab-status --title sets the Ghostty tab title itself (resolves the pane's pts
@@ -67,7 +72,7 @@ HOOK_CMD_PREFIX="tab-status --hook"
 TITLE_CMD="tab-status --title > /dev/null 2>&1 || true"
 
 new_settings=$(
-  super -J -c "put hooks := {} | drop hooks.SessionStart | values {...this, hooks: {...this.hooks,
+  super -J -c "values {...{hooks:{}}, ...this} | values {...this, hooks: {...this.hooks,
     UserPromptSubmit: [{
       matcher: '',
       hooks: [{
@@ -110,7 +115,7 @@ new_settings=$(
         command: '${DEDICATED_TOOLS_HOOK}'
       }]
     }]
-  }}" "$SETTINGS_FILE"
+  }} | drop hooks.SessionStart" "$SETTINGS_FILE"
 )
 
 echo "$new_settings" > "$SETTINGS_FILE"

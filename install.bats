@@ -86,6 +86,13 @@ EOF
   [ "$status" -eq 0 ]
   run settings_get 'this.hooks.SessionStart'
   [ "$status" -ne 0 ] || [ "$output" = "error(\"missing\")" ]
+  # SessionStart was the only hook, so dropping it empties the nested record.
+  # super emits NO record when a nested record loses its last field, which would
+  # write an empty settings.json - and "SessionStart is absent" is true of an
+  # empty file too. Assert the rest of the settings survived.
+  local matcher
+  matcher=$(settings_get 'this.hooks.PreToolUse[0].matcher')
+  [ "$matcher" = "Bash" ]
 }
 
 @test "hooks: user-managed hook event types are preserved" {
