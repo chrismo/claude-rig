@@ -52,7 +52,8 @@
 #   TS_OPEN        how o1/o2 launch a ticket (default: open)
 #   TS_TODAY       pin "today" for due-date math (default: actual today)
 #   TS_BASH        bash 4.1+ to re-exec under, if it isn't on the usual paths
-#   TS_CACHE       verdict cache path, or "none" to answer fresh every time
+#   TS_CACHE       verdict store path, or "none" to answer fresh every time
+#                  (default: $XDG_STATE_HOME/ticket-sort/verdicts.json)
 #
 # Answers persist between runs. Every comparison you make is remembered by
 # ticket id pair, so re-ranking a backlog you have already ranked asks nothing,
@@ -122,20 +123,13 @@ TS_FD=                 # answer stream, assigned by `exec {TS_FD}<` at startup
 : "${TS_OPEN:=open}"        # how ol/or launch a ticket
 : "${TS_PREVIEW:=}"         # standing-list rows; 0 disables
 : "${TS_WORKSPACE:=}"       # linear.app/<slug>, for tickets with no url field
-# Verdicts persist next to the script, not relative to $PWD: ticket-sort runs
-# from a ~/.local/bin symlink against tickets from anywhere, and a
-# per-directory cache would scatter files and forget what it already knew.
-# Resolve the symlink so the cache lands in the repo beside the real script,
-# where .gitignore covers it. Set TS_CACHE=none to answer fresh every time.
-if [[ -z "${TS_CACHE:-}" ]]; then
-  _ts_self="${BASH_SOURCE[0]}"
-  while [[ -L "$_ts_self" ]]; do
-    _ts_link=$(readlink "$_ts_self")
-    [[ "$_ts_link" == /* ]] && _ts_self="$_ts_link" ||
-      _ts_self="$(cd -P "$(dirname "$_ts_self")" && pwd)/$_ts_link"
-  done
-  TS_CACHE="$(cd -P "$(dirname "$_ts_self")" && pwd)/.ticket-sort-verdicts.json"
-fi
+# Verdicts are durable machine-local state, so they go in the XDG state dir -
+# not next to the script (generated data inside a git repo, needing a
+# .gitignore line and lost on a fresh clone) and not relative to $PWD, which
+# would scatter files and forget what it already knew. State rather than cache
+# because these are answers you gave: re-running does not regenerate them.
+# Set TS_CACHE to move it, or TS_CACHE=none to answer fresh every time.
+: "${TS_CACHE:=${XDG_STATE_HOME:-$HOME/.local/state}/ticket-sort/verdicts.json}"
 
 BOLD=$'\033[1m'
 DIM=$'\033[2m'

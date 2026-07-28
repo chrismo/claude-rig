@@ -799,6 +799,39 @@ EOF
   [[ "$stderr" == *"1 answer reused"* ]]
 }
 
+@test "the cache defaults to the XDG state dir" {
+  # setup() exports TS_CACHE so tests cannot touch the real one; drop it here to
+  # see what the script picks on its own.
+  run env -u TS_CACHE XDG_STATE_HOME="$BATS_TEST_TMPDIR/state" \
+    bash -c 'source "'"$TS"'"; printf "%s\n" "$TS_CACHE"'
+  [ "$status" -eq 0 ]
+  [ "$output" = "$BATS_TEST_TMPDIR/state/ticket-sort/verdicts.json" ]
+}
+
+@test "the cache falls back to ~/.local/state without XDG_STATE_HOME" {
+  run env -u TS_CACHE -u XDG_STATE_HOME HOME="$BATS_TEST_TMPDIR/home" \
+    bash -c 'source "'"$TS"'"; printf "%s\n" "$TS_CACHE"'
+  [ "$status" -eq 0 ]
+  [ "$output" = "$BATS_TEST_TMPDIR/home/.local/state/ticket-sort/verdicts.json" ]
+}
+
+@test "the cache is not written inside the repo" {
+  # It used to live beside the script, which meant generated state in a git
+  # repo and a .gitignore line to keep it out of commits.
+  run env -u TS_CACHE XDG_STATE_HOME="$BATS_TEST_TMPDIR/state" \
+    bash -c 'source "'"$TS"'"; printf "%s\n" "$TS_CACHE"'
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"$BATS_TEST_DIRNAME"* ]]
+}
+
+@test "ts_cache_save creates the state dir when it does not exist" {
+  TS_CACHE="$BATS_TEST_TMPDIR/deep/nested/state/ticket-sort/verdicts.json"
+  ts_load <<< '[{"id":"A-1","title":"one"},{"id":"A-2","title":"two"}]'
+  TS_MEMO[0:1]=0
+  ts_cache_save
+  [ -f "$TS_CACHE" ]
+}
+
 @test "TS_CACHE=none disables persistence" {
   TS_CACHE=none
   ts_load <<< '[{"id":"A-1","title":"one"},{"id":"A-2","title":"two"}]'
