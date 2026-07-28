@@ -142,8 +142,10 @@ EOF
   [ "$status" -eq 0 ]
   local allows
   allows=$(settings_get 'this.permissions.allow')
-  [[ "$allows" == *"Write(.claude/tmp/*)"* ]]
+  # Edit(), not Write() - Claude Code warns that Write() rules gate nothing,
+  # so 13e56e7 dropped them from allow.sup as pure duplicates.
   [[ "$allows" == *"Edit(.claude/tmp/*)"* ]]
+  [[ "$allows" == *"Edit(tmp/*)"* ]]
 }
 
 @test "permissions: existing allow rules are preserved" {
@@ -160,7 +162,7 @@ EOF
   local allows
   allows=$(settings_get 'this.permissions.allow')
   [[ "$allows" == *"Bash(git add:*)"* ]]
-  [[ "$allows" == *"Write(.claude/tmp/*)"* ]]
+  [[ "$allows" == *"Edit(.claude/tmp/*)"* ]]
 }
 
 @test "permissions: existing defaultMode is preserved" {
@@ -201,7 +203,7 @@ EOF
   run_installer
   [ "$status" -eq 0 ]
   local count
-  count=$(settings_get 'unnest this.permissions.allow | where this == "Write(.claude/tmp/*)" | count()')
+  count=$(settings_get 'unnest this.permissions.allow | where this == "Edit(.claude/tmp/*)" | count()')
   [ "$count" -eq 1 ]
 }
 
