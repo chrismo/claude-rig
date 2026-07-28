@@ -335,9 +335,15 @@ ts_cache_key() {
   fi
 }
 
-# index -> ticket id, for the tickets currently loaded.
+# index -> ticket id, for the tickets currently loaded. Memoized: this is called
+# from n-squared loops, and a jq spawn per call is what made saving slow enough
+# to feel between keystrokes.
+declare -gA TS_ID_CACHE=()
 ts_cache_id() {
-  jq -r '.id // empty' <<< "${TS_TICKETS[$1]}"
+  if [[ -z "${TS_ID_CACHE[$1]:-}" ]]; then
+    TS_ID_CACHE[$1]=$(jq -r '.id // empty' <<< "${TS_TICKETS[$1]}")
+  fi
+  printf '%s\n' "${TS_ID_CACHE[$1]}"
 }
 
 ts_cache_path() {
@@ -468,6 +474,28 @@ print("!", dropped)
 for (lo, hi), w in seen_pairs.items():
     print(lo, hi, w)
 ' "$path"
+}
+
+# Persist exactly one verdict. Called after every answer, so it must not walk
+# every pair: the full scan below spawns a jq per stored verdict, which at 50
+# tickets was ~640ms a keystroke.
+ts_cache_save_pair() {
+  local a=$1 b=$2 winner=$3 path id_a id_b key now tmp
+  path=$(ts_cache_path) || return 0
+  id_a=$(ts_cache_id "$a"); id_b=$(ts_cache_id "$b")
+  [[ -n "$id_a" && -n "$id_b" ]] || return 0
+  key=$(ts_cache_key "$id_a" "$id_b")
+  now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+  mkdir -p "$(dirname "$path")" 2>/dev/null || return 0
+  tmp="$path.$$"
+  if ! { [[ -f "$path" ]] && cat "$path" || echo '{}'; } \
+       | jq -c --arg k "$key" --arg w "$winner" --arg at "$now" \
+           '. + {($k): {w: $w, at: $at}}' > "$tmp" 2>/dev/null; then
+    rm -f "$tmp"
+    return 0
+  fi
+  mv -f "$tmp" "$path" 2>/dev/null || rm -f "$tmp"
 }
 
 ts_cache_save() {
@@ -675,6 +703,32 @@ ts_ticket_by_id() {
 
 # ── the comparison prompt ─────────────────────────────────────────────────────
 
+# Record an answer and put it on disk immediately. The EXIT trap covers q and a
+# clean finish, but not SIGKILL, a closed terminal, or a dead battery - and
+# losing a whole session of comparisons to any of those is the one failure this
+# tool cannot ask you to shrug off.
+#
+# Cost, measured at 50 tickets: ~125ms per answer, against ~280ms already spent
+# rendering the two tickets (11 jq spawns each). So it is a quarter of what the
+# prompt already costs - worth paying.
+#
+# It does scale with store size, though, because each save rewrites the whole
+# file: ~300ms an answer against a 1500-verdict store. If that starts to bite,
+# the fix is not more bash - see the TODO at the top of this file.
+#
+# $3 is the winning index. Sets both directions so the inverse is implied.
+ts_answer() {
+  local a=$1 b=$2 winner=$3
+  local wid
+  if (( winner == a )); then
+    TS_MEMO[$a:$b]=0; TS_MEMO[$b:$a]=1
+  else
+    TS_MEMO[$a:$b]=1; TS_MEMO[$b:$a]=0
+  fi
+  wid=$(ts_cache_id "$winner")
+  [[ -n "$wid" ]] && ts_cache_save_pair "$a" "$b" "$wid"
+}
+
 ts_ask() {
   local a=$1 b=$2 ans
 
@@ -691,9 +745,9 @@ ts_ask() {
   if [[ -n "$TS_BULK" && "$b" == "$TS_BULK_PIVOT" ]]; then
     TS_BULK_RESOLVED=$(( TS_BULK_RESOLVED + 1 ))
     if [[ "$TS_BULK" == bottom ]]; then
-      TS_MEMO[$a:$b]=0; TS_MEMO[$b:$a]=1; return 0
+      ts_answer "$a" "$b" "$a"; return 0
     else
-      TS_MEMO[$a:$b]=1; TS_MEMO[$b:$a]=0; return 1
+      ts_answer "$a" "$b" "$b"; return 1
     fi
   fi
 
@@ -720,18 +774,18 @@ ts_ask() {
       exit 130
     fi
     case "${ans,,}" in
-      l|1|'')   TS_MEMO[$a:$b]=0; TS_MEMO[$b:$a]=1; return 0 ;;
-      r|2)      TS_MEMO[$a:$b]=1; TS_MEMO[$b:$a]=0; return 1 ;;
+      l|1|'')   ts_answer "$a" "$b" "$a"; return 0 ;;
+      r|2)      ts_answer "$a" "$b" "$b"; return 1 ;;
       # Two things you don't care about still need an order for the sort to
       # terminate. Flip for it, then remember the flip - re-flipping the same
       # pair later could contradict the first answer and corrupt the ranking.
       m)        TS_MEHS=$(( TS_MEHS + 1 ))
                 if (( RANDOM % 2 )); then
-                  TS_MEMO[$a:$b]=1; TS_MEMO[$b:$a]=0
+                  ts_answer "$a" "$b" "$b"
                   printf '%scoin flip -> right%s\n' "$DIM" "$RESET" >&2
                   return 1
                 else
-                  TS_MEMO[$a:$b]=0; TS_MEMO[$b:$a]=1
+                  ts_answer "$a" "$b" "$a"
                   printf '%scoin flip -> left%s\n' "$DIM" "$RESET" >&2
                   return 0
                 fi ;;
@@ -746,11 +800,11 @@ ts_ask() {
       b)        TS_BULK=bottom
                 printf '%sright ticket drops below the rest of this group%s\n' \
                   "$DIM" "$RESET" >&2
-                TS_MEMO[$a:$b]=0; TS_MEMO[$b:$a]=1; return 0 ;;
+                ts_answer "$a" "$b" "$a"; return 0 ;;
       t)        TS_BULK=top
                 printf '%sright ticket rises above the rest of this group%s\n' \
                   "$DIM" "$RESET" >&2
-                TS_MEMO[$a:$b]=1; TS_MEMO[$b:$a]=0; return 1 ;;
+                ts_answer "$a" "$b" "$b"; return 1 ;;
       q)        printf '\nticket-sort: aborted after %d questions\n' "$TS_ASKED" >&2
                 exit 130 ;;
       *)        printf '%s?%s ' "$DIM" "$RESET" >&2 ;;

@@ -861,6 +861,45 @@ EOF
   [ "$status" -eq 0 ]
 }
 
+@test "an answer is on disk before the next question is asked" {
+  # The EXIT trap covers q and a clean finish, but not SIGKILL, a closed
+  # terminal, or a dead battery - all of which lost the whole session.
+  local cache="$BATS_TEST_TMPDIR/live.json"
+  TS_CACHE="$cache"
+  TS_TICKETS=('{"id":"A","title":"alpha"}' '{"id":"B","title":"bravo"}')
+  TS_ARR=(0 1)
+  TS_MEMO=()
+  TS_FROM_CACHE=()
+  TS_ASKED=0
+  printf 'l\n' > "$BATS_TEST_TMPDIR/one"
+  exec {TS_FD}< "$BATS_TEST_TMPDIR/one"
+  ts_ask 0 1 2>/dev/null || true
+  exec {TS_FD}<&-
+  # No exit, no trap - the file must already hold the answer.
+  [ -f "$cache" ]
+  [ "$(jq -r '.["A|B"].w' "$cache")" = "A" ]
+}
+
+@test "a killed run keeps the answers it already had" {
+  local cache="$BATS_TEST_TMPDIR/killed.json"
+  printf '%s\n' '[{"id":"A","title":"a"},{"id":"B","title":"b"},{"id":"C","title":"c"},{"id":"D","title":"d"}]' \
+    > "$BATS_TEST_TMPDIR/tickets"
+  mkfifo "$BATS_TEST_TMPDIR/feed"
+  # Answer twice, then stall so the process is alive to be killed.
+  ( printf 'l\n'; sleep 0.3; printf 'l\n'; sleep 30 ) > "$BATS_TEST_TMPDIR/feed" &
+  local feeder=$!
+  TS_CACHE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/feed" \
+    bash "$TS" < "$BATS_TEST_TMPDIR/tickets" >/dev/null 2>&1 &
+  local sorter=$!
+  sleep 1.5
+  kill -9 "$sorter" 2>/dev/null || true
+  kill "$feeder" 2>/dev/null || true
+  wait 2>/dev/null || true
+  # SIGKILL runs no trap, so anything on disk got there per-answer.
+  [ -f "$cache" ]
+  [ "$(jq 'length' "$cache")" -ge 1 ]
+}
+
 @test "a re-run reuses cached verdicts instead of asking" {
   local cache="$BATS_TEST_TMPDIR/reuse.json"
   printf '%s\n' '[{"id":"A-1","title":"one"},{"id":"A-2","title":"two"}]' \
