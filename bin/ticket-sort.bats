@@ -1378,6 +1378,148 @@ EOF
   [ "$(jq -r '.[1].rank' <<< "$output")" = "2" ]
 }
 
+# ── prune ─────────────────────────────────────────────────────────────────────
+# Prune drops verdicts only for tickets the input SAYS are finished. Absence is
+# never evidence: the input is usually a scoped query, so a ticket missing from
+# it is far more likely out of scope than closed.
+
+prune_fixture() {
+  PRUNE_CACHE="$BATS_TEST_TMPDIR/p.json"
+  cat > "$PRUNE_CACHE" <<'EOF'
+{"A|B":{"w":"A","at":"2026-07-01T00:00:00Z"},
+ "A|C":{"w":"A","at":"2026-07-01T00:00:00Z"},
+ "B|C":{"w":"B","at":"2026-07-01T00:00:00Z"},
+ "C|D":{"w":"C","at":"2026-07-01T00:00:00Z"}}
+EOF
+}
+
+@test "prune drops verdicts for Done tickets" {
+  prune_fixture
+  printf '%s\n' '[{"id":"A","title":"a","status":"Done"},{"id":"B","title":"b","status":"In Progress"}]' \
+    > "$BATS_TEST_TMPDIR/tickets"
+  run --separate-stderr env TS_CACHE="$PRUNE_CACHE" \
+    bash "$TS" --prune --force < "$BATS_TEST_TMPDIR/tickets"
+  [ "$status" -eq 0 ]
+  # A|B and A|C mention A, which is Done.
+  [ "$(jq 'length' "$PRUNE_CACHE")" -eq 2 ]
+  [ "$(jq -r '.["A|B"] // "gone"' "$PRUNE_CACHE")" = "gone" ]
+  [ "$(jq -r '.["B|C"].w' "$PRUNE_CACHE")" = "B" ]
+}
+
+@test "prune drops Canceled and Duplicated too" {
+  prune_fixture
+  printf '%s\n' '[{"id":"A","title":"a","status":"Canceled"},{"id":"D","title":"d","status":"Duplicated"}]' \
+    > "$BATS_TEST_TMPDIR/tickets"
+  run --separate-stderr env TS_CACHE="$PRUNE_CACHE" \
+    bash "$TS" --prune --force < "$BATS_TEST_TMPDIR/tickets"
+  [ "$status" -eq 0 ]
+  # A|B, A|C (A canceled) and C|D (D duplicated) go; B|C stays.
+  [ "$(jq 'length' "$PRUNE_CACHE")" -eq 1 ]
+  [ "$(jq -r '.["B|C"].w' "$PRUNE_CACHE")" = "B" ]
+}
+
+@test "prune NEVER drops a ticket merely absent from the input" {
+  # The whole point: `linear.sh json active 7d` does not mention closed work OR
+  # anything out of scope, and guessing between those would delete real calls.
+  prune_fixture
+  printf '%s\n' '[{"id":"A","title":"a","status":"Done"}]' \
+    > "$BATS_TEST_TMPDIR/tickets"
+  run --separate-stderr env TS_CACHE="$PRUNE_CACHE" \
+    bash "$TS" --prune --force < "$BATS_TEST_TMPDIR/tickets"
+  [ "$status" -eq 0 ]
+  # B, C and D were never mentioned - every verdict not involving A survives.
+  [ "$(jq -r '.["B|C"].w' "$PRUNE_CACHE")" = "B" ]
+  [ "$(jq -r '.["C|D"].w' "$PRUNE_CACHE")" = "C" ]
+}
+
+@test "prune keeps unfinished and unrecognised statuses" {
+  prune_fixture
+  printf '%s\n' '[{"id":"A","title":"a","status":"In Review"},{"id":"B","title":"b","status":"Won'"'"'t Do"},{"id":"C","title":"c","status":"Almost Done"}]' \
+    > "$BATS_TEST_TMPDIR/tickets"
+  run --separate-stderr env TS_CACHE="$PRUNE_CACHE" \
+    bash "$TS" --prune --force < "$BATS_TEST_TMPDIR/tickets"
+  [ "$status" -eq 0 ]
+  # "Almost Done" contains "Done" but is not Done - exact match only.
+  [ "$(jq 'length' "$PRUNE_CACHE")" -eq 4 ]
+}
+
+@test "prune is case-insensitive on the status name" {
+  prune_fixture
+  printf '%s\n' '[{"id":"A","title":"a","status":"done"}]' \
+    > "$BATS_TEST_TMPDIR/tickets"
+  run --separate-stderr env TS_CACHE="$PRUNE_CACHE" \
+    bash "$TS" --prune --force < "$BATS_TEST_TMPDIR/tickets"
+  [ "$status" -eq 0 ]
+  [ "$(jq 'length' "$PRUNE_CACHE")" -eq 2 ]
+}
+
+@test "prune without --force changes nothing" {
+  prune_fixture
+  local before
+  before=$(cat "$PRUNE_CACHE")
+  printf '%s\n' '[{"id":"A","title":"a","status":"Done"}]' \
+    > "$BATS_TEST_TMPDIR/tickets"
+  run --separate-stderr env TS_CACHE="$PRUNE_CACHE" \
+    bash "$TS" --prune < "$BATS_TEST_TMPDIR/tickets"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$PRUNE_CACHE")" = "$before" ]
+  [[ "$stderr" == *"dry run"* ]]
+}
+
+@test "prune dry run reports what it would drop" {
+  prune_fixture
+  printf '%s\n' '[{"id":"A","title":"a","status":"Done"}]' \
+    > "$BATS_TEST_TMPDIR/tickets"
+  run --separate-stderr env TS_CACHE="$PRUNE_CACHE" \
+    bash "$TS" --prune < "$BATS_TEST_TMPDIR/tickets"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"A"* ]]
+  [[ "$stderr" == *"Done"* ]]
+}
+
+@test "prune backs the store up before writing" {
+  prune_fixture
+  printf '%s\n' '[{"id":"A","title":"a","status":"Done"}]' \
+    > "$BATS_TEST_TMPDIR/tickets"
+  run env TS_CACHE="$PRUNE_CACHE" \
+    bash "$TS" --prune --force < "$BATS_TEST_TMPDIR/tickets"
+  [ "$status" -eq 0 ]
+  [ -f "$PRUNE_CACHE.bak" ]
+  [ "$(jq 'length' "$PRUNE_CACHE.bak")" -eq 4 ]
+}
+
+@test "prune with nothing to drop leaves the store alone" {
+  prune_fixture
+  local before
+  before=$(cat "$PRUNE_CACHE")
+  printf '%s\n' '[{"id":"A","title":"a","status":"In Progress"}]' \
+    > "$BATS_TEST_TMPDIR/tickets"
+  run --separate-stderr env TS_CACHE="$PRUNE_CACHE" \
+    bash "$TS" --prune --force < "$BATS_TEST_TMPDIR/tickets"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$PRUNE_CACHE")" = "$before" ]
+}
+
+@test "prune requires input rather than reading the store" {
+  # Unlike --report, prune has nothing to say without a ticket list: statuses
+  # live in the input, never in the store.
+  prune_fixture
+  run --separate-stderr env TS_CACHE="$PRUNE_CACHE" \
+    bash "$TS" --prune < /dev/null
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"no tickets"* ]]
+}
+
+@test "TS_PRUNE_STATES overrides which statuses count as finished" {
+  prune_fixture
+  printf '%s\n' '[{"id":"A","title":"a","status":"Shipped"}]' \
+    > "$BATS_TEST_TMPDIR/tickets"
+  run --separate-stderr env TS_CACHE="$PRUNE_CACHE" TS_PRUNE_STATES="Shipped" \
+    bash "$TS" --prune --force < "$BATS_TEST_TMPDIR/tickets"
+  [ "$status" -eq 0 ]
+  [ "$(jq 'length' "$PRUNE_CACHE")" -eq 2 ]
+}
+
 # ── verdict-only report ───────────────────────────────────────────────────────
 # --report ranks from the store alone and never asks. The closure gives a
 # partial order, so tickets the store cannot separate are marked, not numbered.

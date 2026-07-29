@@ -15,6 +15,7 @@
 #   ticket-sort -f tickets.json
 #   ticket-sort --report                   # rank from stored verdicts, no input
 #   ticket-sort --report --top 10          # ...just the head
+#   linear.sh json | ticket-sort --prune   # forget verdicts about finished work
 #
 # At each comparison:
 #   l         the left ticket matters more      (Enter defaults to this)
@@ -55,6 +56,8 @@
 #   TS_OPEN        how o1/o2 launch a ticket (default: open)
 #   TS_TODAY       pin "today" for due-date math (default: actual today)
 #   TS_BASH        bash 4.1+ to re-exec under, if it isn't on the usual paths
+#   TS_PRUNE_STATES  statuses --prune treats as finished
+#                  (default: Done,Canceled,Duplicated)
 #   TS_CACHE       verdict store path, or "none" to answer fresh every time
 #                  (default: $XDG_STATE_HOME/ticket-sort/verdicts.json)
 #
@@ -73,6 +76,11 @@
 # either answering it in a run where it is still unknown, or editing the store -
 # small readable JSON keyed by "<id>|<id>" with the winner in "w":
 #   jq 'del(."DEVOPS-1904|DEVOPS-2140")' "$store" > t && mv t "$store"
+#
+# The store grows with your whole ticket universe rather than any one list, so
+# --prune forgets verdicts about work that is over. It only drops tickets the
+# input SAYS are finished - absence proves nothing, since a scoped query omits
+# out-of-scope tickets exactly like closed ones. Dry run unless --force.
 #
 # TODO: this script has outgrown the shell, and the two symptoms are related.
 #
@@ -583,6 +591,104 @@ ts_load_from_store() {
   fi
 }
 
+# Drop verdicts about tickets the input says are finished.
+#
+# Deliberately conservative in two ways, because the thing being deleted is
+# judgement you spent real time on and cannot get back by re-running anything.
+#
+# First, absence is never evidence. The input is usually a scoped query -
+# `linear.sh json active 7d` omits closed work AND anything out of scope, and
+# nothing in the payload distinguishes those. So a ticket must be present and
+# say it is finished; a ticket that simply is not mentioned keeps its verdicts.
+#
+# Second, the status must match exactly (case-insensitively). linear.sh exposes
+# state.name, not Linear's underlying completed/canceled type, so this is name
+# matching - and substring matching on a name would prune "Almost Done".
+# TS_PRUNE_STATES overrides the list for a workspace with different states.
+ts_prune() {
+  local force="$1" path i id status finished=() dropped=0 kept
+  path=$(ts_cache_path) || {
+    echo "ticket-sort: no verdict store to prune (TS_CACHE=none)" >&2
+    return 1
+  }
+  [[ -f "$path" ]] || {
+    echo "ticket-sort: no verdicts yet at $path" >&2
+    return 1
+  }
+
+  local -a states=()
+  local IFS_SAVE="$IFS"
+  IFS=','; read -r -a states <<< "${TS_PRUNE_STATES:-Done,Canceled,Duplicated}"
+  IFS="$IFS_SAVE"
+
+  # Which of the tickets in front of us are finished?
+  for (( i = 0; i < ${#TS_TICKETS[@]}; i++ )); do
+    id=$(ts_field "${TS_TICKETS[$i]}" id '')
+    status=$(ts_field "${TS_TICKETS[$i]}" status '')
+    [[ -n "$id" && -n "$status" ]] || continue
+    local st match=no
+    for st in "${states[@]}"; do
+      # Trim and compare case-insensitively; exact, not substring.
+      st="${st#"${st%%[![:space:]]*}"}"; st="${st%"${st##*[![:space:]]}"}"
+      [[ -z "$st" ]] && continue
+      if [[ "${status,,}" == "${st,,}" ]]; then match=yes; break; fi
+    done
+    [[ "$match" == yes ]] && finished+=("$id|$status")
+  done
+
+  if (( ${#finished[@]} == 0 )); then
+    printf '%snothing to prune - no finished tickets in the input.%s\n' \
+      "$DIM" "$RESET" >&2
+    return 0
+  fi
+
+  # How many verdicts mention any of them?
+  local ids_json
+  ids_json=$(printf '%s\n' "${finished[@]}" | cut -d'|' -f1 \
+    | jq -R -s 'split("\n") | map(select(length > 0))')
+  dropped=$(jq --argjson ids "$ids_json" '
+    [to_entries[] | select(.key | split("|") | any(. as $t | $ids | index($t)))] | length
+  ' "$path")
+
+  if (( dropped == 0 )); then
+    printf '%snothing to prune - no stored verdicts mention those tickets.%s\n' \
+      "$DIM" "$RESET" >&2
+    return 0
+  fi
+
+  {
+    printf '\n%swould drop%s %d verdict%s for %d finished ticket%s:\n' \
+      "$BOLD" "$RESET" "$dropped" "$( (( dropped == 1 )) || echo s)" \
+      "${#finished[@]}" "$( (( ${#finished[@]} == 1 )) || echo s)"
+    for i in "${finished[@]}"; do
+      printf '  %-14s %s\n' "${i%%|*}" "${i#*|}"
+    done
+  } >&2
+
+  if [[ "$force" != yes ]]; then
+    printf '\n%s(dry run - add --force to apply)%s\n' "$DIM" "$RESET" >&2
+    return 0
+  fi
+
+  # Back up before writing: one mv undoes a prune you regret.
+  cp "$path" "$path.bak" 2>/dev/null || {
+    echo "ticket-sort: could not back up $path - refusing to prune" >&2
+    return 1
+  }
+  local tmp="$path.$$"
+  if ! jq --argjson ids "$ids_json" '
+        with_entries(select(.key | split("|") | any(. as $t | $ids | index($t)) | not))
+      ' "$path" > "$tmp" 2>/dev/null; then
+    rm -f "$tmp"
+    echo "ticket-sort: prune failed, store untouched" >&2
+    return 1
+  fi
+  mv -f "$tmp" "$path" || { rm -f "$tmp"; return 1; }
+  kept=$(jq 'length' "$path")
+  printf '\n%sdropped %d, %d remain%s  (previous store: %s.bak)\n' \
+    "$GREEN" "$dropped" "$kept" "$RESET" "$path" >&2
+}
+
 # ── rendering ─────────────────────────────────────────────────────────────────
 
 ts_field() {
@@ -1074,13 +1180,15 @@ ts_usage() {
 }
 
 main() {
-  local as_json=no source=stdin file='' report_only=no top='' show='' n i
+  local as_json=no source=stdin file='' report_only=no prune_only=no force=no top='' show='' n i
 
   while (( $# )); do
     case "$1" in
       --json)     as_json=yes ;;
       --demo)     source=demo ;;
       --report)   report_only=yes ;;
+      --prune)    prune_only=yes ;;
+      --force)    force=yes ;;
       --top)      shift; top="${1:-}" ;;
       --show)     shift; show="${1:-}" ;;
       -f|--file)  shift; file="$1"; source=file ;;
@@ -1149,6 +1257,13 @@ main() {
   # Verdicts from previous runs become memo entries, so the sort never asks
   # what you have already decided.
   ts_cache_load
+
+  # --prune stops here. It needs the input (statuses live there, never in the
+  # store) but asks nothing and, without --force, writes nothing.
+  if [[ "$prune_only" == yes ]]; then
+    ts_prune "$force"
+    return $?
+  fi
 
   # --report stops here: rank from what the store already proves and exit. No
   # answer stream is opened and no save trap is set, so it is read-only by
