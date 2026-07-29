@@ -13,13 +13,16 @@
 #   ticket-sort --top 2 --show 10          # rank 2, list 10
 #   ticket-sort --demo                     # play with fake tickets
 #   ticket-sort -f tickets.json
-#   ticket-sort --list                     # no sorting, just show them
+#   ticket-sort --report                   # rank from stored verdicts, no input
+#   ticket-sort --report --top 10          # ...just the head
 #
 # At each comparison:
 #   l         the left ticket matters more      (Enter defaults to this)
 #   r         the right one does
 #   m         meh - neither; decided by coin flip and remembered
-#   t / b     the right ticket beats / loses to everything left in this pass
+#   rt / rb   the right ticket beats / loses to everything left in this pass
+#   lt / lb   same, for the left ticket
+#             (t / b still work, as aliases for rt / rb)
 #   ol / or   open that ticket, then ask again
 #   q         quit
 # 1 and 2 also work for left and right, as do o1 and o2 for opening.
@@ -140,7 +143,8 @@ TS_COMPARISONS=0     # logical comparisons the sort performed
 TS_ASKED=0           # of those, the ones a human actually answered
 TS_MEHS=0            # answered "m" - decided by coin flip, not by you
 TS_BULK=''           # standing t/b verdict for the current partition pass
-TS_BULK_PIVOT=''     # the ticket that verdict is about
+TS_BULK_PIVOT=''     # the right-hand ticket an rt/rb verdict is about
+TS_BULK_LEFT=''      # the left-hand ticket an lt/lb verdict is about
 TS_BULK_RESOLVED=0   # comparisons settled by a verdict rather than asked
 TS_ESTIMATE=0
 TS_WINDOW=0          # positions being ranked: --top K, or the whole backlog
@@ -213,6 +217,7 @@ ts_partition() {
   # with no standing verdict.
   TS_BULK=''
   TS_BULK_PIVOT="$pivot"
+  TS_BULK_LEFT=''
 
   i=$lo
   for (( j = lo; j < hi; j++ )); do
@@ -274,6 +279,17 @@ ts_select() {
 ts_load() {
   local line normalized
   TS_TICKETS=()
+
+  # A terminal on stdin is never the intent - nobody types a JSON array at a
+  # prompt - but jq -s would happily block on it until EOF, which reads as the
+  # program hanging. Say what is missing instead.
+  if [[ -t 0 ]]; then
+    echo "ticket-sort: no tickets on stdin (it is a terminal, not a pipe)" >&2
+    echo "  linear.sh json | ticket-sort" >&2
+    echo "  ticket-sort -f tickets.json" >&2
+    echo "  ticket-sort --demo" >&2
+    return 1
+  fi
 
   # jq's own parse error goes straight to stderr - it says far more about a
   # malformed payload than anything this script could.
@@ -539,6 +555,34 @@ ts_cache_save() {
   mv -f "$tmp" "$path" 2>/dev/null || rm -f "$tmp"
 }
 
+# Build the ticket list from the verdict store itself, for a report with no
+# input. Only ids are known - the store records decisions, not ticket data - so
+# titles come out empty unless tickets were piped in.
+ts_load_from_store() {
+  local path line
+  TS_TICKETS=()
+  path=$(ts_cache_path) || {
+    echo "ticket-sort: no verdict store to report on (TS_CACHE=none)" >&2
+    return 1
+  }
+  if [[ ! -f "$path" ]]; then
+    echo "ticket-sort: no verdicts yet at $path" >&2
+    echo "  rank some tickets first:  linear.sh json | ticket-sort" >&2
+    return 1
+  fi
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && TS_TICKETS+=("$line")
+  done < <(jq -r '
+    [keys[] | split("|")[]] | unique | .[]
+    | {id: ., title: ""} | tostring
+  ' "$path" 2>/dev/null)
+
+  if (( ${#TS_TICKETS[@]} == 0 )); then
+    echo "ticket-sort: no verdicts in $path" >&2
+    return 1
+  fi
+}
+
 # ── rendering ─────────────────────────────────────────────────────────────────
 
 ts_field() {
@@ -739,15 +783,44 @@ ts_ask() {
     return "${TS_MEMO[$a:$b]}"
   fi
 
-  # A standing t/b verdict settles anything still unanswered against this
-  # pass's pivot. The memo check above runs first, so an answer you already
-  # gave explicitly is never overwritten by a later blanket verdict.
+  # A standing verdict settles anything still unanswered against this pass's
+  # pivot. The memo check above runs first, so an answer you already gave
+  # explicitly is never overwritten by a later blanket verdict.
+  #
+  # rt/rb are about the right ticket, which is the pivot for the whole pass -
+  # so they apply whenever the pivot shows up again. lt/lb are about the left
+  # ticket, which changes every comparison, so the verdict is pinned to the
+  # specific ticket it was made about.
   if [[ -n "$TS_BULK" && "$b" == "$TS_BULK_PIVOT" ]]; then
-    TS_BULK_RESOLVED=$(( TS_BULK_RESOLVED + 1 ))
-    if [[ "$TS_BULK" == bottom ]]; then
-      ts_answer "$a" "$b" "$a"; return 0
-    else
-      ts_answer "$a" "$b" "$b"; return 1
+    case "$TS_BULK" in
+      bottom)
+        TS_BULK_RESOLVED=$(( TS_BULK_RESOLVED + 1 ))
+        ts_answer "$a" "$b" "$a"; return 0 ;;
+      top)
+        TS_BULK_RESOLVED=$(( TS_BULK_RESOLVED + 1 ))
+        ts_answer "$a" "$b" "$b"; return 1 ;;
+    esac
+  fi
+  if [[ -n "$TS_BULK" && -n "$TS_BULK_LEFT" ]]; then
+    if [[ "$a" == "$TS_BULK_LEFT" ]]; then
+      case "$TS_BULK" in
+        leftbottom)
+          TS_BULK_RESOLVED=$(( TS_BULK_RESOLVED + 1 ))
+          ts_answer "$a" "$b" "$b"; return 1 ;;
+        lefttop)
+          TS_BULK_RESOLVED=$(( TS_BULK_RESOLVED + 1 ))
+          ts_answer "$a" "$b" "$a"; return 0 ;;
+      esac
+    elif [[ "$b" == "$TS_BULK_LEFT" ]]; then
+      # Same ticket, other side of the prompt - the verdict still holds.
+      case "$TS_BULK" in
+        leftbottom)
+          TS_BULK_RESOLVED=$(( TS_BULK_RESOLVED + 1 ))
+          ts_answer "$a" "$b" "$a"; return 0 ;;
+        lefttop)
+          TS_BULK_RESOLVED=$(( TS_BULK_RESOLVED + 1 ))
+          ts_answer "$a" "$b" "$b"; return 1 ;;
+      esac
     fi
   fi
 
@@ -764,7 +837,7 @@ ts_ask() {
     ts_render "${TS_TICKETS[$b]}" r
     printf '\n%sWhich is more important?%s  [l] left  [r] right  [m] meh\n' \
       "$BOLD" "$RESET"
-    printf '%s  [t/b] right tops/bottoms the rest of this group  [ol/or] open  [q] quit%s  ' \
+    printf '%s  [rt/rb] right tops/bottoms the group  [lt/lb] left does  [ol/or] open  [q] quit%s  ' \
       "$DIM" "$RESET"
   } >&2
 
@@ -797,14 +870,24 @@ ts_ask() {
       # One keystroke settles the pivot against everything left in this pass.
       # Scoped to the pass, not the whole backlog - later passes cover
       # narrower groups, so this claims less than it looks like it does.
-      b)        TS_BULK=bottom
+      b|rb)     TS_BULK=bottom
                 printf '%sright ticket drops below the rest of this group%s\n' \
                   "$DIM" "$RESET" >&2
                 ts_answer "$a" "$b" "$a"; return 0 ;;
-      t)        TS_BULK=top
+      t|rt)     TS_BULK=top
                 printf '%sright ticket rises above the rest of this group%s\n' \
                   "$DIM" "$RESET" >&2
                 ts_answer "$a" "$b" "$b"; return 1 ;;
+      lb)       TS_BULK=leftbottom
+                TS_BULK_LEFT=$a
+                printf '%sleft ticket drops below the rest of this group%s\n' \
+                  "$DIM" "$RESET" >&2
+                ts_answer "$a" "$b" "$b"; return 1 ;;
+      lt)       TS_BULK=lefttop
+                TS_BULK_LEFT=$a
+                printf '%sleft ticket rises above the rest of this group%s\n' \
+                  "$DIM" "$RESET" >&2
+                ts_answer "$a" "$b" "$a"; return 0 ;;
       q)        printf '\nticket-sort: aborted after %d questions\n' "$TS_ASKED" >&2
                 exit 130 ;;
       *)        printf '%s?%s ' "$DIM" "$RESET" >&2 ;;
@@ -877,6 +960,91 @@ ts_report() {
   fi
 }
 
+# Rank from the store alone, asking nothing. TS_MEMO is already populated with
+# every pair the verdicts prove (directly or transitively), so a ticket's score
+# is just how many others it beats - Copeland, over a partial order.
+#
+# Ties are real information, not a nuisance: two tickets with the same score
+# that the store never compared are genuinely unseparated, and saying so beats
+# inventing an order. Same dot convention --show uses.
+ts_report_verdicts() {
+  local as_json="$1" limit="$2" n=${#TS_ARR[@]} i j beats idx
+  local -a score=() order=()
+
+  for (( i = 0; i < n; i++ )); do
+    beats=0
+    for (( j = 0; j < n; j++ )); do
+      (( i == j )) && continue
+      [[ "${TS_MEMO[$i:$j]:-}" == 0 ]] && beats=$(( beats + 1 ))
+    done
+    score[$i]=$beats
+  done
+
+  # Sort indices by score descending; ties keep input order, which is arbitrary
+  # but stable - and marked as unranked below so it reads as no claim.
+  while IFS=' ' read -r idx; do
+    order+=("$idx")
+  done < <(
+    for (( i = 0; i < n; i++ )); do printf '%s %s\n' "${score[$i]}" "$i"; done \
+      | sort -k1,1nr -k2,2n | awk '{print $2}'
+  )
+
+  (( limit <= 0 || limit > n )) && limit=$n
+
+  if [[ "$as_json" == yes ]]; then
+    for (( i = 0; i < limit; i++ )); do
+      idx="${order[$i]}"
+      if ts_report_tied "$i" "${order[@]}"; then
+        jq -c --argjson b "${score[$idx]}" '. + {rank: null, beats: $b}' \
+          <<< "${TS_TICKETS[${TS_ARR[$idx]}]}"
+      else
+        jq -c --argjson r "$(( i + 1 ))" --argjson b "${score[$idx]}" \
+          '. + {rank: $r, beats: $b}' <<< "${TS_TICKETS[${TS_ARR[$idx]}]}"
+      fi
+    done | jq -s '.'
+    return
+  fi
+
+  for (( i = 0; i < limit; i++ )); do
+    idx="${order[$i]}"
+    if ts_report_tied "$i" "${order[@]}"; then
+      printf '%s  ·  %-10s %s%s\n' "$DIM" \
+        "$(ts_field "${TS_TICKETS[${TS_ARR[$idx]}]}" id '?')" \
+        "$(ts_field "${TS_TICKETS[${TS_ARR[$idx]}]}" title ' ')" "$RESET"
+    else
+      printf '%2d. %-10s %s\n' "$(( i + 1 ))" \
+        "$(ts_field "${TS_TICKETS[${TS_ARR[$idx]}]}" id '?')" \
+        "$(ts_field "${TS_TICKETS[${TS_ARR[$idx]}]}" title ' ')"
+    fi
+  done
+
+  printf '\n%sfrom stored verdicts only - no questions asked.%s\n' \
+    "$DIM" "$RESET" >&2
+}
+
+# A position is unranked when the store does not place it relative to the row
+# immediately above or below it. Adjacency is the point: in a partial order
+# almost every ticket is unseparated from *something* far away, so asking "is it
+# separated from everything" marks the whole list as a tie and says nothing.
+# What makes position k meaningful is that k-1 and k+1 are known to be on the
+# correct side of it.
+ts_report_tied() {
+  local at="$1"; shift
+  local -a order=("$@")
+  local me="${order[$at]}" n=${#order[@]} prev next
+
+  if (( at > 0 )); then
+    prev="${order[$(( at - 1 ))]}"
+    # The row above must be known to beat this one.
+    [[ "${TS_MEMO[$prev:$me]:-}" == 0 ]] || return 0
+  fi
+  if (( at < n - 1 )); then
+    next="${order[$(( at + 1 ))]}"
+    [[ "${TS_MEMO[$me:$next]:-}" == 0 ]] || return 0
+  fi
+  return 1
+}
+
 # ── demo data ─────────────────────────────────────────────────────────────────
 
 # Deliberately hard to rank: a forced deadline against slow-burn toil against
@@ -906,13 +1074,13 @@ ts_usage() {
 }
 
 main() {
-  local as_json=no source=stdin file='' list_only=no top='' show='' n i
+  local as_json=no source=stdin file='' report_only=no top='' show='' n i
 
   while (( $# )); do
     case "$1" in
       --json)     as_json=yes ;;
       --demo)     source=demo ;;
-      --list)     list_only=yes ;;
+      --report)   report_only=yes ;;
       --top)      shift; top="${1:-}" ;;
       --show)     shift; show="${1:-}" ;;
       -f|--file)  shift; file="$1"; source=file ;;
@@ -934,11 +1102,31 @@ main() {
 
   command -v jq >/dev/null || { echo "ticket-sort: jq is required" >&2; return 1; }
 
-  case "$source" in
-    demo) ts_load < <(ts_demo_data) ;;
-    file) ts_load < "$file" ;;
-    *)    ts_load ;;
-  esac
+  # --report reads the store, not a ticket list: the verdicts already name every
+  # ticket you have ranked, so asking "what did I decide?" should not require a
+  # round trip to Linear. Piping tickets in is still useful - it supplies titles
+  # and narrows the report to that set - but it is optional, and a terminal on
+  # stdin means no pipe rather than something to wait for.
+  if [[ "$report_only" == yes ]]; then
+    if [[ "$source" == file ]]; then
+      ts_load < "$file"
+    elif [[ "$source" == demo ]]; then
+      ts_load < <(ts_demo_data)
+    elif [[ -p /dev/stdin || -f /dev/stdin ]]; then
+      # A pipe or a redirected file is real input. "Not a tty" is not the same
+      # test: stdin can also be closed, and that took this branch straight into
+      # a jq that blocks forever.
+      ts_load
+    else
+      ts_load_from_store || return 1
+    fi
+  else
+    case "$source" in
+      demo) ts_load < <(ts_demo_data) ;;
+      file) ts_load < "$file" ;;
+      *)    ts_load ;;
+    esac
+  fi
 
   n=${#TS_TICKETS[@]}
   TS_ARR=()
@@ -958,15 +1146,17 @@ main() {
   fi
   (( TS_PREVIEW > n )) && TS_PREVIEW=$n
 
-  if [[ "$list_only" == yes ]]; then
-    ts_report "$as_json" "${top:-$n}" "${show:-0}"
+  # Verdicts from previous runs become memo entries, so the sort never asks
+  # what you have already decided.
+  ts_cache_load
+
+  # --report stops here: rank from what the store already proves and exit. No
+  # answer stream is opened and no save trap is set, so it is read-only by
+  # construction rather than by promise.
+  if [[ "$report_only" == yes ]]; then
+    ts_report_verdicts "$as_json" "${top:-0}"
     return 0
   fi
-
-  # Verdicts from previous runs become memo entries, so the sort never asks
-  # what you have already decided. Done after --list returns: a run that asks
-  # nothing needs no cache.
-  ts_cache_load
 
   # Save on the way out however that happens. Quitting with q, or running out
   # of piped answers, exits straight from ts_ask - and the answers given before

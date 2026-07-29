@@ -533,6 +533,59 @@ bulk_fixture() {
   TS_BULK_RESOLVED=0
 }
 
+@test "rb is b - the right ticket drops below the rest" {
+  bulk_fixture
+  printf 'rb\n' > "$BATS_TEST_TMPDIR/answers"
+  exec {TS_FD}< "$BATS_TEST_TMPDIR/answers"
+  local r1 r2
+  ts_ask 0 3 2>> "$BATS_TEST_TMPDIR/ui" && r1=0 || r1=1
+  ts_ask 1 3 2>> "$BATS_TEST_TMPDIR/ui" && r2=0 || r2=1
+  exec {TS_FD}<&-
+  [ "$r1" -eq 0 ]
+  [ "$r2" -eq 0 ]
+  [ "$TS_ASKED" -eq 1 ]
+}
+
+@test "rt is t - the right ticket rises above the rest" {
+  bulk_fixture
+  printf 'rt\n' > "$BATS_TEST_TMPDIR/answers"
+  exec {TS_FD}< "$BATS_TEST_TMPDIR/answers"
+  local r1 r2
+  ts_ask 0 3 2>> "$BATS_TEST_TMPDIR/ui" && r1=0 || r1=1
+  ts_ask 1 3 2>> "$BATS_TEST_TMPDIR/ui" && r2=0 || r2=1
+  exec {TS_FD}<&-
+  [ "$r1" -eq 1 ]
+  [ "$r2" -eq 1 ]
+  [ "$TS_ASKED" -eq 1 ]
+}
+
+@test "lt sends the LEFT ticket above the rest of the pass" {
+  # The mirror image, which t/b could never express: the interesting ticket is
+  # sometimes the one on the left, and saying so took a plain l plus repeating
+  # yourself for every remaining comparison.
+  bulk_fixture
+  printf 'lt\n' > "$BATS_TEST_TMPDIR/answers"
+  exec {TS_FD}< "$BATS_TEST_TMPDIR/answers"
+  local r1
+  ts_ask 0 3 2>> "$BATS_TEST_TMPDIR/ui" && r1=0 || r1=1
+  exec {TS_FD}<&-
+  [ "$r1" -eq 0 ]              # left won this comparison
+  [ "$TS_ASKED" -eq 1 ]
+  [ "$TS_BULK" = "lefttop" ]   # and a standing verdict is now in force
+}
+
+@test "lb sends the LEFT ticket below the rest of the pass" {
+  bulk_fixture
+  printf 'lb\n' > "$BATS_TEST_TMPDIR/answers"
+  exec {TS_FD}< "$BATS_TEST_TMPDIR/answers"
+  local r1
+  ts_ask 0 3 2>> "$BATS_TEST_TMPDIR/ui" && r1=0 || r1=1
+  exec {TS_FD}<&-
+  [ "$r1" -eq 1 ]              # left lost
+  [ "$TS_ASKED" -eq 1 ]
+  [ "$TS_BULK" = "leftbottom" ]
+}
+
 @test "b sends the pivot to the bottom for the rest of the pass" {
   bulk_fixture
   printf 'b\n' > "$BATS_TEST_TMPDIR/answers"
@@ -994,6 +1047,20 @@ EOF
   [ "${#TS_TICKETS[@]}" -eq 2 ]
 }
 
+@test "ts_load refuses a terminal instead of blocking on it" {
+  # jq -s against a tty blocks until EOF, so `ticket-sort` with no pipe and no
+  # -f just sat there looking hung - three Ctrl-Cs in a real session. Reading
+  # from a terminal is never what was meant, so say what is missing.
+  #
+  # /dev/tty rather than script(1): script feeds an EOF, so the child gets
+  # clean input and the test passes without exercising the guard at all.
+  ( exec < /dev/tty ) 2>/dev/null || skip "no controlling terminal in this environment"
+  run timeout 10 ts_load < /dev/tty
+  [ "$status" -ne 0 ]
+  [ "$status" -ne 124 ]           # 124 is timeout, i.e. it hung
+  [[ "$output" == *"terminal"* ]]
+}
+
 @test "ts_load errors on empty input" {
   run ts_load < /dev/null
   [ "$status" -ne 0 ]
@@ -1188,7 +1255,7 @@ EOF
 }
 
 @test "--demo runs without external input" {
-  run --separate-stderr bash "$TS" --demo --list
+  run --separate-stderr env TS_CACHE=none bash "$TS" --demo --report
   [ "$status" -eq 0 ]
   [ "$(grep -c . <<< "$output")" -gt 3 ]
 }
@@ -1309,6 +1376,158 @@ EOF
   # The head is always ranked, whatever else happened.
   [ "$(jq -r '.[0].rank' <<< "$output")" = "1" ]
   [ "$(jq -r '.[1].rank' <<< "$output")" = "2" ]
+}
+
+# ── verdict-only report ───────────────────────────────────────────────────────
+# --report ranks from the store alone and never asks. The closure gives a
+# partial order, so tickets the store cannot separate are marked, not numbered.
+# The store IS the input: it already knows every ticket you have ranked, so a
+# report needs no ticket list and works with Linear unreachable.
+
+@test "--report needs no input at all" {
+  local cache="$BATS_TEST_TMPDIR/r.json"
+  cat > "$cache" <<'EOF'
+{"A|B":{"w":"A","at":"2026-07-01T00:00:00Z"},
+ "B|C":{"w":"B","at":"2026-07-01T00:00:00Z"}}
+EOF
+  # No pipe, no -f. bats leaves its own pipe on stdin even with <&-, so
+  # /dev/null is how a test says "nothing was piped in".
+  run --separate-stderr env TS_CACHE="$cache" bash "$TS" --report < /dev/null
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"A"* ]]
+  [[ "$output" == *"C"* ]]
+}
+
+@test "--report ranks every ticket the store knows about" {
+  local cache="$BATS_TEST_TMPDIR/r.json"
+  cat > "$cache" <<'EOF'
+{"A|B":{"w":"A","at":"2026-07-01T00:00:00Z"},
+ "B|C":{"w":"B","at":"2026-07-01T00:00:00Z"}}
+EOF
+  run --separate-stderr env TS_CACHE="$cache" bash "$TS" --report < /dev/null
+  [ "$status" -eq 0 ]
+  [ "$(grep -c . <<< "$output")" -eq 3 ]
+  [[ "$(sed -n '1p' <<< "$output")" == *"A"* ]]
+  [[ "$(sed -n '3p' <<< "$output")" == *"C"* ]]
+}
+
+@test "--report on an empty store says so rather than printing nothing" {
+  run --separate-stderr env TS_CACHE="$BATS_TEST_TMPDIR/missing.json" \
+    bash "$TS" --report < /dev/null
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"no verdicts"* ]]
+}
+
+@test "--report uses piped tickets for titles and scope" {
+  local cache="$BATS_TEST_TMPDIR/r.json"
+  cat > "$cache" <<'EOF'
+{"A|B":{"w":"A","at":"2026-07-01T00:00:00Z"},
+ "B|C":{"w":"B","at":"2026-07-01T00:00:00Z"}}
+EOF
+  # Only A and B piped in, so C - though known to the store - is out of scope.
+  printf '%s\n' '[{"id":"A","title":"alpha title"},{"id":"B","title":"bravo title"}]' \
+    > "$BATS_TEST_TMPDIR/tickets"
+  run --separate-stderr env TS_CACHE="$cache" \
+    bash "$TS" --report < "$BATS_TEST_TMPDIR/tickets"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"alpha title"* ]]
+  [ "$(grep -c . <<< "$output")" -eq 2 ]
+  [[ "$output" != *"C"* ]]
+}
+
+@test "--report asks nothing" {
+  local cache="$BATS_TEST_TMPDIR/r.json"
+  cat > "$cache" <<'EOF'
+{"A|B":{"w":"A","at":"2026-07-01T00:00:00Z"},
+ "B|C":{"w":"B","at":"2026-07-01T00:00:00Z"}}
+EOF
+  printf '%s\n' '[{"id":"A","title":"a"},{"id":"B","title":"b"},{"id":"C","title":"c"}]' \
+    > "$BATS_TEST_TMPDIR/tickets"
+  : > "$BATS_TEST_TMPDIR/empty"
+  run --separate-stderr env TS_CACHE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/empty" \
+    bash "$TS" --report < "$BATS_TEST_TMPDIR/tickets"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" != *"Which is more important"* ]]
+}
+
+@test "--report orders by what the verdicts prove" {
+  local cache="$BATS_TEST_TMPDIR/r.json"
+  cat > "$cache" <<'EOF'
+{"A|B":{"w":"A","at":"2026-07-01T00:00:00Z"},
+ "B|C":{"w":"B","at":"2026-07-01T00:00:00Z"}}
+EOF
+  printf '%s\n' '[{"id":"C","title":"c"},{"id":"A","title":"a"},{"id":"B","title":"b"}]' \
+    > "$BATS_TEST_TMPDIR/tickets"
+  : > "$BATS_TEST_TMPDIR/empty"
+  run --separate-stderr env TS_CACHE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/empty" \
+    bash "$TS" --report < "$BATS_TEST_TMPDIR/tickets"
+  [ "$status" -eq 0 ]
+  # A beats B and (transitively) C; B beats C. Input order is C,A,B - the
+  # report must reorder.
+  [[ "$(sed -n '1p' <<< "$output")" == *"A"* ]]
+  [[ "$(sed -n '2p' <<< "$output")" == *"B"* ]]
+  [[ "$(sed -n '3p' <<< "$output")" == *"C"* ]]
+}
+
+@test "--report marks tickets the store cannot separate" {
+  # D is in the list but no verdict mentions it, so it cannot be placed.
+  local cache="$BATS_TEST_TMPDIR/r.json"
+  cat > "$cache" <<'EOF'
+{"A|B":{"w":"A","at":"2026-07-01T00:00:00Z"}}
+EOF
+  printf '%s\n' '[{"id":"A","title":"a"},{"id":"B","title":"b"},{"id":"C","title":"c"},{"id":"D","title":"d"}]' \
+    > "$BATS_TEST_TMPDIR/tickets"
+  : > "$BATS_TEST_TMPDIR/empty"
+  run --separate-stderr env TS_CACHE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/empty" \
+    bash "$TS" --report < "$BATS_TEST_TMPDIR/tickets"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"·"* ]]
+}
+
+@test "--report respects --top" {
+  local cache="$BATS_TEST_TMPDIR/r.json"
+  cat > "$cache" <<'EOF'
+{"A|B":{"w":"A","at":"2026-07-01T00:00:00Z"},
+ "B|C":{"w":"B","at":"2026-07-01T00:00:00Z"}}
+EOF
+  printf '%s\n' '[{"id":"A","title":"a"},{"id":"B","title":"b"},{"id":"C","title":"c"}]' \
+    > "$BATS_TEST_TMPDIR/tickets"
+  : > "$BATS_TEST_TMPDIR/empty"
+  run --separate-stderr env TS_CACHE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/empty" \
+    bash "$TS" --report --top 2 < "$BATS_TEST_TMPDIR/tickets"
+  [ "$status" -eq 0 ]
+  [ "$(grep -c . <<< "$output")" -eq 2 ]
+}
+
+@test "--report writes nothing to the store" {
+  local cache="$BATS_TEST_TMPDIR/r.json"
+  cat > "$cache" <<'EOF'
+{"A|B":{"w":"A","at":"2026-07-01T00:00:00Z"}}
+EOF
+  local before
+  before=$(cat "$cache")
+  printf '%s\n' '[{"id":"A","title":"a"},{"id":"B","title":"b"}]' \
+    > "$BATS_TEST_TMPDIR/tickets"
+  : > "$BATS_TEST_TMPDIR/empty"
+  run env TS_CACHE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/empty" \
+    bash "$TS" --report < "$BATS_TEST_TMPDIR/tickets"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$cache")" = "$before" ]
+}
+
+@test "--report emits JSON with --json" {
+  local cache="$BATS_TEST_TMPDIR/r.json"
+  cat > "$cache" <<'EOF'
+{"A|B":{"w":"A","at":"2026-07-01T00:00:00Z"}}
+EOF
+  printf '%s\n' '[{"id":"A","title":"a"},{"id":"B","title":"b"}]' \
+    > "$BATS_TEST_TMPDIR/tickets"
+  : > "$BATS_TEST_TMPDIR/empty"
+  run --separate-stderr env TS_CACHE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/empty" \
+    bash "$TS" --report --json < "$BATS_TEST_TMPDIR/tickets"
+  [ "$status" -eq 0 ]
+  [ "$(jq 'length' <<< "$output")" -eq 2 ]
+  [ "$(jq -r '.[0].id' <<< "$output")" = "A" ]
 }
 
 @test "--show without --top is just a longer ranked list" {
