@@ -1589,7 +1589,7 @@ EOF
   printf '%s\n' '[{"id":"A","title":"a","status":"Done"},{"id":"B","title":"b","status":"In Progress"}]' \
     > "$BATS_TEST_TMPDIR/tickets"
   run --separate-stderr env TS_COMPARISONS_FILE="$PRUNE_STORE" \
-    bash "$TS" prune --force < "$BATS_TEST_TMPDIR/tickets"
+    bash "$TS" prune --apply < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
   # A|B and A|C mention A, which is Done.
   [ "$(jq 'length' "$PRUNE_STORE")" -eq 2 ]
@@ -1602,7 +1602,7 @@ EOF
   printf '%s\n' '[{"id":"A","title":"a","status":"Canceled"},{"id":"D","title":"d","status":"Duplicated"}]' \
     > "$BATS_TEST_TMPDIR/tickets"
   run --separate-stderr env TS_COMPARISONS_FILE="$PRUNE_STORE" \
-    bash "$TS" prune --force < "$BATS_TEST_TMPDIR/tickets"
+    bash "$TS" prune --apply < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
   # A|B, A|C (A canceled) and C|D (D duplicated) go; B|C stays.
   [ "$(jq 'length' "$PRUNE_STORE")" -eq 1 ]
@@ -1616,7 +1616,7 @@ EOF
   printf '%s\n' '[{"id":"A","title":"a","status":"Done"}]' \
     > "$BATS_TEST_TMPDIR/tickets"
   run --separate-stderr env TS_COMPARISONS_FILE="$PRUNE_STORE" \
-    bash "$TS" prune --force < "$BATS_TEST_TMPDIR/tickets"
+    bash "$TS" prune --apply < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
   # B, C and D were never mentioned - every comparison not involving A survives.
   [ "$(jq -r '.["B|C"].w' "$PRUNE_STORE")" = "B" ]
@@ -1628,7 +1628,7 @@ EOF
   printf '%s\n' '[{"id":"A","title":"a","status":"In Review"},{"id":"B","title":"b","status":"Won'"'"'t Do"},{"id":"C","title":"c","status":"Almost Done"}]' \
     > "$BATS_TEST_TMPDIR/tickets"
   run --separate-stderr env TS_COMPARISONS_FILE="$PRUNE_STORE" \
-    bash "$TS" prune --force < "$BATS_TEST_TMPDIR/tickets"
+    bash "$TS" prune --apply < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
   # "Almost Done" contains "Done" but is not Done - exact match only.
   [ "$(jq 'length' "$PRUNE_STORE")" -eq 4 ]
@@ -1639,12 +1639,12 @@ EOF
   printf '%s\n' '[{"id":"A","title":"a","status":"done"}]' \
     > "$BATS_TEST_TMPDIR/tickets"
   run --separate-stderr env TS_COMPARISONS_FILE="$PRUNE_STORE" \
-    bash "$TS" prune --force < "$BATS_TEST_TMPDIR/tickets"
+    bash "$TS" prune --apply < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
   [ "$(jq 'length' "$PRUNE_STORE")" -eq 2 ]
 }
 
-@test "prune without --force changes nothing" {
+@test "prune without --apply changes nothing" {
   prune_fixture
   local before
   before=$(cat "$PRUNE_STORE")
@@ -1655,6 +1655,17 @@ EOF
   [ "$status" -eq 0 ]
   [ "$(cat "$PRUNE_STORE")" = "$before" ]
   [[ "$stderr" == *"dry run"* ]]
+  [[ "$stderr" == *"--apply"* ]]
+}
+
+@test "prune still accepts --force as an alias for --apply" {
+  prune_fixture
+  printf '%s\n' '[{"id":"A","title":"a","status":"Done"}]' \
+    > "$BATS_TEST_TMPDIR/tickets"
+  run --separate-stderr env TS_COMPARISONS_FILE="$PRUNE_STORE" \
+    bash "$TS" prune --force < "$BATS_TEST_TMPDIR/tickets"
+  [ "$status" -eq 0 ]
+  [ "$(jq 'length' "$PRUNE_STORE")" -eq 2 ]
 }
 
 @test "prune dry run reports what it would drop" {
@@ -1673,7 +1684,7 @@ EOF
   printf '%s\n' '[{"id":"A","title":"a","status":"Done"}]' \
     > "$BATS_TEST_TMPDIR/tickets"
   run env TS_COMPARISONS_FILE="$PRUNE_STORE" \
-    bash "$TS" prune --force < "$BATS_TEST_TMPDIR/tickets"
+    bash "$TS" prune --apply < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
   [ -f "$PRUNE_STORE.bak" ]
   [ "$(jq 'length' "$PRUNE_STORE.bak")" -eq 4 ]
@@ -1686,7 +1697,7 @@ EOF
   printf '%s\n' '[{"id":"A","title":"a","status":"In Progress"}]' \
     > "$BATS_TEST_TMPDIR/tickets"
   run --separate-stderr env TS_COMPARISONS_FILE="$PRUNE_STORE" \
-    bash "$TS" prune --force < "$BATS_TEST_TMPDIR/tickets"
+    bash "$TS" prune --apply < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
   [ "$(cat "$PRUNE_STORE")" = "$before" ]
 }
@@ -1706,7 +1717,7 @@ EOF
   printf '%s\n' '[{"id":"A","title":"a","status":"Shipped"}]' \
     > "$BATS_TEST_TMPDIR/tickets"
   run --separate-stderr env TS_COMPARISONS_FILE="$PRUNE_STORE" TS_PRUNE_STATES="Shipped" \
-    bash "$TS" prune --force < "$BATS_TEST_TMPDIR/tickets"
+    bash "$TS" prune --apply < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
   [ "$(jq 'length' "$PRUNE_STORE")" -eq 2 ]
 }

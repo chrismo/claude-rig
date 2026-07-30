@@ -26,7 +26,7 @@
 #   --top N     rank only the top N (full, place, report)
 #   --show N    print N rows even though only --top are ranked (full)
 #   --json      emit JSON instead of a table
-#   --force     actually write (prune only; it is a dry run otherwise)
+#   --apply     actually write (prune only; it is a dry run otherwise)
 #   -f FILE     read tickets from a file instead of stdin
 #   --demo      use built-in fake tickets
 #
@@ -34,7 +34,7 @@
 #   linear.sh json | ticket-sort full --top 5
 #   linear.sh json | ticket-sort place --top 10
 #   ticket-sort report --top 10
-#   linear.sh json | ticket-sort prune --force
+#   linear.sh json | ticket-sort prune --apply
 #
 # At each comparison:
 #   l         work the left ticket first        (Enter defaults to this)
@@ -99,7 +99,7 @@
 # The store grows with your whole ticket universe rather than any one list, so
 # --prune forgets comparisons about work that is over. It only drops tickets the
 # input SAYS are finished - absence proves nothing, since a scoped query omits
-# out-of-scope tickets exactly like closed ones. Dry run unless --force.
+# out-of-scope tickets exactly like closed ones. Dry run unless --apply.
 #
 # TODO: this script has outgrown the shell, and the two symptoms are related.
 #
@@ -627,7 +627,7 @@ ts_load_from_comparisons() {
 # matching - and substring matching on a name would prune "Almost Done".
 # TS_PRUNE_STATES overrides the list for a workspace with different states.
 ts_prune() {
-  local force="$1" path i id status finished=() dropped=0 kept
+  local apply="$1" path i id status finished=() dropped=0 kept
   path=$(ts_comparisons_path) || {
     echo "ticket-sort: no comparison store to prune (TS_COMPARISONS_FILE=none)" >&2
     return 1
@@ -686,8 +686,8 @@ ts_prune() {
     done
   } >&2
 
-  if [[ "$force" != yes ]]; then
-    printf '\n%s(dry run - add --force to apply)%s\n' "$DIM" "$RESET" >&2
+  if [[ "$apply" != yes ]]; then
+    printf '\n%s(dry run - add --apply to write)%s\n' "$DIM" "$RESET" >&2
     return 0
   fi
 
@@ -1312,7 +1312,7 @@ ts_usage() {
 }
 
 main() {
-  local cmd='' as_json=no source=stdin file='' force=no top='' show='' n i
+  local cmd='' as_json=no source=stdin file='' apply=no top='' show='' n i
 
   # Subcommand first, because these are different jobs rather than variants of
   # one: `full` works from an empty store and `place` cannot, they cost an order
@@ -1330,7 +1330,11 @@ main() {
     case "$1" in
       --json)     as_json=yes ;;
       --demo)     source=demo ;;
-      --force)    force=yes ;;
+      # --force was the original name, kept undocumented: it is muscle memory
+      # and shell history, and it named the wrong thing (there is no safety
+      # check to override here, only a dry run to stop).
+      --apply)    apply=yes ;;
+      --force)    apply=yes ;;
       --top)      shift; top="${1:-}" ;;
       --show)     shift; show="${1:-}" ;;
       -f|--file)  shift; file="$1"; source=file ;;
@@ -1408,9 +1412,9 @@ main() {
   ts_comparisons_load
 
   # --prune stops here. It needs the input (statuses live there, never in the
-  # store) but asks nothing and, without --force, writes nothing.
+  # store) but asks nothing and, without --apply, writes nothing.
   if [[ "$prune_only" == yes ]]; then
-    ts_prune "$force"
+    ts_prune "$apply"
     return $?
   fi
 
