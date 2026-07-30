@@ -1330,11 +1330,7 @@ main() {
     case "$1" in
       --json)     as_json=yes ;;
       --demo)     source=demo ;;
-      # --force was the original name, kept undocumented: it is muscle memory
-      # and shell history, and it named the wrong thing (there is no safety
-      # check to override here, only a dry run to stop).
       --apply)    apply=yes ;;
-      --force)    apply=yes ;;
       --top)      shift; top="${1:-}" ;;
       --show)     shift; show="${1:-}" ;;
       -f|--file)  shift; file="$1"; source=file ;;

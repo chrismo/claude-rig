@@ -1658,14 +1658,17 @@ EOF
   [[ "$stderr" == *"--apply"* ]]
 }
 
-@test "prune still accepts --force as an alias for --apply" {
+@test "prune rejects the old --force spelling rather than writing" {
   prune_fixture
+  local before
+  before=$(cat "$PRUNE_STORE")
   printf '%s\n' '[{"id":"A","title":"a","status":"Done"}]' \
     > "$BATS_TEST_TMPDIR/tickets"
   run --separate-stderr env TS_COMPARISONS_FILE="$PRUNE_STORE" \
     bash "$TS" prune --force < "$BATS_TEST_TMPDIR/tickets"
-  [ "$status" -eq 0 ]
-  [ "$(jq 'length' "$PRUNE_STORE")" -eq 2 ]
+  [ "$status" -eq 2 ]
+  [[ "$stderr" == *"unknown option"* ]]
+  [ "$(cat "$PRUNE_STORE")" = "$before" ]
 }
 
 @test "prune dry run reports what it would drop" {
