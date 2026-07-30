@@ -6,16 +6,35 @@
 # priority, status, due date, SLA, labels, project - and asks which matters more.
 # n log n questions later you have a ranked backlog.
 #
-# Usage:
-#   linear.sh json | ticket-sort           # ranked list to stdout
-#   linear.sh json | ticket-sort --json    # ranked JSON to stdout
-#   linear.sh json | ticket-sort --top 5   # rank the top 5, quickselect
-#   ticket-sort --top 2 --show 10          # rank 2, list 10
-#   ticket-sort --demo                     # play with fake tickets
-#   ticket-sort -f tickets.json
-#   ticket-sort --report                   # rank from stored verdicts, no input
-#   ticket-sort --report --top 10          # ...just the head
-#   linear.sh json | ticket-sort --prune   # forget verdicts about finished work
+# Usage: ticket-sort <command> [options]
+#
+#   full     rank a list from scratch, comparing everything that needs it.
+#            The only thing that works with no stored comparisons, and what to
+#            run when you have lost touch with your ranking and want to think
+#            it through again.
+#
+#   place    work new tickets into a ranking you already trust. Asks whether
+#            each newcomer beats the cut, and only places precisely the ones
+#            that do - the rest go to the tail. Needs stored comparisons.
+#
+#   report   show the current ranking from stored comparisons. Asks nothing,
+#            needs no input, works offline.
+#
+#   prune    forget comparisons about tickets the input says are finished.
+#
+# Options:
+#   --top N     rank only the top N (full, place, report)
+#   --show N    print N rows even though only --top are ranked (full)
+#   --json      emit JSON instead of a table
+#   --force     actually write (prune only; it is a dry run otherwise)
+#   -f FILE     read tickets from a file instead of stdin
+#   --demo      use built-in fake tickets
+#
+# Examples:
+#   linear.sh json | ticket-sort full --top 5
+#   linear.sh json | ticket-sort place --top 10
+#   ticket-sort report --top 10
+#   linear.sh json | ticket-sort prune --force
 #
 # At each comparison:
 #   l         the left ticket matters more      (Enter defaults to this)
@@ -58,15 +77,15 @@
 #   TS_BASH        bash 4.1+ to re-exec under, if it isn't on the usual paths
 #   TS_PRUNE_STATES  statuses --prune treats as finished
 #                  (default: Done,Canceled,Duplicated)
-#   TS_CACHE       verdict store path, or "none" to answer fresh every time
-#                  (default: $XDG_STATE_HOME/ticket-sort/verdicts.json)
+#   TS_COMPARISONS_FILE       comparison store path, or "none" to answer fresh every time
+#                  (default: $XDG_STATE_HOME/ticket-sort/comparisons.json)
 #
 # Answers persist between runs, and they compose: A > B and B > C means A > C
 # without asking. So re-ranking a backlog you already ranked asks nothing, and
 # adding a ticket to it only asks about the new one. Measured on 50 tickets -
 # cold 203 questions, warm re-run 0, one new ticket 4.
 #
-# Priorities drift, so verdicts are timestamped and the newest always wins. If
+# Priorities drift, so comparisons are timestamped and the newest always wins. If
 # today's answer contradicts older ones, the stale edges yield rather than the
 # new call - answer a pair again and the implications that disagree with it are
 # dropped. One reversal can invalidate several old implications, since they were
@@ -78,7 +97,7 @@
 #   jq 'del(."DEVOPS-1904|DEVOPS-2140")' "$store" > t && mv t "$store"
 #
 # The store grows with your whole ticket universe rather than any one list, so
-# --prune forgets verdicts about work that is over. It only drops tickets the
+# --prune forgets comparisons about work that is over. It only drops tickets the
 # input SAYS are finished - absence proves nothing, since a scoped query omits
 # out-of-scope tickets exactly like closed ones. Dry run unless --force.
 #
@@ -87,7 +106,7 @@
 # It needs three interpreters to work: bash 4.1+ (which macOS does not ship, so
 # there is a re-exec guard above just to find one), jq (17 call sites, including
 # one per field per rendered ticket), and python3 - 75 lines of it embedded as a
-# quoted heredoc in ts_cache_closure, where shellcheck cannot see it and no test
+# quoted heredoc in ts_comparisons_closure, where shellcheck cannot see it and no test
 # can reach it directly.
 #
 # Replacing jq with superdb would fit the rest of the rig - install.sh already
@@ -150,10 +169,10 @@ TS_COMPARE=ts_ask    # comparator: "$TS_COMPARE" a b -> 0 if a ranks first
 TS_COMPARISONS=0     # logical comparisons the sort performed
 TS_ASKED=0           # of those, the ones a human actually answered
 TS_MEHS=0            # answered "m" - decided by coin flip, not by you
-TS_BULK=''           # standing t/b verdict for the current partition pass
-TS_BULK_PIVOT=''     # the right-hand ticket an rt/rb verdict is about
-TS_BULK_LEFT=''      # the left-hand ticket an lt/lb verdict is about
-TS_BULK_RESOLVED=0   # comparisons settled by a verdict rather than asked
+TS_BULK=''           # standing t/b comparison for the current partition pass
+TS_BULK_PIVOT=''     # the right-hand ticket an rt/rb comparison is about
+TS_BULK_LEFT=''      # the left-hand ticket an lt/lb comparison is about
+TS_BULK_RESOLVED=0   # comparisons settled by a comparison rather than asked
 TS_ESTIMATE=0
 TS_PLACED_KNOWN=0    # tickets the store already orders against all others
 TS_NEW_COUNT=0       # the rest - what this run actually has to work out
@@ -166,8 +185,8 @@ declare -gA TS_MEMO=()    # "a:b" -> 0/1, so no pair is ever asked twice
 declare -gA TS_SETTLED=() # position -> 1 once a pivot has landed there
 # Pairs TS_MEMO got from the store rather than from you, so saving can leave
 # them alone. Persisting a derived pair would both bloat the store and stamp an
-# inference with today's date, letting it outrank a real older verdict.
-declare -gA TS_FROM_CACHE=()
+# inference with today's date, letting it outrank a real older comparison.
+declare -gA TS_FROM_STORE=()
 TS_FD=                 # answer stream, assigned by `exec {TS_FD}<` at startup
 
 : "${TS_INPUT:=/dev/tty}"
@@ -175,13 +194,13 @@ TS_FD=                 # answer stream, assigned by `exec {TS_FD}<` at startup
 : "${TS_OPEN:=open}"        # how ol/or launch a ticket
 : "${TS_PREVIEW:=}"         # standing-list rows; 0 disables
 : "${TS_WORKSPACE:=}"       # linear.app/<slug>, for tickets with no url field
-# Verdicts are durable machine-local state, so they go in the XDG state dir -
+# Comparisons are durable machine-local state, so they go in the XDG state dir -
 # not next to the script (generated data inside a git repo, needing a
 # .gitignore line and lost on a fresh clone) and not relative to $PWD, which
 # would scatter files and forget what it already knew. State rather than cache
 # because these are answers you gave: re-running does not regenerate them.
-# Set TS_CACHE to move it, or TS_CACHE=none to answer fresh every time.
-: "${TS_CACHE:=${XDG_STATE_HOME:-$HOME/.local/state}/ticket-sort/verdicts.json}"
+# Set TS_COMPARISONS_FILE to move it, or TS_COMPARISONS_FILE=none to answer fresh every time.
+: "${TS_COMPARISONS_FILE:=${XDG_STATE_HOME:-$HOME/.local/state}/ticket-sort/comparisons.json}"
 
 BOLD=$'\033[1m'
 DIM=$'\033[2m'
@@ -223,8 +242,8 @@ ts_partition() {
   pivot="${TS_ARR[$hi]}"
 
   # The pivot is the right-hand ticket for this whole pass, which is what
-  # makes a one-key verdict against all of it meaningful. Each pass starts
-  # with no standing verdict.
+  # makes a one-key comparison against all of it meaningful. Each pass starts
+  # with no standing call.
   TS_BULK=''
   TS_BULK_PIVOT="$pivot"
   TS_BULK_LEFT=''
@@ -318,7 +337,7 @@ ts_load() {
   fi
 }
 
-# ── verdict cache ─────────────────────────────────────────────────────────────
+# ── comparison store ─────────────────────────────────────────────────────────────
 # Every answer you give is a fact about two tickets, and it stays true after the
 # run ends. Persisting them means a backlog you have already ranked re-ranks for
 # free, and adding one ticket to a ranked list costs only the questions that new
@@ -326,9 +345,9 @@ ts_load() {
 #
 # On disk: {"<id>|<id>": {"w": "<winning id>", "at": "<when>"}}, pair key sorted
 # so A|B and B|A are the same entry. A saved run merges onto what is already
-# there, so verdicts about tickets outside this run survive.
+# there, so comparisons about tickets outside this run survive.
 #
-# Verdicts are transitive: A > B and B > C means A > C, and applying that is
+# Comparisons are transitive: A > B and B > C means A > C, and applying that is
 # what makes the store worth having at any real backlog size. Quicksort derives
 # most pair orderings from partition structure rather than asking - about 82% of
 # them at n=60 - but the store only records the ones you were asked, so without
@@ -337,7 +356,7 @@ ts_load() {
 # store and 0 with closure; adding one ticket costs ~158 against ~8.
 #
 # Closure needs contradictions resolved, because a single cycle would make
-# everything imply everything. Verdicts are timestamped, so recency decides:
+# everything imply everything. Comparisons are timestamped, so recency decides:
 # edges are added newest-first, and one that would close a loop against
 # already-accepted (newer) edges is dropped as stale. Today's decision always
 # survives, which is also how a changed priority is meant to propagate - answer
@@ -346,14 +365,14 @@ ts_load() {
 # edges were load-bearing for derived pairs.
 #
 # Derivations are never written back. The store stays a record of what you
-# actually answered, so a later verdict is free to undo an inference.
+# actually answered, so a later comparison is free to undo an inference.
 #
 # TS_MEMO is keyed by array index because that is what the sort works in, so
 # load and save translate between index and ticket id.
 
 # Pair key is order-independent: the same two tickets always hash to one entry
 # no matter which side each landed on this run.
-ts_cache_key() {
+ts_comparisons_key() {
   if [[ "$1" < "$2" ]]; then
     printf '%s|%s\n' "$1" "$2"
   else
@@ -364,29 +383,29 @@ ts_cache_key() {
 # index -> ticket id, for the tickets currently loaded. Memoized: this is called
 # from n-squared loops, and a jq spawn per call is what made saving slow enough
 # to feel between keystrokes.
-declare -gA TS_ID_CACHE=()
-ts_cache_id() {
-  if [[ -z "${TS_ID_CACHE[$1]:-}" ]]; then
-    TS_ID_CACHE[$1]=$(jq -r '.id // empty' <<< "${TS_TICKETS[$1]}")
+declare -gA TS_ID_BY_INDEX=()
+ts_comparisons_id() {
+  if [[ -z "${TS_ID_BY_INDEX[$1]:-}" ]]; then
+    TS_ID_BY_INDEX[$1]=$(jq -r '.id // empty' <<< "${TS_TICKETS[$1]}")
   fi
-  printf '%s\n' "${TS_ID_CACHE[$1]}"
+  printf '%s\n' "${TS_ID_BY_INDEX[$1]}"
 }
 
-ts_cache_path() {
-  [[ "$TS_CACHE" == none ]] && return 1
-  printf '%s\n' "$TS_CACHE"
+ts_comparisons_path() {
+  [[ "$TS_COMPARISONS_FILE" == none ]] && return 1
+  printf '%s\n' "$TS_COMPARISONS_FILE"
 }
 
-# Cached verdicts become memo entries, which ts_ask already checks before
+# Cached comparisons become memo entries, which ts_ask already checks before
 # asking - so a hit is indistinguishable from a question you answered this run.
-ts_cache_load() {
+ts_comparisons_load() {
   local path line i j stored=0 implied=0 dropped=0
-  path=$(ts_cache_path) || return 0
+  path=$(ts_comparisons_path) || return 0
   [[ -f "$path" ]] || return 0
 
   # A hand-edited or truncated cache should cost you nothing but the cache.
   if ! jq -e . "$path" >/dev/null 2>&1; then
-    printf '%signoring unreadable verdict cache%s %s\n' "$YELLOW" "$RESET" "$path" >&2
+    printf '%signoring unreadable comparison store%s %s\n' "$YELLOW" "$RESET" "$path" >&2
     return 0
   fi
 
@@ -402,17 +421,17 @@ ts_cache_load() {
            else
              TS_MEMO[$i:$j]=1; TS_MEMO[$j:$i]=0
            fi
-           TS_FROM_CACHE[$i:$j]=1 ;;
+           TS_FROM_STORE[$i:$j]=1 ;;
     esac
-  done < <(ts_cache_closure "$path")
+  done < <(ts_comparisons_closure "$path")
 
   if (( dropped > 0 )); then
-    printf '%s%d verdict%s stored, %d implied, %d stale dropped as contradicted%s\n' \
+    printf '%s%d comparison%s stored, %d implied, %d stale dropped as contradicted%s\n' \
       "$DIM" "$stored" "$( (( stored == 1 )) || echo s)" "$implied" "$dropped" "$RESET" >&2
   fi
 }
 
-# Reads the verdict store, keeps only the tickets loaded this run, resolves
+# Reads the comparison store, keeps only the tickets loaded this run, resolves
 # contradictions by recency, closes transitively, and prints one "i j winner"
 # line per known pair - indices into TS_ARR's ticket order, so the caller does
 # no translation. Plus "# <stored> <implied>" and "! <dropped>" stats lines.
@@ -420,11 +439,11 @@ ts_cache_load() {
 # Python because this is a graph walk: reachability per candidate edge to reject
 # cycles, then a DFS per ticket to collect what it beats. ~140ms at 200 tickets,
 # where the same work in bash would be minutes of subshell overhead.
-ts_cache_closure() {
+ts_comparisons_closure() {
   local path="$1" i
   # Ticket ids in index order, so the child can map ids back to positions.
   for (( i = 0; i < ${#TS_TICKETS[@]}; i++ )); do
-    ts_cache_id "$i"
+    ts_comparisons_id "$i"
   done | python3 -c '
 import json, sys
 
@@ -437,7 +456,7 @@ try:
 except Exception:
     sys.exit(0)
 
-# Only pairs where BOTH tickets are in this run matter. A verdict about tickets
+# Only pairs where BOTH tickets are in this run matter. A comparison about tickets
 # that are not here cannot constrain the ones that are.
 edges = []
 for key, val in store.items():
@@ -469,7 +488,7 @@ def reaches(src, dst):
 
 dropped = 0
 for _, w, l in edges:
-    if reaches(l, w):     # w > l would contradict newer verdicts
+    if reaches(l, w):     # w > l would contradict newer comparisons
         dropped += 1
         continue
     beats.setdefault(w, set()).add(l)
@@ -502,15 +521,15 @@ for (lo, hi), w in seen_pairs.items():
 ' "$path"
 }
 
-# Persist exactly one verdict. Called after every answer, so it must not walk
-# every pair: the full scan below spawns a jq per stored verdict, which at 50
+# Persist exactly one comparison. Called after every answer, so it must not walk
+# every pair: the full scan below spawns a jq per stored comparison, which at 50
 # tickets was ~640ms a keystroke.
-ts_cache_save_pair() {
+ts_comparisons_save_pair() {
   local a=$1 b=$2 winner=$3 path id_a id_b key now tmp
-  path=$(ts_cache_path) || return 0
-  id_a=$(ts_cache_id "$a"); id_b=$(ts_cache_id "$b")
+  path=$(ts_comparisons_path) || return 0
+  id_a=$(ts_comparisons_id "$a"); id_b=$(ts_comparisons_id "$b")
   [[ -n "$id_a" && -n "$id_b" ]] || return 0
-  key=$(ts_cache_key "$id_a" "$id_b")
+  key=$(ts_comparisons_key "$id_a" "$id_b")
   now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
   mkdir -p "$(dirname "$path")" 2>/dev/null || return 0
@@ -524,26 +543,26 @@ ts_cache_save_pair() {
   mv -f "$tmp" "$path" 2>/dev/null || rm -f "$tmp"
 }
 
-ts_cache_save() {
-  local path tmp now updates key i j n id_a id_b verdict winner
-  path=$(ts_cache_path) || return 0
+ts_comparisons_save() {
+  local path tmp now updates key i j n id_a id_b comparison winner
+  path=$(ts_comparisons_path) || return 0
 
   n=${#TS_TICKETS[@]}
   now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   updates=$(
     for (( i = 0; i < n; i++ )); do
-      id_a=$(ts_cache_id "$i")
+      id_a=$(ts_comparisons_id "$i")
       [[ -n "$id_a" ]] || continue
       for (( j = i + 1; j < n; j++ )); do
-        verdict="${TS_MEMO[$i:$j]:-}"
-        [[ -n "$verdict" ]] || continue
+        comparison="${TS_MEMO[$i:$j]:-}"
+        [[ -n "$comparison" ]] || continue
         # Came from the store, so it is either already recorded or an inference
         # that must not be recorded at all.
-        [[ -n "${TS_FROM_CACHE[$i:$j]:-}" ]] && continue
-        id_b=$(ts_cache_id "$j")
+        [[ -n "${TS_FROM_STORE[$i:$j]:-}" ]] && continue
+        id_b=$(ts_comparisons_id "$j")
         [[ -n "$id_b" ]] || continue
-        (( verdict == 0 )) && winner="$id_a" || winner="$id_b"
-        key=$(ts_cache_key "$id_a" "$id_b")
+        (( comparison == 0 )) && winner="$id_a" || winner="$id_b"
+        key=$(ts_comparisons_key "$id_a" "$id_b")
         jq -n -c --arg k "$key" --arg w "$winner" --arg at "$now" \
           '{($k): {w: $w, at: $at}}'
       done
@@ -553,30 +572,30 @@ ts_cache_save() {
 
   mkdir -p "$(dirname "$path")" || return 0
   tmp="$path.$$"
-  # Merge onto whatever is already there so verdicts about tickets outside this
+  # Merge onto whatever is already there so comparisons about tickets outside this
   # run survive, and this run's answers win where they overlap.
   if ! { [[ -f "$path" ]] && jq -e . "$path" >/dev/null 2>&1 && cat "$path" || echo '{}'; } \
        | jq -s --slurpfile u <(printf '%s\n' "$updates") \
            '.[0] + (reduce $u[] as $x ({}; . + $x))' > "$tmp" 2>/dev/null; then
     rm -f "$tmp"
-    printf '%scould not write verdict cache%s %s\n' "$YELLOW" "$RESET" "$path" >&2
+    printf '%scould not write comparison store%s %s\n' "$YELLOW" "$RESET" "$path" >&2
     return 0
   fi
   mv -f "$tmp" "$path" 2>/dev/null || rm -f "$tmp"
 }
 
-# Build the ticket list from the verdict store itself, for a report with no
+# Build the ticket list from the comparison store itself, for a report with no
 # input. Only ids are known - the store records decisions, not ticket data - so
 # titles come out empty unless tickets were piped in.
-ts_load_from_store() {
+ts_load_from_comparisons() {
   local path line
   TS_TICKETS=()
-  path=$(ts_cache_path) || {
-    echo "ticket-sort: no verdict store to report on (TS_CACHE=none)" >&2
+  path=$(ts_comparisons_path) || {
+    echo "ticket-sort: no comparison store to report on (TS_COMPARISONS_FILE=none)" >&2
     return 1
   }
   if [[ ! -f "$path" ]]; then
-    echo "ticket-sort: no verdicts yet at $path" >&2
+    echo "ticket-sort: no comparisons yet at $path" >&2
     echo "  rank some tickets first:  linear.sh json | ticket-sort" >&2
     return 1
   fi
@@ -588,12 +607,12 @@ ts_load_from_store() {
   ' "$path" 2>/dev/null)
 
   if (( ${#TS_TICKETS[@]} == 0 )); then
-    echo "ticket-sort: no verdicts in $path" >&2
+    echo "ticket-sort: no comparisons in $path" >&2
     return 1
   fi
 }
 
-# Drop verdicts about tickets the input says are finished.
+# Drop comparisons about tickets the input says are finished.
 #
 # Deliberately conservative in two ways, because the thing being deleted is
 # judgement you spent real time on and cannot get back by re-running anything.
@@ -601,7 +620,7 @@ ts_load_from_store() {
 # First, absence is never evidence. The input is usually a scoped query -
 # `linear.sh json active 7d` omits closed work AND anything out of scope, and
 # nothing in the payload distinguishes those. So a ticket must be present and
-# say it is finished; a ticket that simply is not mentioned keeps its verdicts.
+# say it is finished; a ticket that simply is not mentioned keeps its comparisons.
 #
 # Second, the status must match exactly (case-insensitively). linear.sh exposes
 # state.name, not Linear's underlying completed/canceled type, so this is name
@@ -609,12 +628,12 @@ ts_load_from_store() {
 # TS_PRUNE_STATES overrides the list for a workspace with different states.
 ts_prune() {
   local force="$1" path i id status finished=() dropped=0 kept
-  path=$(ts_cache_path) || {
-    echo "ticket-sort: no verdict store to prune (TS_CACHE=none)" >&2
+  path=$(ts_comparisons_path) || {
+    echo "ticket-sort: no comparison store to prune (TS_COMPARISONS_FILE=none)" >&2
     return 1
   }
   [[ -f "$path" ]] || {
-    echo "ticket-sort: no verdicts yet at $path" >&2
+    echo "ticket-sort: no comparisons yet at $path" >&2
     return 1
   }
 
@@ -644,7 +663,7 @@ ts_prune() {
     return 0
   fi
 
-  # How many verdicts mention any of them?
+  # How many comparisons mention any of them?
   local ids_json
   ids_json=$(printf '%s\n' "${finished[@]}" | cut -d'|' -f1 \
     | jq -R -s 'split("\n") | map(select(length > 0))')
@@ -653,13 +672,13 @@ ts_prune() {
   ' "$path")
 
   if (( dropped == 0 )); then
-    printf '%snothing to prune - no stored verdicts mention those tickets.%s\n' \
+    printf '%snothing to prune - no stored comparisons mention those tickets.%s\n' \
       "$DIM" "$RESET" >&2
     return 0
   fi
 
   {
-    printf '\n%swould drop%s %d verdict%s for %d finished ticket%s:\n' \
+    printf '\n%swould drop%s %d comparison%s for %d finished ticket%s:\n' \
       "$BOLD" "$RESET" "$dropped" "$( (( dropped == 1 )) || echo s)" \
       "${#finished[@]}" "$( (( ${#finished[@]} == 1 )) || echo s)"
     for i in "${finished[@]}"; do
@@ -865,7 +884,7 @@ ts_ticket_by_id() {
 # prompt already costs - worth paying.
 #
 # It does scale with store size, though, because each save rewrites the whole
-# file: ~300ms an answer against a 1500-verdict store. If that starts to bite,
+# file: ~300ms an answer against a 1500-comparison store. If that starts to bite,
 # the fix is not more bash - see the TODO at the top of this file.
 #
 # $3 is the winning index. Sets both directions so the inverse is implied.
@@ -877,8 +896,8 @@ ts_answer() {
   else
     TS_MEMO[$a:$b]=1; TS_MEMO[$b:$a]=0
   fi
-  wid=$(ts_cache_id "$winner")
-  [[ -n "$wid" ]] && ts_cache_save_pair "$a" "$b" "$wid"
+  wid=$(ts_comparisons_id "$winner")
+  [[ -n "$wid" ]] && ts_comparisons_save_pair "$a" "$b" "$wid"
 }
 
 ts_ask() {
@@ -891,13 +910,13 @@ ts_ask() {
     return "${TS_MEMO[$a:$b]}"
   fi
 
-  # A standing verdict settles anything still unanswered against this pass's
+  # A standing call settles anything still unanswered against this pass's
   # pivot. The memo check above runs first, so an answer you already gave
-  # explicitly is never overwritten by a later blanket verdict.
+  # explicitly is never overwritten by a later blanket comparison.
   #
   # rt/rb are about the right ticket, which is the pivot for the whole pass -
   # so they apply whenever the pivot shows up again. lt/lb are about the left
-  # ticket, which changes every comparison, so the verdict is pinned to the
+  # ticket, which changes every comparison, so the comparison is pinned to the
   # specific ticket it was made about.
   if [[ -n "$TS_BULK" && "$b" == "$TS_BULK_PIVOT" ]]; then
     case "$TS_BULK" in
@@ -920,7 +939,7 @@ ts_ask() {
           ts_answer "$a" "$b" "$a"; return 0 ;;
       esac
     elif [[ "$b" == "$TS_BULK_LEFT" ]]; then
-      # Same ticket, other side of the prompt - the verdict still holds.
+      # Same ticket, other side of the prompt - the comparison still holds.
       case "$TS_BULK" in
         leftbottom)
           TS_BULK_RESOLVED=$(( TS_BULK_RESOLVED + 1 ))
@@ -1069,13 +1088,13 @@ ts_report() {
 }
 
 # Rank from the store alone, asking nothing. TS_MEMO is already populated with
-# every pair the verdicts prove (directly or transitively), so a ticket's score
+# every pair the comparisons prove (directly or transitively), so a ticket's score
 # is just how many others it beats - Copeland, over a partial order.
 #
 # Ties are real information, not a nuisance: two tickets with the same score
 # that the store never compared are genuinely unseparated, and saying so beats
 # inventing an order. Same dot convention --show uses.
-ts_report_verdicts() {
+ts_report_comparisons() {
   local as_json="$1" limit="$2" n=${#TS_ARR[@]} i j beats idx
   local -a score=() order=()
 
@@ -1126,7 +1145,7 @@ ts_report_verdicts() {
     fi
   done
 
-  printf '\n%sfrom stored verdicts only - no questions asked.%s\n' \
+  printf '\n%sfrom stored comparisons only - no questions asked.%s\n' \
     "$DIM" "$RESET" >&2
 }
 
@@ -1177,19 +1196,33 @@ EOF
 
 # ── main ──────────────────────────────────────────────────────────────────────
 
+# Prints the header block from "Usage:" down to the last example, so the help
+# and the file's own documentation cannot drift apart. Line-number ranges did
+# drift - editing the header silently truncated --help mid-sentence.
 ts_usage() {
-  sed -n '3,41p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  awk '/^# Usage:/{p=1} p{print} /^#   linear.sh json \| ticket-sort prune/{exit}' \
+    "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 main() {
-  local as_json=no source=stdin file='' report_only=no prune_only=no force=no top='' show='' n i
+  local cmd='' as_json=no source=stdin file='' force=no top='' show='' n i
+
+  # Subcommand first, because these are different jobs rather than variants of
+  # one: `full` works from an empty store and `place` cannot, they cost an order
+  # of magnitude apart, and `report`/`prune` do not sort at all. A flag would
+  # imply they are the same operation tuned differently.
+  case "${1:-}" in
+    full|place|report|prune) cmd="$1"; shift ;;
+    -h|--help)               ts_usage; return 0 ;;
+    '')                      ts_usage >&2; return 2 ;;
+    *)                       printf 'ticket-sort: unknown command: %s\n\n' "$1" >&2
+                             ts_usage >&2; return 2 ;;
+  esac
 
   while (( $# )); do
     case "$1" in
       --json)     as_json=yes ;;
       --demo)     source=demo ;;
-      --report)   report_only=yes ;;
-      --prune)    prune_only=yes ;;
       --force)    force=yes ;;
       --top)      shift; top="${1:-}" ;;
       --show)     shift; show="${1:-}" ;;
@@ -1199,6 +1232,13 @@ main() {
     esac
     shift
   done
+
+  local report_only=no prune_only=no place_only=no
+  case "$cmd" in
+    report) report_only=yes ;;
+    prune)  prune_only=yes ;;
+    place)  place_only=yes ;;
+  esac
 
   if [[ -n "$top" && ! "$top" =~ ^[1-9][0-9]*$ ]]; then
     echo "ticket-sort: --top needs a positive count" >&2
@@ -1212,7 +1252,7 @@ main() {
 
   command -v jq >/dev/null || { echo "ticket-sort: jq is required" >&2; return 1; }
 
-  # --report reads the store, not a ticket list: the verdicts already name every
+  # --report reads the store, not a ticket list: the comparisons already name every
   # ticket you have ranked, so asking "what did I decide?" should not require a
   # round trip to Linear. Piping tickets in is still useful - it supplies titles
   # and narrows the report to that set - but it is optional, and a terminal on
@@ -1228,7 +1268,7 @@ main() {
       # a jq that blocks forever.
       ts_load
     else
-      ts_load_from_store || return 1
+      ts_load_from_comparisons || return 1
     fi
   else
     case "$source" in
@@ -1256,9 +1296,9 @@ main() {
   fi
   (( TS_PREVIEW > n )) && TS_PREVIEW=$n
 
-  # Verdicts from previous runs become memo entries, so the sort never asks
+  # Comparisons from previous runs become memo entries, so the sort never asks
   # what you have already decided.
-  ts_cache_load
+  ts_comparisons_load
 
   # --prune stops here. It needs the input (statuses live there, never in the
   # store) but asks nothing and, without --force, writes nothing.
@@ -1271,7 +1311,7 @@ main() {
   # answer stream is opened and no save trap is set, so it is read-only by
   # construction rather than by promise.
   if [[ "$report_only" == yes ]]; then
-    ts_report_verdicts "$as_json" "${top:-0}"
+    ts_report_comparisons "$as_json" "${top:-0}"
     return 0
   fi
 
@@ -1282,7 +1322,7 @@ main() {
   # The trap must hand back the status it was called with: an EXIT handler's own
   # result becomes the script's exit code, which would turn `q` (130) into 0.
   # shellcheck disable=SC2154  # assigned inside the trap body, one command earlier
-  trap 'ts_cache_exit=$?; ts_cache_save; exit "$ts_cache_exit"' EXIT
+  trap 'ts_comparisons_exit=$?; ts_comparisons_save; exit "$ts_comparisons_exit"' EXIT
 
   # Ballpark, so the size of the job is clear before it starts.
   #

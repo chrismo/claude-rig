@@ -12,9 +12,9 @@ bats_require_minimum_version 1.5.0
 TS="$BATS_TEST_DIRNAME/ticket-sort"
 
 setup() {
-  # Point the verdict cache at this test's tmpdir before sourcing, so no test
+  # Point the comparison cache at this test's tmpdir before sourcing, so no test
   # can read or write the real one beside the script.
-  export TS_CACHE="${BATS_TEST_TMPDIR:-/dev/null}/verdicts.json"
+  export TS_COMPARISONS_FILE="${BATS_TEST_TMPDIR:-/dev/null}/comparisons.json"
   source "$TS"
 }
 
@@ -424,7 +424,7 @@ auditing_before() {
   [[ "$stderr" == *"standing"* ]]
 }
 
-@test "--show widens the standing list, not just the final report" {
+@test "show widens the standing list, not just the final report" {
   cat > "$BATS_TEST_TMPDIR/tickets" <<'EOF'
 {"id":"A","title":"alpha"}
 {"id":"B","title":"bravo"}
@@ -495,8 +495,8 @@ EOF
   printf '%s\n' '[{"id":"A","title":"a"},{"id":"B","title":"b"},{"id":"C","title":"c"},{"id":"D","title":"d"}]' \
     > "$BATS_TEST_TMPDIR/tickets"
   printf 'l\nl\nl\nl\nl\nl\n' > "$BATS_TEST_TMPDIR/answers"
-  run --separate-stderr env TS_CACHE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/answers" \
-    bash "$TS" < "$BATS_TEST_TMPDIR/tickets"
+  run --separate-stderr env TS_COMPARISONS_FILE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/answers" \
+    bash "$TS" full < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
   # A, B, C are fully ordered already; only D is unknown. A 4-ticket n log n
   # would say ~8; the honest answer is at most 3.
@@ -516,8 +516,8 @@ EOF
   printf '%s\n' '[{"id":"A","title":"a"},{"id":"B","title":"b"},{"id":"C","title":"c"},{"id":"D","title":"d"}]' \
     > "$BATS_TEST_TMPDIR/tickets"
   printf 'l\nl\nl\nl\nl\nl\n' > "$BATS_TEST_TMPDIR/answers"
-  run --separate-stderr env TS_CACHE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/answers" \
-    bash "$TS" < "$BATS_TEST_TMPDIR/tickets"
+  run --separate-stderr env TS_COMPARISONS_FILE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/answers" \
+    bash "$TS" full < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
   [[ "$stderr" == *"already placed"* ]]
   [[ "$stderr" == *"1 new"* ]]
@@ -529,8 +529,8 @@ EOF
   printf '%s\n' '[{"id":"A","title":"a"},{"id":"B","title":"b"},{"id":"C","title":"c"},{"id":"D","title":"d"}]' \
     > "$BATS_TEST_TMPDIR/tickets"
   printf 'l\nl\nl\nl\nl\nl\n' > "$BATS_TEST_TMPDIR/answers"
-  run --separate-stderr env TS_CACHE=none TS_INPUT="$BATS_TEST_TMPDIR/answers" \
-    bash "$TS" < "$BATS_TEST_TMPDIR/tickets"
+  run --separate-stderr env TS_COMPARISONS_FILE=none TS_INPUT="$BATS_TEST_TMPDIR/answers" \
+    bash "$TS" full < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
   local est
   est=$(grep -oE '~[0-9]+ question' <<< "$stderr" | head -1 | tr -dc '0-9')
@@ -575,7 +575,7 @@ EOF
   [[ "$stderr" == *"of 2 placed"* ]]
 }
 
-# ── bulk verdicts (t / b) ─────────────────────────────────────────────────────
+# ── bulk comparisons (t / b) ─────────────────────────────────────────────────────
 # The right-hand ticket is the partition pivot, so it stays put for a whole
 # pass. "t"/"b" settle it against every remaining ticket in that pass at once.
 
@@ -627,7 +627,7 @@ bulk_fixture() {
   exec {TS_FD}<&-
   [ "$r1" -eq 0 ]              # left won this comparison
   [ "$TS_ASKED" -eq 1 ]
-  [ "$TS_BULK" = "lefttop" ]   # and a standing verdict is now in force
+  [ "$TS_BULK" = "lefttop" ]   # and a standing comparison is now in force
 }
 
 @test "lb sends the LEFT ticket below the rest of the pass" {
@@ -649,7 +649,7 @@ bulk_fixture() {
 
   local r1 r2 r3
   ts_ask 0 3 2>> "$BATS_TEST_TMPDIR/ui" && r1=0 || r1=1
-  # No further input: the rest must resolve from the bulk verdict alone.
+  # No further input: the rest must resolve from the bulk comparison alone.
   ts_ask 1 3 2>> "$BATS_TEST_TMPDIR/ui" && r2=0 || r2=1
   ts_ask 2 3 2>> "$BATS_TEST_TMPDIR/ui" && r3=0 || r3=1
   exec {TS_FD}<&-
@@ -675,7 +675,7 @@ bulk_fixture() {
   [ "$r2" -eq 1 ]
 }
 
-@test "a bulk verdict is memoized both ways" {
+@test "a bulk comparison is memoized both ways" {
   bulk_fixture
   printf 'b\n' > "$BATS_TEST_TMPDIR/answers"
   exec {TS_FD}< "$BATS_TEST_TMPDIR/answers"
@@ -686,33 +686,33 @@ bulk_fixture() {
   [ "$fwd" -ne "$r" ]
 }
 
-@test "a bulk verdict does not apply to a different pivot" {
+@test "a bulk comparison does not apply to a different pivot" {
   bulk_fixture
   printf 'b\nr\n' > "$BATS_TEST_TMPDIR/answers"
   exec {TS_FD}< "$BATS_TEST_TMPDIR/answers"
 
   local r1 r2
   ts_ask 0 3 2>> "$BATS_TEST_TMPDIR/ui" && r1=0 || r1=1
-  # Pivot 2 is not the pivot the verdict was about, so this must be asked.
+  # Pivot 2 is not the pivot the comparison was about, so this must be asked.
   ts_ask 0 2 2>> "$BATS_TEST_TMPDIR/ui" && r2=0 || r2=1
   exec {TS_FD}<&-
 
   [ "$r1" -eq 0 ]
-  [ "$r2" -eq 1 ]       # answered "r" from the input, not by the verdict
+  [ "$r2" -eq 1 ]       # answered "r" from the input, not by the comparison
   [ "$TS_ASKED" -eq 2 ]
 }
 
-@test "a bulk verdict never overrides an answer already given" {
+@test "a bulk comparison never overrides an answer already given" {
   bulk_fixture
   # First say C beats the pivot outright, then bottom the pivot. The explicit
-  # answer must stand rather than being restated by the blanket verdict.
+  # answer must stand rather than being restated by the blanket comparison.
   printf 'r\nb\n' > "$BATS_TEST_TMPDIR/answers"
   exec {TS_FD}< "$BATS_TEST_TMPDIR/answers"
 
   local first second
   ts_ask 2 3 2>> "$BATS_TEST_TMPDIR/ui" && first=0 || first=1
   ts_ask 0 3 2>> "$BATS_TEST_TMPDIR/ui" && second=0 || second=1
-  # Re-asking the first pair must return the original answer, not the verdict.
+  # Re-asking the first pair must return the original answer, not the comparison.
   local recheck
   ts_ask 2 3 2>> "$BATS_TEST_TMPDIR/ui" && recheck=0 || recheck=1
   exec {TS_FD}<&-
@@ -724,7 +724,7 @@ bulk_fixture() {
 @test "t after some l answers leaves those l tickets ranked above the pivot" {
   # Answer l a couple of times, then top the pivot. The pivot must still land
   # below the tickets already said to beat it, and above everything the
-  # verdict swept up. Checked against the actual partition result, for
+  # comparison swept up. Checked against the actual partition result, for
   # whichever element the random pivot happened to be.
   TS_TICKETS=('{"id":"A"}' '{"id":"B"}' '{"id":"C"}'
               '{"id":"D"}' '{"id":"E"}' '{"id":"F"}')
@@ -745,15 +745,15 @@ bulk_fixture() {
     if [[ "${TS_MEMO[$x:$pivot]}" == 0 ]]; then
       [ "$i" -lt "$p" ]     # said it beats the pivot, so it sits above it
     else
-      [ "$i" -gt "$p" ]     # swept below by the verdict
+      [ "$i" -gt "$p" ]     # swept below by the comparison
     fi
   done
 
   [ "$TS_ASKED" -eq 3 ]           # two l answers plus the t keystroke
-  [ "$TS_BULK_RESOLVED" -gt 0 ]   # and the verdict did settle the remainder
+  [ "$TS_BULK_RESOLVED" -gt 0 ]   # and the comparison did settle the remainder
 }
 
-@test "ts_partition clears a stale bulk verdict" {
+@test "ts_partition clears a stale bulk comparison" {
   TS_COMPARE=numeric_before
   TS_SETTLED=()
   TS_BULK=bottom
@@ -762,7 +762,7 @@ bulk_fixture() {
   [ -z "$TS_BULK" ]
 }
 
-@test "end to end accepts a bulk verdict" {
+@test "end to end accepts a bulk comparison" {
   cat > "$BATS_TEST_TMPDIR/tickets" <<'EOF'
 {"id":"A","title":"alpha"}
 {"id":"B","title":"bravo"}
@@ -820,90 +820,90 @@ EOF
   [[ "$stderr" == *"coin flip"* ]]
 }
 
-# ── verdict cache ─────────────────────────────────────────────────────────────
-# Verdicts persist between runs keyed by ticket id pair, so a backlog you have
+# ── comparison cache ─────────────────────────────────────────────────────────────
+# Comparisons persist between runs keyed by ticket id pair, so a backlog you have
 # already ranked does not re-ask what it already knows. TS_MEMO is keyed by
 # array index, so load/save translate id <-> index.
 
-@test "ts_cache_save writes the verdicts it was given" {
-  TS_CACHE="$BATS_TEST_TMPDIR/v.json"
+@test "ts_comparisons_save writes the comparisons it was given" {
+  TS_COMPARISONS_FILE="$BATS_TEST_TMPDIR/v.json"
   ts_load <<< '[{"id":"A-1","title":"one"},{"id":"A-2","title":"two"}]'
   TS_MEMO[0:1]=0
   TS_MEMO[1:0]=1
-  ts_cache_save
-  [ -f "$TS_CACHE" ]
-  run jq -r '.["A-1|A-2"].w' "$TS_CACHE"
+  ts_comparisons_save
+  [ -f "$TS_COMPARISONS_FILE" ]
+  run jq -r '.["A-1|A-2"].w' "$TS_COMPARISONS_FILE"
   [ "$output" = "A-1" ]
 }
 
-@test "ts_cache_load restores a verdict as a memo hit" {
-  TS_CACHE="$BATS_TEST_TMPDIR/v.json"
-  cat > "$TS_CACHE" <<'EOF'
+@test "ts_comparisons_load restores a comparison as a memo hit" {
+  TS_COMPARISONS_FILE="$BATS_TEST_TMPDIR/v.json"
+  cat > "$TS_COMPARISONS_FILE" <<'EOF'
 {"A-1|A-2":{"w":"A-1","at":"2026-07-01T00:00:00Z"}}
 EOF
   ts_load <<< '[{"id":"A-1","title":"one"},{"id":"A-2","title":"two"}]'
-  ts_cache_load
+  ts_comparisons_load
   [ "${TS_MEMO[0:1]}" -eq 0 ]
   [ "${TS_MEMO[1:0]}" -eq 1 ]
 }
 
-@test "ts_cache_load survives a missing cache file" {
-  TS_CACHE="$BATS_TEST_TMPDIR/does-not-exist.json"
+@test "ts_comparisons_load survives a missing cache file" {
+  TS_COMPARISONS_FILE="$BATS_TEST_TMPDIR/does-not-exist.json"
   ts_load <<< '[{"id":"A-1","title":"one"}]'
-  run ts_cache_load
+  run ts_comparisons_load
   [ "$status" -eq 0 ]
 }
 
-@test "ts_cache_load derives a pair you never answered" {
+@test "ts_comparisons_load derives a pair you never answered" {
   # A > B and B > C means A > C. The sort would otherwise ask, and at 50
   # tickets that re-asking dominates: a warm re-run of the same list costs
   # ~144 questions without this, and 0 with it.
-  TS_CACHE="$BATS_TEST_TMPDIR/v.json"
-  cat > "$TS_CACHE" <<'EOF'
+  TS_COMPARISONS_FILE="$BATS_TEST_TMPDIR/v.json"
+  cat > "$TS_COMPARISONS_FILE" <<'EOF'
 {"A|B":{"w":"A","at":"2026-07-01T00:00:00Z"},
  "B|C":{"w":"B","at":"2026-07-02T00:00:00Z"}}
 EOF
   ts_load <<< '[{"id":"A","title":"a"},{"id":"B","title":"b"},{"id":"C","title":"c"}]'
-  ts_cache_load
+  ts_comparisons_load
   # A|C was never stored, but it follows.
   [ "${TS_MEMO[0:2]}" -eq 0 ]
   [ "${TS_MEMO[2:0]}" -eq 1 ]
 }
 
-@test "ts_cache_load derives across a longer chain" {
-  TS_CACHE="$BATS_TEST_TMPDIR/v.json"
-  cat > "$TS_CACHE" <<'EOF'
+@test "ts_comparisons_load derives across a longer chain" {
+  TS_COMPARISONS_FILE="$BATS_TEST_TMPDIR/v.json"
+  cat > "$TS_COMPARISONS_FILE" <<'EOF'
 {"A|B":{"w":"A","at":"2026-07-01T00:00:00Z"},
  "B|C":{"w":"B","at":"2026-07-01T00:00:00Z"},
  "C|D":{"w":"C","at":"2026-07-01T00:00:00Z"},
  "D|E":{"w":"D","at":"2026-07-01T00:00:00Z"}}
 EOF
   ts_load <<< '[{"id":"A","title":"a"},{"id":"B","title":"b"},{"id":"C","title":"c"},{"id":"D","title":"d"},{"id":"E","title":"e"}]'
-  ts_cache_load
+  ts_comparisons_load
   # A beats everything downstream of it, four links away included.
   [ "${TS_MEMO[0:4]}" -eq 0 ]
   [ "${TS_MEMO[1:4]}" -eq 0 ]
 }
 
-@test "the newest verdict wins a contradiction" {
+@test "the newest comparison wins a contradiction" {
   # Priorities drift: today's call must beat the older one it contradicts.
   # A>B and B>C are old; C>A is today. Keeping all three would be a cycle, so
   # the oldest edge in it yields.
-  TS_CACHE="$BATS_TEST_TMPDIR/v.json"
-  cat > "$TS_CACHE" <<'EOF'
+  TS_COMPARISONS_FILE="$BATS_TEST_TMPDIR/v.json"
+  cat > "$TS_COMPARISONS_FILE" <<'EOF'
 {"A|B":{"w":"A","at":"2026-07-01T00:00:00Z"},
  "B|C":{"w":"B","at":"2026-07-02T00:00:00Z"},
  "A|C":{"w":"C","at":"2026-07-28T00:00:00Z"}}
 EOF
   ts_load <<< '[{"id":"A","title":"a"},{"id":"B","title":"b"},{"id":"C","title":"c"}]'
-  ts_cache_load
-  # Today's verdict stands: C beats A.
+  ts_comparisons_load
+  # Today's comparison stands: C beats A.
   [ "${TS_MEMO[2:0]}" -eq 0 ]
 }
 
 @test "a contradiction leaves a usable order, not a cycle" {
-  TS_CACHE="$BATS_TEST_TMPDIR/v.json"
-  cat > "$TS_CACHE" <<'EOF'
+  TS_COMPARISONS_FILE="$BATS_TEST_TMPDIR/v.json"
+  cat > "$TS_COMPARISONS_FILE" <<'EOF'
 {"A|B":{"w":"A","at":"2026-07-01T00:00:00Z"},
  "B|C":{"w":"B","at":"2026-07-02T00:00:00Z"},
  "A|C":{"w":"C","at":"2026-07-28T00:00:00Z"}}
@@ -913,11 +913,11 @@ EOF
   : > "$BATS_TEST_TMPDIR/empty"
   # No answers available, so every comparison must come from the store. A cycle
   # would make the sort ask, and asking aborts.
-  run --separate-stderr env TS_CACHE="$TS_CACHE" TS_INPUT="$BATS_TEST_TMPDIR/empty" \
-    bash "$TS" < "$BATS_TEST_TMPDIR/tickets"
+  run --separate-stderr env TS_COMPARISONS_FILE="$TS_COMPARISONS_FILE" TS_INPUT="$BATS_TEST_TMPDIR/empty" \
+    bash "$TS" full < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
   [ "$(grep -c . <<< "$output")" -eq 3 ]
-  # Today's verdict is the one that survived, so C outranks A.
+  # Today's comparison is the one that survived, so C outranks A.
   [[ "$output" == *"C"* && "$output" == *"A"* ]]
   local c_line a_line
   c_line=$(grep -n ' C ' <<< "$output" | cut -d: -f1)
@@ -925,48 +925,48 @@ EOF
   [ "$c_line" -lt "$a_line" ]
 }
 
-@test "a direct reversal replaces the older verdict" {
+@test "a direct reversal replaces the older comparison" {
   # The plainest drift case: same pair, answered the other way later.
-  TS_CACHE="$BATS_TEST_TMPDIR/v.json"
-  cat > "$TS_CACHE" <<'EOF'
+  TS_COMPARISONS_FILE="$BATS_TEST_TMPDIR/v.json"
+  cat > "$TS_COMPARISONS_FILE" <<'EOF'
 {"A|B":{"w":"B","at":"2026-07-28T00:00:00Z"}}
 EOF
   ts_load <<< '[{"id":"A","title":"a"},{"id":"B","title":"b"}]'
-  ts_cache_load
+  ts_comparisons_load
   [ "${TS_MEMO[1:0]}" -eq 0 ]
   [ "${TS_MEMO[0:1]}" -eq 1 ]
 }
 
 @test "derived pairs are not written back to the store" {
   # The store stays a record of what you answered. Persisting derivations would
-  # bloat it and freeze inferences that a later verdict should be free to undo.
-  TS_CACHE="$BATS_TEST_TMPDIR/v.json"
-  cat > "$TS_CACHE" <<'EOF'
+  # bloat it and freeze inferences that a later comparison should be free to undo.
+  TS_COMPARISONS_FILE="$BATS_TEST_TMPDIR/v.json"
+  cat > "$TS_COMPARISONS_FILE" <<'EOF'
 {"A|B":{"w":"A","at":"2026-07-01T00:00:00Z"},
  "B|C":{"w":"B","at":"2026-07-02T00:00:00Z"}}
 EOF
   ts_load <<< '[{"id":"A","title":"a"},{"id":"B","title":"b"},{"id":"C","title":"c"}]'
-  ts_cache_load
-  ts_cache_save
-  [ "$(jq 'length' "$TS_CACHE")" -eq 2 ]
-  [ "$(jq -r '.["A|C"] // "absent"' "$TS_CACHE")" = "absent" ]
+  ts_comparisons_load
+  ts_comparisons_save
+  [ "$(jq 'length' "$TS_COMPARISONS_FILE")" -eq 2 ]
+  [ "$(jq -r '.["A|C"] // "absent"' "$TS_COMPARISONS_FILE")" = "absent" ]
 }
 
-@test "ts_cache_load ignores pairs whose tickets are absent" {
-  TS_CACHE="$BATS_TEST_TMPDIR/v.json"
-  cat > "$TS_CACHE" <<'EOF'
+@test "ts_comparisons_load ignores pairs whose tickets are absent" {
+  TS_COMPARISONS_FILE="$BATS_TEST_TMPDIR/v.json"
+  cat > "$TS_COMPARISONS_FILE" <<'EOF'
 {"GONE-1|GONE-2":{"w":"GONE-1","at":"2026-07-01T00:00:00Z"}}
 EOF
   ts_load <<< '[{"id":"A-1","title":"one"},{"id":"A-2","title":"two"}]'
-  ts_cache_load
+  ts_comparisons_load
   [ -z "${TS_MEMO[0:1]:-}" ]
 }
 
-@test "ts_cache_load tolerates a corrupt cache file" {
-  TS_CACHE="$BATS_TEST_TMPDIR/v.json"
-  printf 'not json at all' > "$TS_CACHE"
+@test "ts_comparisons_load tolerates a corrupt cache file" {
+  TS_COMPARISONS_FILE="$BATS_TEST_TMPDIR/v.json"
+  printf 'not json at all' > "$TS_COMPARISONS_FILE"
   ts_load <<< '[{"id":"A-1","title":"one"},{"id":"A-2","title":"two"}]'
-  run ts_cache_load
+  run ts_comparisons_load
   [ "$status" -eq 0 ]
 }
 
@@ -974,11 +974,11 @@ EOF
   # The EXIT trap covers q and a clean finish, but not SIGKILL, a closed
   # terminal, or a dead battery - all of which lost the whole session.
   local cache="$BATS_TEST_TMPDIR/live.json"
-  TS_CACHE="$cache"
+  TS_COMPARISONS_FILE="$cache"
   TS_TICKETS=('{"id":"A","title":"alpha"}' '{"id":"B","title":"bravo"}')
   TS_ARR=(0 1)
   TS_MEMO=()
-  TS_FROM_CACHE=()
+  TS_FROM_STORE=()
   TS_ASKED=0
   printf 'l\n' > "$BATS_TEST_TMPDIR/one"
   exec {TS_FD}< "$BATS_TEST_TMPDIR/one"
@@ -997,8 +997,8 @@ EOF
   # Answer twice, then stall so the process is alive to be killed.
   ( printf 'l\n'; sleep 0.3; printf 'l\n'; sleep 30 ) > "$BATS_TEST_TMPDIR/feed" &
   local feeder=$!
-  TS_CACHE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/feed" \
-    bash "$TS" < "$BATS_TEST_TMPDIR/tickets" >/dev/null 2>&1 &
+  TS_COMPARISONS_FILE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/feed" \
+    bash "$TS" full < "$BATS_TEST_TMPDIR/tickets" >/dev/null 2>&1 &
   local sorter=$!
   sleep 1.5
   kill -9 "$sorter" 2>/dev/null || true
@@ -1009,25 +1009,25 @@ EOF
   [ "$(jq 'length' "$cache")" -ge 1 ]
 }
 
-@test "a re-run reuses cached verdicts instead of asking" {
+@test "a re-run reuses cached comparisons instead of asking" {
   local cache="$BATS_TEST_TMPDIR/reuse.json"
   printf '%s\n' '[{"id":"A-1","title":"one"},{"id":"A-2","title":"two"}]' \
     > "$BATS_TEST_TMPDIR/tickets"
   printf 'l\n' > "$BATS_TEST_TMPDIR/answers"
 
   # first run answers the single pair and caches it
-  TS_CACHE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/answers" \
-    bash "$TS" < "$BATS_TEST_TMPDIR/tickets" >/dev/null 2>&1
+  TS_COMPARISONS_FILE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/answers" \
+    bash "$TS" full < "$BATS_TEST_TMPDIR/tickets" >/dev/null 2>&1
 
   # second run gets no answers at all - it must not need any
   : > "$BATS_TEST_TMPDIR/empty"
-  run env TS_CACHE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/empty" \
-    bash "$TS" < "$BATS_TEST_TMPDIR/tickets"
+  run env TS_COMPARISONS_FILE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/empty" \
+    bash "$TS" full < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
   [[ "$output" == *"A-1"* ]]
 }
 
-@test "a hand-edited verdict is honored on the next run" {
+@test "a hand-edited comparison is honored on the next run" {
   # Cached pairs are never re-asked, so editing the file is how you change your
   # mind about one. Flipping "w" must flip the ranking.
   local cache="$BATS_TEST_TMPDIR/edited.json"
@@ -1037,8 +1037,8 @@ EOF
 {"X-1|X-2":{"w":"X-2","at":"2026-07-01T00:00:00Z"}}
 EOF
   : > "$BATS_TEST_TMPDIR/empty"
-  run --separate-stderr env TS_CACHE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/empty" \
-    bash "$TS" < "$BATS_TEST_TMPDIR/tickets"
+  run --separate-stderr env TS_COMPARISONS_FILE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/empty" \
+    bash "$TS" full < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
   # X-2 was declared the winner, so it ranks first without any question asked.
   [[ "$(head -1 <<< "$output")" == *"X-2"* ]]
@@ -1046,43 +1046,43 @@ EOF
 }
 
 @test "the cache defaults to the XDG state dir" {
-  # setup() exports TS_CACHE so tests cannot touch the real one; drop it here to
+  # setup() exports TS_COMPARISONS_FILE so tests cannot touch the real one; drop it here to
   # see what the script picks on its own.
-  run env -u TS_CACHE XDG_STATE_HOME="$BATS_TEST_TMPDIR/state" \
-    bash -c 'source "'"$TS"'"; printf "%s\n" "$TS_CACHE"'
+  run env -u TS_COMPARISONS_FILE XDG_STATE_HOME="$BATS_TEST_TMPDIR/state" \
+    bash -c 'source "'"$TS"'"; printf "%s\n" "$TS_COMPARISONS_FILE"'
   [ "$status" -eq 0 ]
-  [ "$output" = "$BATS_TEST_TMPDIR/state/ticket-sort/verdicts.json" ]
+  [ "$output" = "$BATS_TEST_TMPDIR/state/ticket-sort/comparisons.json" ]
 }
 
 @test "the cache falls back to ~/.local/state without XDG_STATE_HOME" {
-  run env -u TS_CACHE -u XDG_STATE_HOME HOME="$BATS_TEST_TMPDIR/home" \
-    bash -c 'source "'"$TS"'"; printf "%s\n" "$TS_CACHE"'
+  run env -u TS_COMPARISONS_FILE -u XDG_STATE_HOME HOME="$BATS_TEST_TMPDIR/home" \
+    bash -c 'source "'"$TS"'"; printf "%s\n" "$TS_COMPARISONS_FILE"'
   [ "$status" -eq 0 ]
-  [ "$output" = "$BATS_TEST_TMPDIR/home/.local/state/ticket-sort/verdicts.json" ]
+  [ "$output" = "$BATS_TEST_TMPDIR/home/.local/state/ticket-sort/comparisons.json" ]
 }
 
 @test "the cache is not written inside the repo" {
   # It used to live beside the script, which meant generated state in a git
   # repo and a .gitignore line to keep it out of commits.
-  run env -u TS_CACHE XDG_STATE_HOME="$BATS_TEST_TMPDIR/state" \
-    bash -c 'source "'"$TS"'"; printf "%s\n" "$TS_CACHE"'
+  run env -u TS_COMPARISONS_FILE XDG_STATE_HOME="$BATS_TEST_TMPDIR/state" \
+    bash -c 'source "'"$TS"'"; printf "%s\n" "$TS_COMPARISONS_FILE"'
   [ "$status" -eq 0 ]
   [[ "$output" != *"$BATS_TEST_DIRNAME"* ]]
 }
 
-@test "ts_cache_save creates the state dir when it does not exist" {
-  TS_CACHE="$BATS_TEST_TMPDIR/deep/nested/state/ticket-sort/verdicts.json"
+@test "ts_comparisons_save creates the state dir when it does not exist" {
+  TS_COMPARISONS_FILE="$BATS_TEST_TMPDIR/deep/nested/state/ticket-sort/comparisons.json"
   ts_load <<< '[{"id":"A-1","title":"one"},{"id":"A-2","title":"two"}]'
   TS_MEMO[0:1]=0
-  ts_cache_save
-  [ -f "$TS_CACHE" ]
+  ts_comparisons_save
+  [ -f "$TS_COMPARISONS_FILE" ]
 }
 
-@test "TS_CACHE=none disables persistence" {
-  TS_CACHE=none
+@test "TS_COMPARISONS_FILE=none disables persistence" {
+  TS_COMPARISONS_FILE=none
   ts_load <<< '[{"id":"A-1","title":"one"},{"id":"A-2","title":"two"}]'
   TS_MEMO[0:1]=0
-  run ts_cache_save
+  run ts_comparisons_save
   [ "$status" -eq 0 ]
   [ ! -e none ]
 }
@@ -1268,11 +1268,11 @@ FULL_TICKET='{"id":"ENG-412","title":"Fix checkout timeout","priority":"Urgent",
 run_sort() {
   local answers="$1"; shift
   printf '%s\n' "$answers" > "$BATS_TEST_TMPDIR/answers"
-  # TS_CACHE per test dir: the real cache lives beside the script, and a test
+  # TS_COMPARISONS_FILE per test dir: the real cache lives beside the script, and a test
   # that inherited it would answer from previous runs instead of asking.
   TS_INPUT="$BATS_TEST_TMPDIR/answers" TS_TODAY=2026-07-27 \
-    TS_CACHE="$BATS_TEST_TMPDIR/verdicts.json" \
-    bash "$TS" "$@" < "$BATS_TEST_TMPDIR/tickets"
+    TS_COMPARISONS_FILE="$BATS_TEST_TMPDIR/comparisons.json" \
+    bash "$TS" full "$@" < "$BATS_TEST_TMPDIR/tickets"
 }
 
 three_tickets() {
@@ -1311,7 +1311,7 @@ EOF
 }
 
 @test "--demo runs without external input" {
-  run --separate-stderr env TS_CACHE=none bash "$TS" --demo --report
+  run --separate-stderr env TS_COMPARISONS_FILE=none bash "$TS" report --demo
   [ "$status" -eq 0 ]
   [ "$(grep -c . <<< "$output")" -gt 3 ]
 }
@@ -1329,7 +1329,7 @@ EOF
   [ "$(grep -c . <<< "$output")" -eq 2 ]
 }
 
-@test "--show lists more rows than --top ranked" {
+@test "show lists more rows than --top ranked" {
   cat > "$BATS_TEST_TMPDIR/tickets" <<'EOF'
 {"id":"A","title":"alpha"}
 {"id":"B","title":"bravo"}
@@ -1342,7 +1342,7 @@ EOF
   [ "$(grep -c . <<< "$output")" -gt 2 ]
 }
 
-@test "--show marks unranked rows instead of numbering them" {
+@test "show marks unranked rows instead of numbering them" {
   cat > "$BATS_TEST_TMPDIR/tickets" <<'EOF'
 {"id":"A","title":"alpha"}
 {"id":"B","title":"bravo"}
@@ -1367,7 +1367,7 @@ EOF
   [ "$(grep -c '·' <<< "$output")" -eq 3 ]
 }
 
-@test "--show numbers positions a pivot settled past the ranked head" {
+@test "show numbers positions a pivot settled past the ranked head" {
   # A settled position is final - quicksort guarantees a landed pivot never
   # moves - so the report must number it rather than dot it. Driven through
   # ts_report directly: which positions settle in a real run depends on pivot
@@ -1387,7 +1387,7 @@ EOF
   [[ "$output" == *"·  D"* ]]
 }
 
-@test "--show with --json gives settled positions their rank number" {
+@test "show with --json gives settled positions their rank number" {
   TS_TICKETS=('{"id":"A","title":"alpha"}' '{"id":"B","title":"bravo"}'
               '{"id":"C","title":"charlie"}')
   TS_ARR=(0 1 2)
@@ -1401,20 +1401,20 @@ EOF
   [ "$(jq -r '.[2].rank' <<< "$output")" = "3" ]
 }
 
-@test "--show smaller than --top does not shrink the ranked head" {
+@test "show smaller than --top does not shrink the ranked head" {
   three_tickets
   run --separate-stderr run_sort $'1\n1\n1\n1\n1\n1' --top 2 --show 1
   [ "$status" -eq 0 ]
   [ "$(grep -cE '^ *[0-9]+\.' <<< "$output")" -eq 2 ]
 }
 
-@test "--show rejects a non-positive count" {
+@test "show rejects a non-positive count" {
   three_tickets
   run run_sort $'1' --show 0
   [ "$status" -eq 2 ]
 }
 
-@test "--show with --json marks unranked rows with a null rank" {
+@test "show with --json marks unranked rows with a null rank" {
   cat > "$BATS_TEST_TMPDIR/tickets" <<'EOF'
 {"id":"A","title":"alpha"}
 {"id":"B","title":"bravo"}
@@ -1435,13 +1435,13 @@ EOF
 }
 
 # ── prune ─────────────────────────────────────────────────────────────────────
-# Prune drops verdicts only for tickets the input SAYS are finished. Absence is
+# Prune drops comparisons only for tickets the input SAYS are finished. Absence is
 # never evidence: the input is usually a scoped query, so a ticket missing from
 # it is far more likely out of scope than closed.
 
 prune_fixture() {
-  PRUNE_CACHE="$BATS_TEST_TMPDIR/p.json"
-  cat > "$PRUNE_CACHE" <<'EOF'
+  PRUNE_STORE="$BATS_TEST_TMPDIR/p.json"
+  cat > "$PRUNE_STORE" <<'EOF'
 {"A|B":{"w":"A","at":"2026-07-01T00:00:00Z"},
  "A|C":{"w":"A","at":"2026-07-01T00:00:00Z"},
  "B|C":{"w":"B","at":"2026-07-01T00:00:00Z"},
@@ -1449,29 +1449,29 @@ prune_fixture() {
 EOF
 }
 
-@test "prune drops verdicts for Done tickets" {
+@test "prune drops comparisons for Done tickets" {
   prune_fixture
   printf '%s\n' '[{"id":"A","title":"a","status":"Done"},{"id":"B","title":"b","status":"In Progress"}]' \
     > "$BATS_TEST_TMPDIR/tickets"
-  run --separate-stderr env TS_CACHE="$PRUNE_CACHE" \
-    bash "$TS" --prune --force < "$BATS_TEST_TMPDIR/tickets"
+  run --separate-stderr env TS_COMPARISONS_FILE="$PRUNE_STORE" \
+    bash "$TS" prune --force < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
   # A|B and A|C mention A, which is Done.
-  [ "$(jq 'length' "$PRUNE_CACHE")" -eq 2 ]
-  [ "$(jq -r '.["A|B"] // "gone"' "$PRUNE_CACHE")" = "gone" ]
-  [ "$(jq -r '.["B|C"].w' "$PRUNE_CACHE")" = "B" ]
+  [ "$(jq 'length' "$PRUNE_STORE")" -eq 2 ]
+  [ "$(jq -r '.["A|B"] // "gone"' "$PRUNE_STORE")" = "gone" ]
+  [ "$(jq -r '.["B|C"].w' "$PRUNE_STORE")" = "B" ]
 }
 
 @test "prune drops Canceled and Duplicated too" {
   prune_fixture
   printf '%s\n' '[{"id":"A","title":"a","status":"Canceled"},{"id":"D","title":"d","status":"Duplicated"}]' \
     > "$BATS_TEST_TMPDIR/tickets"
-  run --separate-stderr env TS_CACHE="$PRUNE_CACHE" \
-    bash "$TS" --prune --force < "$BATS_TEST_TMPDIR/tickets"
+  run --separate-stderr env TS_COMPARISONS_FILE="$PRUNE_STORE" \
+    bash "$TS" prune --force < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
   # A|B, A|C (A canceled) and C|D (D duplicated) go; B|C stays.
-  [ "$(jq 'length' "$PRUNE_CACHE")" -eq 1 ]
-  [ "$(jq -r '.["B|C"].w' "$PRUNE_CACHE")" = "B" ]
+  [ "$(jq 'length' "$PRUNE_STORE")" -eq 1 ]
+  [ "$(jq -r '.["B|C"].w' "$PRUNE_STORE")" = "B" ]
 }
 
 @test "prune NEVER drops a ticket merely absent from the input" {
@@ -1480,45 +1480,45 @@ EOF
   prune_fixture
   printf '%s\n' '[{"id":"A","title":"a","status":"Done"}]' \
     > "$BATS_TEST_TMPDIR/tickets"
-  run --separate-stderr env TS_CACHE="$PRUNE_CACHE" \
-    bash "$TS" --prune --force < "$BATS_TEST_TMPDIR/tickets"
+  run --separate-stderr env TS_COMPARISONS_FILE="$PRUNE_STORE" \
+    bash "$TS" prune --force < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
-  # B, C and D were never mentioned - every verdict not involving A survives.
-  [ "$(jq -r '.["B|C"].w' "$PRUNE_CACHE")" = "B" ]
-  [ "$(jq -r '.["C|D"].w' "$PRUNE_CACHE")" = "C" ]
+  # B, C and D were never mentioned - every comparison not involving A survives.
+  [ "$(jq -r '.["B|C"].w' "$PRUNE_STORE")" = "B" ]
+  [ "$(jq -r '.["C|D"].w' "$PRUNE_STORE")" = "C" ]
 }
 
 @test "prune keeps unfinished and unrecognised statuses" {
   prune_fixture
   printf '%s\n' '[{"id":"A","title":"a","status":"In Review"},{"id":"B","title":"b","status":"Won'"'"'t Do"},{"id":"C","title":"c","status":"Almost Done"}]' \
     > "$BATS_TEST_TMPDIR/tickets"
-  run --separate-stderr env TS_CACHE="$PRUNE_CACHE" \
-    bash "$TS" --prune --force < "$BATS_TEST_TMPDIR/tickets"
+  run --separate-stderr env TS_COMPARISONS_FILE="$PRUNE_STORE" \
+    bash "$TS" prune --force < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
   # "Almost Done" contains "Done" but is not Done - exact match only.
-  [ "$(jq 'length' "$PRUNE_CACHE")" -eq 4 ]
+  [ "$(jq 'length' "$PRUNE_STORE")" -eq 4 ]
 }
 
 @test "prune is case-insensitive on the status name" {
   prune_fixture
   printf '%s\n' '[{"id":"A","title":"a","status":"done"}]' \
     > "$BATS_TEST_TMPDIR/tickets"
-  run --separate-stderr env TS_CACHE="$PRUNE_CACHE" \
-    bash "$TS" --prune --force < "$BATS_TEST_TMPDIR/tickets"
+  run --separate-stderr env TS_COMPARISONS_FILE="$PRUNE_STORE" \
+    bash "$TS" prune --force < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
-  [ "$(jq 'length' "$PRUNE_CACHE")" -eq 2 ]
+  [ "$(jq 'length' "$PRUNE_STORE")" -eq 2 ]
 }
 
 @test "prune without --force changes nothing" {
   prune_fixture
   local before
-  before=$(cat "$PRUNE_CACHE")
+  before=$(cat "$PRUNE_STORE")
   printf '%s\n' '[{"id":"A","title":"a","status":"Done"}]' \
     > "$BATS_TEST_TMPDIR/tickets"
-  run --separate-stderr env TS_CACHE="$PRUNE_CACHE" \
-    bash "$TS" --prune < "$BATS_TEST_TMPDIR/tickets"
+  run --separate-stderr env TS_COMPARISONS_FILE="$PRUNE_STORE" \
+    bash "$TS" prune < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
-  [ "$(cat "$PRUNE_CACHE")" = "$before" ]
+  [ "$(cat "$PRUNE_STORE")" = "$before" ]
   [[ "$stderr" == *"dry run"* ]]
 }
 
@@ -1526,8 +1526,8 @@ EOF
   prune_fixture
   printf '%s\n' '[{"id":"A","title":"a","status":"Done"}]' \
     > "$BATS_TEST_TMPDIR/tickets"
-  run --separate-stderr env TS_CACHE="$PRUNE_CACHE" \
-    bash "$TS" --prune < "$BATS_TEST_TMPDIR/tickets"
+  run --separate-stderr env TS_COMPARISONS_FILE="$PRUNE_STORE" \
+    bash "$TS" prune < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
   [[ "$stderr" == *"A"* ]]
   [[ "$stderr" == *"Done"* ]]
@@ -1537,31 +1537,31 @@ EOF
   prune_fixture
   printf '%s\n' '[{"id":"A","title":"a","status":"Done"}]' \
     > "$BATS_TEST_TMPDIR/tickets"
-  run env TS_CACHE="$PRUNE_CACHE" \
-    bash "$TS" --prune --force < "$BATS_TEST_TMPDIR/tickets"
+  run env TS_COMPARISONS_FILE="$PRUNE_STORE" \
+    bash "$TS" prune --force < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
-  [ -f "$PRUNE_CACHE.bak" ]
-  [ "$(jq 'length' "$PRUNE_CACHE.bak")" -eq 4 ]
+  [ -f "$PRUNE_STORE.bak" ]
+  [ "$(jq 'length' "$PRUNE_STORE.bak")" -eq 4 ]
 }
 
 @test "prune with nothing to drop leaves the store alone" {
   prune_fixture
   local before
-  before=$(cat "$PRUNE_CACHE")
+  before=$(cat "$PRUNE_STORE")
   printf '%s\n' '[{"id":"A","title":"a","status":"In Progress"}]' \
     > "$BATS_TEST_TMPDIR/tickets"
-  run --separate-stderr env TS_CACHE="$PRUNE_CACHE" \
-    bash "$TS" --prune --force < "$BATS_TEST_TMPDIR/tickets"
+  run --separate-stderr env TS_COMPARISONS_FILE="$PRUNE_STORE" \
+    bash "$TS" prune --force < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
-  [ "$(cat "$PRUNE_CACHE")" = "$before" ]
+  [ "$(cat "$PRUNE_STORE")" = "$before" ]
 }
 
 @test "prune requires input rather than reading the store" {
-  # Unlike --report, prune has nothing to say without a ticket list: statuses
+  # Unlike report, prune has nothing to say without a ticket list: statuses
   # live in the input, never in the store.
   prune_fixture
-  run --separate-stderr env TS_CACHE="$PRUNE_CACHE" \
-    bash "$TS" --prune < /dev/null
+  run --separate-stderr env TS_COMPARISONS_FILE="$PRUNE_STORE" \
+    bash "$TS" prune < /dev/null
   [ "$status" -ne 0 ]
   [[ "$stderr" == *"no tickets"* ]]
 }
@@ -1570,19 +1570,19 @@ EOF
   prune_fixture
   printf '%s\n' '[{"id":"A","title":"a","status":"Shipped"}]' \
     > "$BATS_TEST_TMPDIR/tickets"
-  run --separate-stderr env TS_CACHE="$PRUNE_CACHE" TS_PRUNE_STATES="Shipped" \
-    bash "$TS" --prune --force < "$BATS_TEST_TMPDIR/tickets"
+  run --separate-stderr env TS_COMPARISONS_FILE="$PRUNE_STORE" TS_PRUNE_STATES="Shipped" \
+    bash "$TS" prune --force < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
-  [ "$(jq 'length' "$PRUNE_CACHE")" -eq 2 ]
+  [ "$(jq 'length' "$PRUNE_STORE")" -eq 2 ]
 }
 
-# ── verdict-only report ───────────────────────────────────────────────────────
-# --report ranks from the store alone and never asks. The closure gives a
+# ── comparison-only report ───────────────────────────────────────────────────────
+# report ranks from the store alone and never asks. The closure gives a
 # partial order, so tickets the store cannot separate are marked, not numbered.
 # The store IS the input: it already knows every ticket you have ranked, so a
 # report needs no ticket list and works with Linear unreachable.
 
-@test "--report needs no input at all" {
+@test "report needs no input at all" {
   local cache="$BATS_TEST_TMPDIR/r.json"
   cat > "$cache" <<'EOF'
 {"A|B":{"w":"A","at":"2026-07-01T00:00:00Z"},
@@ -1590,33 +1590,33 @@ EOF
 EOF
   # No pipe, no -f. bats leaves its own pipe on stdin even with <&-, so
   # /dev/null is how a test says "nothing was piped in".
-  run --separate-stderr env TS_CACHE="$cache" bash "$TS" --report < /dev/null
+  run --separate-stderr env TS_COMPARISONS_FILE="$cache" bash "$TS" report < /dev/null
   [ "$status" -eq 0 ]
   [[ "$output" == *"A"* ]]
   [[ "$output" == *"C"* ]]
 }
 
-@test "--report ranks every ticket the store knows about" {
+@test "report ranks every ticket the store knows about" {
   local cache="$BATS_TEST_TMPDIR/r.json"
   cat > "$cache" <<'EOF'
 {"A|B":{"w":"A","at":"2026-07-01T00:00:00Z"},
  "B|C":{"w":"B","at":"2026-07-01T00:00:00Z"}}
 EOF
-  run --separate-stderr env TS_CACHE="$cache" bash "$TS" --report < /dev/null
+  run --separate-stderr env TS_COMPARISONS_FILE="$cache" bash "$TS" report < /dev/null
   [ "$status" -eq 0 ]
   [ "$(grep -c . <<< "$output")" -eq 3 ]
   [[ "$(sed -n '1p' <<< "$output")" == *"A"* ]]
   [[ "$(sed -n '3p' <<< "$output")" == *"C"* ]]
 }
 
-@test "--report on an empty store says so rather than printing nothing" {
-  run --separate-stderr env TS_CACHE="$BATS_TEST_TMPDIR/missing.json" \
-    bash "$TS" --report < /dev/null
+@test "report on an empty store says so rather than printing nothing" {
+  run --separate-stderr env TS_COMPARISONS_FILE="$BATS_TEST_TMPDIR/missing.json" \
+    bash "$TS" report < /dev/null
   [ "$status" -ne 0 ]
-  [[ "$stderr" == *"no verdicts"* ]]
+  [[ "$stderr" == *"no comparisons"* ]]
 }
 
-@test "--report uses piped tickets for titles and scope" {
+@test "report uses piped tickets for titles and scope" {
   local cache="$BATS_TEST_TMPDIR/r.json"
   cat > "$cache" <<'EOF'
 {"A|B":{"w":"A","at":"2026-07-01T00:00:00Z"},
@@ -1625,15 +1625,15 @@ EOF
   # Only A and B piped in, so C - though known to the store - is out of scope.
   printf '%s\n' '[{"id":"A","title":"alpha title"},{"id":"B","title":"bravo title"}]' \
     > "$BATS_TEST_TMPDIR/tickets"
-  run --separate-stderr env TS_CACHE="$cache" \
-    bash "$TS" --report < "$BATS_TEST_TMPDIR/tickets"
+  run --separate-stderr env TS_COMPARISONS_FILE="$cache" \
+    bash "$TS" report < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
   [[ "$output" == *"alpha title"* ]]
   [ "$(grep -c . <<< "$output")" -eq 2 ]
   [[ "$output" != *"C"* ]]
 }
 
-@test "--report asks nothing" {
+@test "report asks nothing" {
   local cache="$BATS_TEST_TMPDIR/r.json"
   cat > "$cache" <<'EOF'
 {"A|B":{"w":"A","at":"2026-07-01T00:00:00Z"},
@@ -1642,13 +1642,13 @@ EOF
   printf '%s\n' '[{"id":"A","title":"a"},{"id":"B","title":"b"},{"id":"C","title":"c"}]' \
     > "$BATS_TEST_TMPDIR/tickets"
   : > "$BATS_TEST_TMPDIR/empty"
-  run --separate-stderr env TS_CACHE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/empty" \
-    bash "$TS" --report < "$BATS_TEST_TMPDIR/tickets"
+  run --separate-stderr env TS_COMPARISONS_FILE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/empty" \
+    bash "$TS" report < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
   [[ "$stderr" != *"Which is more important"* ]]
 }
 
-@test "--report orders by what the verdicts prove" {
+@test "report orders by what the comparisons prove" {
   local cache="$BATS_TEST_TMPDIR/r.json"
   cat > "$cache" <<'EOF'
 {"A|B":{"w":"A","at":"2026-07-01T00:00:00Z"},
@@ -1657,8 +1657,8 @@ EOF
   printf '%s\n' '[{"id":"C","title":"c"},{"id":"A","title":"a"},{"id":"B","title":"b"}]' \
     > "$BATS_TEST_TMPDIR/tickets"
   : > "$BATS_TEST_TMPDIR/empty"
-  run --separate-stderr env TS_CACHE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/empty" \
-    bash "$TS" --report < "$BATS_TEST_TMPDIR/tickets"
+  run --separate-stderr env TS_COMPARISONS_FILE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/empty" \
+    bash "$TS" report < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
   # A beats B and (transitively) C; B beats C. Input order is C,A,B - the
   # report must reorder.
@@ -1667,8 +1667,8 @@ EOF
   [[ "$(sed -n '3p' <<< "$output")" == *"C"* ]]
 }
 
-@test "--report marks tickets the store cannot separate" {
-  # D is in the list but no verdict mentions it, so it cannot be placed.
+@test "report marks tickets the store cannot separate" {
+  # D is in the list but no comparison mentions it, so it cannot be placed.
   local cache="$BATS_TEST_TMPDIR/r.json"
   cat > "$cache" <<'EOF'
 {"A|B":{"w":"A","at":"2026-07-01T00:00:00Z"}}
@@ -1676,13 +1676,13 @@ EOF
   printf '%s\n' '[{"id":"A","title":"a"},{"id":"B","title":"b"},{"id":"C","title":"c"},{"id":"D","title":"d"}]' \
     > "$BATS_TEST_TMPDIR/tickets"
   : > "$BATS_TEST_TMPDIR/empty"
-  run --separate-stderr env TS_CACHE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/empty" \
-    bash "$TS" --report < "$BATS_TEST_TMPDIR/tickets"
+  run --separate-stderr env TS_COMPARISONS_FILE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/empty" \
+    bash "$TS" report < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
   [[ "$output" == *"·"* ]]
 }
 
-@test "--report respects --top" {
+@test "report respects --top" {
   local cache="$BATS_TEST_TMPDIR/r.json"
   cat > "$cache" <<'EOF'
 {"A|B":{"w":"A","at":"2026-07-01T00:00:00Z"},
@@ -1691,13 +1691,13 @@ EOF
   printf '%s\n' '[{"id":"A","title":"a"},{"id":"B","title":"b"},{"id":"C","title":"c"}]' \
     > "$BATS_TEST_TMPDIR/tickets"
   : > "$BATS_TEST_TMPDIR/empty"
-  run --separate-stderr env TS_CACHE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/empty" \
-    bash "$TS" --report --top 2 < "$BATS_TEST_TMPDIR/tickets"
+  run --separate-stderr env TS_COMPARISONS_FILE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/empty" \
+    bash "$TS" report --top 2 < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
   [ "$(grep -c . <<< "$output")" -eq 2 ]
 }
 
-@test "--report writes nothing to the store" {
+@test "report writes nothing to the store" {
   local cache="$BATS_TEST_TMPDIR/r.json"
   cat > "$cache" <<'EOF'
 {"A|B":{"w":"A","at":"2026-07-01T00:00:00Z"}}
@@ -1707,13 +1707,13 @@ EOF
   printf '%s\n' '[{"id":"A","title":"a"},{"id":"B","title":"b"}]' \
     > "$BATS_TEST_TMPDIR/tickets"
   : > "$BATS_TEST_TMPDIR/empty"
-  run env TS_CACHE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/empty" \
-    bash "$TS" --report < "$BATS_TEST_TMPDIR/tickets"
+  run env TS_COMPARISONS_FILE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/empty" \
+    bash "$TS" report < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
   [ "$(cat "$cache")" = "$before" ]
 }
 
-@test "--report emits JSON with --json" {
+@test "report emits JSON with --json" {
   local cache="$BATS_TEST_TMPDIR/r.json"
   cat > "$cache" <<'EOF'
 {"A|B":{"w":"A","at":"2026-07-01T00:00:00Z"}}
@@ -1721,14 +1721,14 @@ EOF
   printf '%s\n' '[{"id":"A","title":"a"},{"id":"B","title":"b"}]' \
     > "$BATS_TEST_TMPDIR/tickets"
   : > "$BATS_TEST_TMPDIR/empty"
-  run --separate-stderr env TS_CACHE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/empty" \
-    bash "$TS" --report --json < "$BATS_TEST_TMPDIR/tickets"
+  run --separate-stderr env TS_COMPARISONS_FILE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/empty" \
+    bash "$TS" report --json < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
   [ "$(jq 'length' <<< "$output")" -eq 2 ]
   [ "$(jq -r '.[0].id' <<< "$output")" = "A" ]
 }
 
-@test "--show without --top is just a longer ranked list" {
+@test "show without --top is just a longer ranked list" {
   three_tickets
   run --separate-stderr run_sort $'1\n1\n1\n1\n1\n1' --show 3
   [ "$status" -eq 0 ]
