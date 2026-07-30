@@ -1300,7 +1300,7 @@ main() {
   # Greedy and approximate, which is all an estimate needs: walk tickets by how
   # much the memo knows about them, keeping one if it is ordered against
   # everything kept so far.
-  local placed=0 unplaced=0 i j known
+  local placed=0 newcomers=0 i j known
   local -a by_known=() chain=()
   while IFS=' ' read -r _ i; do
     by_known+=("$i")
@@ -1323,11 +1323,11 @@ main() {
     if [[ "$ok" == yes ]]; then
       chain+=("$cand"); placed=$(( placed + 1 ))
     else
-      unplaced=$(( unplaced + 1 ))
+      newcomers=$(( newcomers + 1 ))
     fi
   done
 
-  TS_ESTIMATE=$(awk -v n="$n" -v k="${top:-0}" -v placed="$placed" -v new="$unplaced" 'BEGIN {
+  TS_ESTIMATE=$(awk -v n="$n" -v k="${top:-0}" -v placed="$placed" -v new="$newcomers" 'BEGIN {
     if (placed >= 2 && new == 0) {
       # Everything is already ordered - the sort will consult the memo and ask
       # nothing. Saying ~n log n here is the worst version of the lie: it
@@ -1345,7 +1345,7 @@ main() {
     }
   }')
   TS_PLACED_KNOWN=$placed
-  TS_NEW_COUNT=$unplaced
+  TS_NEW_COUNT=$newcomers
 
   # Let bash pick a high FD rather than claiming 3 - anything sourcing this
   # (bats, for one) may already be using the low ones.
