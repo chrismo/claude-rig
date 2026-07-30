@@ -198,7 +198,7 @@ select_nums() {
   local r1 r2 r3
   ts_ask 0 1 2> "$ui" && r1=0 || r1=1
   [ "$r1" -eq 1 ]     # answered "2" - right ticket wins
-  grep -q "Which is more important" "$ui"
+  grep -q "Which should be worked next" "$ui"
 
   # Same pair again, and the reversed pair: both must come from the memo.
   # There is no second line of input, so a real prompt would abort here.
@@ -1780,7 +1780,7 @@ EOF
   run --separate-stderr env TS_COMPARISONS_FILE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/empty" \
     bash "$TS" report < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
-  [[ "$stderr" != *"Which is more important"* ]]
+  [[ "$stderr" != *"Which should be worked next"* ]]
 }
 
 @test "report orders by what the comparisons prove" {

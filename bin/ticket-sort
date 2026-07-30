@@ -3,7 +3,7 @@
 # ticket-sort - Rank Linear tickets by head-to-head comparison.
 #
 # Quicksort where every comparison is you. Each one dumps two tickets - title,
-# priority, status, due date, SLA, labels, project - and asks which matters more.
+# priority, status, due date, SLA, labels, project - and asks which to work first.
 # n log n questions later you have a ranked backlog.
 #
 # Usage: ticket-sort <command> [options]
@@ -37,9 +37,9 @@
 #   linear.sh json | ticket-sort prune --force
 #
 # At each comparison:
-#   l         the left ticket matters more      (Enter defaults to this)
-#   r         the right one does
-#   m         meh - neither; decided by coin flip and remembered
+#   l         work the left ticket first        (Enter defaults to this)
+#   r         work the right one first
+#   m         no preference; decided by coin flip and remembered
 #   rt / rb   the right ticket beats / loses to everything left in this pass
 #   lt / lb   same, for the left ticket
 #             (t / b still work, as aliases for rt / rb)
@@ -962,7 +962,7 @@ ts_ask() {
     ts_render "${TS_TICKETS[$a]}" l
     printf '\n'
     ts_render "${TS_TICKETS[$b]}" r
-    printf '\n%sWhich is more important?%s  [l] left  [r] right  [m] meh\n' \
+    printf '\n%sWhich should be worked next?%s  [l] left  [r] right  [m] no preference\n' \
       "$BOLD" "$RESET"
     printf '%s  [rt/rb] right tops/bottoms the group  [lt/lb] left does  [ol/or] open  [q] quit%s  ' \
       "$DIM" "$RESET"
