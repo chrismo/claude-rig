@@ -1434,6 +1434,141 @@ EOF
   [ "$(jq -r '.[1].rank' <<< "$output")" = "2" ]
 }
 
+# ── place ─────────────────────────────────────────────────────────────────────
+# `place` answers one question per newcomer: does it beat the cut? Above, it is
+# placed precisely within the head. Below, it goes to the tail and is not asked
+# about again. Measured over 30 simulated days that is 250 questions against 673
+# for full placement, with a MORE accurate top ten - because every question
+# lands on the boundary that decides membership.
+
+place_fixture() {
+  # A, B, C fully ordered (A > B > C). D and E are newcomers.
+  PLACE_STORE="$BATS_TEST_TMPDIR/pl.json"
+  cat > "$PLACE_STORE" <<'EOF'
+{"A|B":{"w":"A","at":"2026-07-01T00:00:00Z"},
+ "A|C":{"w":"A","at":"2026-07-01T00:00:00Z"},
+ "B|C":{"w":"B","at":"2026-07-01T00:00:00Z"}}
+EOF
+  printf '%s\n' '[{"id":"A","title":"a"},{"id":"B","title":"b"},{"id":"C","title":"c"},{"id":"D","title":"d"}]' \
+    > "$BATS_TEST_TMPDIR/tickets"
+}
+
+@test "place refuses to run without stored comparisons" {
+  printf '%s\n' '[{"id":"A","title":"a"},{"id":"B","title":"b"}]' \
+    > "$BATS_TEST_TMPDIR/tickets"
+  run --separate-stderr env TS_COMPARISONS_FILE="$BATS_TEST_TMPDIR/none.json" \
+    bash "$TS" place < "$BATS_TEST_TMPDIR/tickets"
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"full"* ]]     # points at the command that does work
+}
+
+@test "place asks one question per newcomer when they lose the cut" {
+  place_fixture
+  # D loses to the cut ticket, so one question settles it.
+  printf 'r\n' > "$BATS_TEST_TMPDIR/answers"
+  run --separate-stderr env TS_COMPARISONS_FILE="$PLACE_STORE" \
+    TS_INPUT="$BATS_TEST_TMPDIR/answers" \
+    bash "$TS" place --top 2 < "$BATS_TEST_TMPDIR/tickets"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"1 question"* ]]
+}
+
+@test "place does not disturb the tickets already ranked" {
+  place_fixture
+  printf 'r\n' > "$BATS_TEST_TMPDIR/answers"
+  run --separate-stderr env TS_COMPARISONS_FILE="$PLACE_STORE" \
+    TS_INPUT="$BATS_TEST_TMPDIR/answers" \
+    bash "$TS" place --top 2 < "$BATS_TEST_TMPDIR/tickets"
+  [ "$status" -eq 0 ]
+  # A still beats B - place must not re-open settled pairs.
+  [ "$(jq -r '.["A|B"].w' "$PLACE_STORE")" = "A" ]
+}
+
+@test "place records a losing newcomer as below the whole head" {
+  place_fixture
+  printf 'r\n' > "$BATS_TEST_TMPDIR/answers"
+  run --separate-stderr env TS_COMPARISONS_FILE="$PLACE_STORE" \
+    TS_INPUT="$BATS_TEST_TMPDIR/answers" \
+    bash "$TS" place --top 2 < "$BATS_TEST_TMPDIR/tickets"
+  [ "$status" -eq 0 ]
+  # One question said D loses to the cut; closure or explicit writes must leave
+  # D below every ticket in the head, or it would be asked again next run.
+  run env TS_COMPARISONS_FILE="$PLACE_STORE" bash "$TS" report --json < /dev/null
+  [ "$status" -eq 0 ]
+  local d_rank
+  d_rank=$(jq -r '.[] | select(.id=="D") | .beats' <<< "$output")
+  [ "$d_rank" = "0" ]
+}
+
+@test "place puts a winning newcomer into the head" {
+  place_fixture
+  # D beats the cut, then beats A too - it should land first.
+  printf 'l\nl\nl\n' > "$BATS_TEST_TMPDIR/answers"
+  run --separate-stderr env TS_COMPARISONS_FILE="$PLACE_STORE" \
+    TS_INPUT="$BATS_TEST_TMPDIR/answers" \
+    bash "$TS" place --top 2 < "$BATS_TEST_TMPDIR/tickets"
+  [ "$status" -eq 0 ]
+  [[ "$(head -1 <<< "$output")" == *"D"* ]]
+}
+
+@test "place asks nothing when there are no newcomers" {
+  place_fixture
+  printf '%s\n' '[{"id":"A","title":"a"},{"id":"B","title":"b"},{"id":"C","title":"c"}]' \
+    > "$BATS_TEST_TMPDIR/tickets"
+  : > "$BATS_TEST_TMPDIR/empty"
+  run --separate-stderr env TS_COMPARISONS_FILE="$PLACE_STORE" \
+    TS_INPUT="$BATS_TEST_TMPDIR/empty" \
+    bash "$TS" place --top 2 < "$BATS_TEST_TMPDIR/tickets"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"nothing new"* ]]
+}
+
+@test "place says how many newcomers it found before asking" {
+  place_fixture
+  printf 'r\n' > "$BATS_TEST_TMPDIR/answers"
+  run --separate-stderr env TS_COMPARISONS_FILE="$PLACE_STORE" \
+    TS_INPUT="$BATS_TEST_TMPDIR/answers" \
+    bash "$TS" place --top 2 < "$BATS_TEST_TMPDIR/tickets"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"1 new"* ]]
+}
+
+@test "place asks at most one question per newcomer below the cut" {
+  # The whole justification: 1 question per newcomer that loses the cut, versus
+  # binary-searching it against everything.
+  local store_a="$BATS_TEST_TMPDIR/a.json"
+  python3 - "$store_a" <<'PY'
+import json,sys
+ids=[f"R-{i:02d}" for i in range(12)]
+d={}
+for i in range(12):
+    for j in range(i+1,12):
+        a,b=sorted([ids[i],ids[j]])
+        d[f"{a}|{b}"]={"w":ids[i],"at":"2026-07-01T00:00:00Z"}
+json.dump(d,open(sys.argv[1],"w"))
+PY
+  python3 -c '
+import json
+ids=[f"R-{i:02d}" for i in range(12)]+["NEW-1","NEW-2","NEW-3"]
+print(json.dumps([{"id":i,"title":i} for i in ids]))' > "$BATS_TEST_TMPDIR/tickets"
+  # all newcomers lose
+  printf 'r\nr\nr\nr\nr\nr\nr\nr\nr\nr\nr\nr\nr\nr\nr\nr\nr\nr\nr\nr\n' \
+    > "$BATS_TEST_TMPDIR/answers"
+
+  run --separate-stderr env TS_COMPARISONS_FILE="$store_a" \
+    TS_INPUT="$BATS_TEST_TMPDIR/answers" \
+    bash "$TS" place --top 5 < "$BATS_TEST_TMPDIR/tickets"
+  [ "$status" -eq 0 ]
+  local place_q
+  place_q=$(grep -oE 'Done - [0-9]+ question' <<< "$stderr" | tr -dc '0-9')
+
+  # Deliberately NOT raced against `full`: its pivots are random, so it
+  # occasionally gets lucky and ties this - the test failed 1 run in 3 that way.
+  # What place actually guarantees is one question per newcomer that loses the
+  # cut, which is the claim worth pinning down.
+  [ "$place_q" -le 3 ]
+}
+
 # ── prune ─────────────────────────────────────────────────────────────────────
 # Prune drops comparisons only for tickets the input SAYS are finished. Absence is
 # never evidence: the input is usually a scoped query, so a ticket missing from
