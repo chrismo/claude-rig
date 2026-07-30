@@ -155,6 +155,8 @@ TS_BULK_PIVOT=''     # the right-hand ticket an rt/rb verdict is about
 TS_BULK_LEFT=''      # the left-hand ticket an lt/lb verdict is about
 TS_BULK_RESOLVED=0   # comparisons settled by a verdict rather than asked
 TS_ESTIMATE=0
+TS_PLACED_KNOWN=0    # tickets the store already orders against all others
+TS_NEW_COUNT=0       # the rest - what this run actually has to work out
 TS_WINDOW=0          # positions being ranked: --top K, or the whole backlog
 TS_PIVOT=0
 # -g because this file gets sourced from inside a function by the test suite,
@@ -1282,13 +1284,68 @@ main() {
   # shellcheck disable=SC2154  # assigned inside the trap body, one command earlier
   trap 'ts_cache_exit=$?; ts_cache_save; exit "$ts_cache_exit"' EXIT
 
-  # Ballpark, so the size of the job is clear before it starts: a full sort
-  # is ~n log2(n); quickselect is ~n to isolate the head, plus k log2(k) to
-  # rank it.
-  TS_ESTIMATE=$(awk -v n="$n" -v k="${top:-0}" 'BEGIN {
-    if (k > 0) { printf "%d", n + (k > 1 ? k * log(k) / log(2) : 0) }
-    else       { printf "%d", (n > 1 ? n * log(n) / log(2) : 0) }
+  # Ballpark, so the size of the job is clear before it starts.
+  #
+  # n log2(n) alone is badly wrong once the store has anything in it: 40 ranked
+  # tickets plus 5 new predicted ~247 questions for a run that asked 29. An
+  # up-front number off by 8x is what stops you running this daily, so count
+  # what the memo already knows.
+  #
+  # Split the list into the chain the store already orders and the newcomers it
+  # says nothing useful about. "Already placed" cannot mean "ordered against
+  # every ticket here" - a newcomer nobody has met yet would then disqualify the
+  # whole chain. It means ordered against everything else IN THE CHAIN, which is
+  # what makes a binary insert possible.
+  #
+  # Greedy and approximate, which is all an estimate needs: walk tickets by how
+  # much the memo knows about them, keeping one if it is ordered against
+  # everything kept so far.
+  local placed=0 unplaced=0 i j known
+  local -a by_known=() chain=()
+  while IFS=' ' read -r _ i; do
+    by_known+=("$i")
+  done < <(
+    for (( i = 0; i < n; i++ )); do
+      known=0
+      for (( j = 0; j < n; j++ )); do
+        (( i == j )) && continue
+        [[ -n "${TS_MEMO[$i:$j]:-}" ]] && known=$(( known + 1 ))
+      done
+      printf '%s %s\n' "$known" "$i"
+    done | sort -k1,1nr -k2,2n
+  )
+  local cand ok m
+  for cand in "${by_known[@]}"; do
+    ok=yes
+    for m in "${chain[@]}"; do
+      [[ -n "${TS_MEMO[$cand:$m]:-}" ]] || { ok=no; break; }
+    done
+    if [[ "$ok" == yes ]]; then
+      chain+=("$cand"); placed=$(( placed + 1 ))
+    else
+      unplaced=$(( unplaced + 1 ))
+    fi
+  done
+
+  TS_ESTIMATE=$(awk -v n="$n" -v k="${top:-0}" -v placed="$placed" -v new="$unplaced" 'BEGIN {
+    if (placed >= 2 && new == 0) {
+      # Everything is already ordered - the sort will consult the memo and ask
+      # nothing. Saying ~n log n here is the worst version of the lie: it
+      # predicts the most work for the run that does the least.
+      printf "%d", 0
+    } else if (placed >= 2 && new > 0) {
+      # Binary-insert each newcomer into the placed chain, then order the
+      # newcomers against each other.
+      per = log(placed + 1) / log(2)
+      printf "%d", new * per + (new > 1 ? new * log(new) / log(2) : 0)
+    } else if (k > 0) {
+      printf "%d", n + (k > 1 ? k * log(k) / log(2) : 0)
+    } else {
+      printf "%d", (n > 1 ? n * log(n) / log(2) : 0)
+    }
   }')
+  TS_PLACED_KNOWN=$placed
+  TS_NEW_COUNT=$unplaced
 
   # Let bash pick a high FD rather than claiming 3 - anything sourcing this
   # (bats, for one) may already be using the low ones.
@@ -1297,13 +1354,24 @@ main() {
 
   TS_WINDOW=${top:-$n}
 
+  # Say what is already settled before the first question - "5 new, 40 already
+  # placed" is the difference between a job you start and one you put off.
+  local known_note=''
+  if (( TS_PLACED_KNOWN >= 2 && TS_NEW_COUNT > 0 )); then
+    known_note=$(printf ' - %d already placed, %d new' \
+      "$TS_PLACED_KNOWN" "$TS_NEW_COUNT")
+  elif (( TS_PLACED_KNOWN >= 2 )); then
+    known_note=' - all already placed'
+  fi
+
   if [[ -n "$top" ]]; then
-    printf '%s%d tickets, top %d only - ~%d questions.%s\n' \
-      "$BOLD" "$n" "$top" "$TS_ESTIMATE" "$RESET" >&2
+    printf '%s%d tickets, top %d only%s - ~%d questions.%s\n' \
+      "$BOLD" "$n" "$top" "$known_note" "$TS_ESTIMATE" "$RESET" >&2
     ts_select 0 $(( n - 1 )) $(( top - 1 ))
     ts_sort 0 $(( top - 1 ))
   else
-    printf '%s%d tickets, ~%d questions.%s\n' "$BOLD" "$n" "$TS_ESTIMATE" "$RESET" >&2
+    printf '%s%d tickets%s, ~%d questions.%s\n' \
+      "$BOLD" "$n" "$known_note" "$TS_ESTIMATE" "$RESET" >&2
     ts_sort 0 $(( n - 1 ))
   fi
 

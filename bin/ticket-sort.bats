@@ -482,6 +482,62 @@ EOF
   [ "$output" = "5" ]
 }
 
+@test "the estimate counts only what the store does not already know" {
+  # n log n ignores the memo entirely: 40 cached + 5 new predicted ~247
+  # questions for a run that asked 29. A wildly wrong number up front is what
+  # stops you running this daily.
+  local cache="$BATS_TEST_TMPDIR/e.json"
+  cat > "$cache" <<'EOF'
+{"A|B":{"w":"A","at":"2026-07-01T00:00:00Z"},
+ "A|C":{"w":"A","at":"2026-07-01T00:00:00Z"},
+ "B|C":{"w":"B","at":"2026-07-01T00:00:00Z"}}
+EOF
+  printf '%s\n' '[{"id":"A","title":"a"},{"id":"B","title":"b"},{"id":"C","title":"c"},{"id":"D","title":"d"}]' \
+    > "$BATS_TEST_TMPDIR/tickets"
+  printf 'l\nl\nl\nl\nl\nl\n' > "$BATS_TEST_TMPDIR/answers"
+  run --separate-stderr env TS_CACHE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/answers" \
+    bash "$TS" < "$BATS_TEST_TMPDIR/tickets"
+  [ "$status" -eq 0 ]
+  # A, B, C are fully ordered already; only D is unknown. A 4-ticket n log n
+  # would say ~8; the honest answer is at most 3.
+  local est
+  est=$(grep -oE '~[0-9]+ question' <<< "$stderr" | head -1 | tr -dc '0-9')
+  [ -n "$est" ]
+  [ "$est" -le 3 ]
+}
+
+@test "the estimate says how many tickets are already placed" {
+  local cache="$BATS_TEST_TMPDIR/e.json"
+  cat > "$cache" <<'EOF'
+{"A|B":{"w":"A","at":"2026-07-01T00:00:00Z"},
+ "A|C":{"w":"A","at":"2026-07-01T00:00:00Z"},
+ "B|C":{"w":"B","at":"2026-07-01T00:00:00Z"}}
+EOF
+  printf '%s\n' '[{"id":"A","title":"a"},{"id":"B","title":"b"},{"id":"C","title":"c"},{"id":"D","title":"d"}]' \
+    > "$BATS_TEST_TMPDIR/tickets"
+  printf 'l\nl\nl\nl\nl\nl\n' > "$BATS_TEST_TMPDIR/answers"
+  run --separate-stderr env TS_CACHE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/answers" \
+    bash "$TS" < "$BATS_TEST_TMPDIR/tickets"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"already placed"* ]]
+  [[ "$stderr" == *"1 new"* ]]
+}
+
+@test "a cold run still estimates from n log n" {
+  # With nothing known there is nothing to subtract, so the old projection is
+  # still the right one.
+  printf '%s\n' '[{"id":"A","title":"a"},{"id":"B","title":"b"},{"id":"C","title":"c"},{"id":"D","title":"d"}]' \
+    > "$BATS_TEST_TMPDIR/tickets"
+  printf 'l\nl\nl\nl\nl\nl\n' > "$BATS_TEST_TMPDIR/answers"
+  run --separate-stderr env TS_CACHE=none TS_INPUT="$BATS_TEST_TMPDIR/answers" \
+    bash "$TS" < "$BATS_TEST_TMPDIR/tickets"
+  [ "$status" -eq 0 ]
+  local est
+  est=$(grep -oE '~[0-9]+ question' <<< "$stderr" | head -1 | tr -dc '0-9')
+  [ "$est" -ge 3 ]
+  [[ "$stderr" != *"already placed"* ]]
+}
+
 @test "the question line reports placed progress, not a stale estimate" {
   three_tickets
   run --separate-stderr run_sort $'l\nl\nl\nl\nl'
