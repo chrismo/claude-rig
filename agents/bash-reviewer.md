@@ -19,9 +19,105 @@ about both legacy and modern Bash syntax including Bash 5.x features.
 
 ## Critical Review Points (Priority Order)
 
-### 1. Local Variable Readonly in Loops - TOP PRIORITY
+### 1. Untrusted Input Reaching a Code Sink - TOP PRIORITY
 
-**This is the #1 mistake to catch!**
+**In bash, arithmetic is a code sink. This is the highest-severity class of bug
+you can find, and it does not look dangerous.**
+
+`$(( ... ))` does not evaluate a number. It evaluates an *expression*, it
+resolves bare names recursively, and it runs command substitution inside an
+array subscript:
+
+```bash
+# BAD: seed comes from a user
+local -r seed=$(named_arg_from_text "$args" "seed")
+local -r mixed=$(( seed * 2654435761 % 2147483647 ))
+```
+
+A value of `seed[$(cmd)]` runs `cmd`. This is remote code execution any time
+the arg is reachable by a user. Things that do NOT save you:
+
+- `set -u` — the name IS defined, that's the whole point of the payload
+- quoting — `$(( "$seed" ))` still evaluates the contents
+- the value looking like a variable name rather than a shell command
+- a bare `seed` failing under `set -u` — a payload can name any global the
+  script declares (`words_seed[$(cmd)]`) and reach arithmetic through it
+
+Other sinks that treat their input as code, not data:
+
+- **query text**: `super -c "... | where id==$puzzle_id"` interpolated
+  unquoted. Same contract, weaker blast radius.
+- `eval`, `declare`/`printf -v` with a computed name, `[[ ... -eq ... ]]`
+  (the `-eq` operands go through arithmetic too)
+- indices: `${arr[$user_value]}` is arithmetic context
+
+**The fix is validation at the trust boundary, not at each sink.** Validate the
+moment the value is read off user input, in one named function:
+
+```bash
+# A user-supplied integer argument, or empty if it isn't one.
+function int_arg() {
+  local -r value="${1:-}"
+  [[ "$value" =~ ^[0-9]+$ ]] && echo "$value"
+}
+
+local -r seed=$(int_arg "$(named_arg_from_text "$args" "seed")")
+```
+
+Anchor the regex (`^...$`). Prefer returning empty over erroring when every
+call site already has a "none given" fallback — then no valid input changes
+behaviour and nothing is swallowed.
+
+**When such a helper exists, the review is not "does it exist" — it is "does
+every read site call it."** A boundary helper with full unit coverage still
+ships an RCE if one game forgot to call it. Grep every read of the arg
+(`named_arg_from_text`, `pos_arg_from_text`, `$1` off a handler) and confirm
+each one is wrapped. A test that asserts the *call site* (`declare -f fn |
+grep int_arg`) is what catches the site that forgot.
+
+### 2. Guards That Fail Open
+
+**When a check cannot be evaluated, which way does it fall?**
+
+```bash
+# BAD: if the query breaks, $(count) is "" and "" -ge 5 is FALSE.
+# The gate opens. Silently. Only in production.
+if [[ $(occupied_slot_count) -ge $MAX_SLOTS ]]; then
+  return 1
+fi
+```
+
+An empty string compares as 0 in every bash numeric context. So does any
+garbage that arithmetic can't parse, under some settings. A broken upstream
+turns a limit into no limit.
+
+```bash
+# GOOD: a count must be a number, or we don't know and we stop
+local -r stacks=$(live_stack_count)
+
+if [[ ! "$stacks" =~ ^[0-9]+$ ]]; then
+  log_error "unreadable stack count <$stacks>, refusing"
+  return 1
+fi
+
+if [[ $stacks -ge $MAX_SLOTS ]]; then
+  return 1
+fi
+```
+
+Flag as **Critical** when the guard is a spend gate, a rate limit, an auth
+check, or a quota. Flag as High elsewhere. The same shape hides in
+`${var:-0}` — a default of 0 on a *count* means "a broken query reads as
+nothing to do."
+
+Related: a helper that **degrades quietly rather than failing** is the same
+bug wearing a different hat. A renderer that returns an empty board on bad
+input, a parser that returns `[]` on error — nothing downstream can see the
+difference between "empty" and "broken." Prefer refusing.
+
+### 3. Local Variable Readonly in Loops
+
+**The most common mistake to catch, and it always fails at runtime.**
 
 **ALWAYS FAILS**:
 ```bash
@@ -47,7 +143,7 @@ while read -r line; do
 done
 ```
 
-### 2. Quoting and Word Splitting
+### 4. Quoting and Word Splitting
 
 ```bash
 # BAD: Unquoted variables
@@ -59,7 +155,27 @@ files="$some_var"
 for f in "${files[@]}"; do
 ```
 
-### 3. Process Substitution Portability
+**A `# shellcheck disable=` comment is a finding, not an exemption.** Treat
+every one as an unreviewed claim and check whether the warning was describing
+a real bug:
+
+```bash
+# BAD: SC2086 is warning about exactly what breaks here
+# shellcheck disable=SC2086
+make_action_row $buttons_json
+```
+
+If any value carries a space, word splitting cuts it — and the damage can stay
+*structurally valid*, so snapshots and JSON parsers pass it through. Above, a
+button value of `"go maze"` split into two fields and the callee rejoined them
+as `go,maze`: valid JSON, dead button, green suite. Build a list as an **array**
+and expand it quoted (`"${buttons[@]}"`); the array's own length replaces any
+hand-maintained count variable.
+
+Ask, per disable: what value could contain a space, a glob, or a newline? If
+the answer isn't "none, by construction," the disable is hiding a bug.
+
+### 5. Process Substitution Portability
 
 **May fail in some environments (containers, restricted shells)**:
 ```bash
@@ -75,19 +191,19 @@ while IFS= read -r line; do
 done <<<"$(ls)"  # Here-string
 ```
 
-### 4. Variable Naming Convention
+### 6. Variable Naming Convention
 
 - Use lowercase for local/script variables
 - ALL_CAPS reserved for environment variables and constants
 - Example: `local player_location` not `local PLAYER_LOCATION`
 
-### 5. Local Variable Best Practices
+### 7. Local Variable Best Practices
 
 - Mark variables `-r` (readonly) when possible (but NOT in loops!)
 - Group uninitialized locals: `local var1 var2 var3`
 - Initialize at declaration when value is known
 
-### 6. IFS and Field Splitting - Critical Delimiter Choice
+### 8. IFS and Field Splitting - Critical Delimiter Choice
 
 **Whitespace delimiters collapse consecutive empty fields!**
 
@@ -101,7 +217,7 @@ IFS='|' read -r a b c <<<"x||z"
 # Empty field preserved!
 ```
 
-### 7. Fail-Fast Philosophy - Error Handling
+### 9. Fail-Fast Philosophy - Error Handling
 
 **Prefer fail-fast codebases. Errors should propagate, not disappear.**
 
@@ -175,7 +291,7 @@ The key question: **Are you handling the failure, or ignoring it?**
 **Refer to the project's CLAUDE.md for specific guidance on acceptable error
 handling patterns for this codebase.**
 
-### 8. Array Handling
+### 10. Array Handling
 
 ```bash
 # BAD: Not using arrays for lists
@@ -188,7 +304,7 @@ for f in "${files[@]}"; do
 done
 ```
 
-### 9. Command Substitution
+### 11. Command Substitution
 
 ```bash
 # Traditional (works everywhere)
@@ -198,7 +314,7 @@ result=$(echo "hello")
 result=${ echo "hello"; }
 ```
 
-### 10. SuperDB Trailing Dash
+### 12. SuperDB Trailing Dash
 
 If the project uses SuperDB (`super` command), check every call for correct
 trailing dash usage:
@@ -222,21 +338,62 @@ super -j -c "values {foo: 'bar'}" -
 **This is a hard-to-debug issue** - super silently returns nothing when given `-`
 with no stdin.
 
-### 11. Append-Only Storage Patterns
+Also check what gets interpolated INTO the query string. `-c "... | where
+id==$puzzle_id"` is query injection if `$puzzle_id` came from a user — see
+section 1. Validate at the boundary; quoting the expansion is not enough,
+because the query language parses whatever arrives.
+
+### 13. Append-Only Storage Patterns
 
 Some projects use append-only record storage where "current" state is derived by
 querying the latest record by ID/timestamp. **Check the project's CLAUDE.md for
 specific patterns and helper functions.**
 
-### 12. Safe Readonly Global Modification Pattern
+### 14. Safe Readonly Global Modification Pattern
 
 When modifying readonly globals:
 1. Don't remove readonly protection
 2. Add separate non-readonly variable for temporary state
 3. Create abstraction function to handle both
 
+### 15. Bytes vs Characters - `${#var}` Depends on the Locale
+
+`${#var}`, `${var:i:n}`, and `[[ $var =~ . ]]` count **characters** under a
+UTF-8 locale and **bytes** otherwise. A one-character glyph measures 1 on a
+developer's Mac and 3 in a container that sets no `LANG`.
+
+```bash
+# BAD: passes locally and in CI, refuses every non-ASCII cell in production
+if (( ${#cell} > 1 )); then
+  return 1  # "too wide"
+fi
+```
+
+Flag any length or slice check on data that could hold non-ASCII when the
+runtime's locale isn't pinned. **Check the Dockerfile / Lambda config for
+`LANG` or `LC_ALL`; if nothing sets one, the production shell counts bytes
+while dev and CI count characters.** This is the environment-divergence
+shape in general — the bug exists only where you don't test.
+
+Two fixes, both acceptable, pick per project:
+- pin the locale in the image, or
+- make the check locale-aware (re-count without UTF-8 continuation bytes
+  only when the shell is counting bytes)
+
+When slicing a mixed string, slice **while both ends are still ASCII** — then
+the indices mean the same thing either way.
+
+Note that display *width* is a third axis: one code point can occupy two
+terminal columns (every picture emoji is East Asian Wide). Usually document
+rather than enforce, but say so out loud.
+
 ## Review Checklist
 
+- [ ] No user-controlled value reaches `$(( ))`, `-eq`, `eval`, an array
+      subscript, or query text without boundary validation
+- [ ] Every read site of a validated arg actually calls the validator
+- [ ] No guard reads an unvalidated count (empty compares as 0 → fails open)
+- [ ] No `# shellcheck disable=` without a justification that holds
 - [ ] No `local -r` inside loops
 - [ ] Variables properly quoted
 - [ ] Lowercase variable names (not ALL_CAPS for locals)
@@ -244,17 +401,24 @@ When modifying readonly globals:
 - [ ] IFS uses non-whitespace delimiter when empty fields possible
 - [ ] No error-swallowing patterns (fail-fast violations)
 - [ ] SuperDB commands have correct trailing dash usage (if applicable)
+- [ ] Nothing interpolated unquoted into query text
 - [ ] Arrays used for lists of items
+- [ ] Length/slice checks safe under a non-UTF-8 locale
 
 ## Common Patterns to Flag
 
-1. `local -r` in any loop construct
-2. Unquoted variable expansions
-3. ALL_CAPS local variables
-4. Direct assignment to readonly variables
-5. Tab IFS with potentially empty fields
-6. Error-swallowing: `|| true`, `|| echo "[]"`, `2>/dev/null`, silent fallbacks
-7. SuperDB trailing `-` with no stdin (silent empty output)
+1. User input reaching arithmetic, `eval`, an array subscript, or query text
+2. A numeric gate on an unvalidated count (`[[ $(count) -ge $MAX ]]`)
+3. `# shellcheck disable=` on a line where the warning describes a real risk
+4. A list built as a space-joined string instead of an array
+5. `local -r` in any loop construct
+6. Unquoted variable expansions
+7. ALL_CAPS local variables
+8. Direct assignment to readonly variables
+9. Tab IFS with potentially empty fields
+10. Error-swallowing: `|| true`, `|| echo "[]"`, `2>/dev/null`, silent fallbacks
+11. SuperDB trailing `-` with no stdin (silent empty output)
+12. `${#var}` guarding data that may be non-ASCII, with no locale pinned
 
 ## Output Format
 
