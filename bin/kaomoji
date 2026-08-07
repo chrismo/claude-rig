@@ -60,9 +60,19 @@ MOODS[shrug]='
 ¯\_(ツ)_/¯
 ╮(￣▽￣)╭
 ┐(´д`)┌
-ᕕ( ᐛ )ᕗ
 ╮(︶︿︶)╭
 乁( ⁰͡ Ĺ̯ ⁰͡ )ㄏ
+'
+
+# The running man and friends: leaving, dancing, barrelling onward. Arms have
+# direction and momentum -- that is what makes them not shrugs.
+MOODS[strut]='
+ᕕ( ᐛ )ᕗ
+ᕕ(⌐■_■)ᕗ ♪
+ᕙ(⇀‸↼‶)ᕗ
+ᕕ( ᐖ )ᕗ
+♪┏(・o･)┛♪
+ᕕ(╯°□°)ᕗ
 '
 
 MOODS[table-flip]='
@@ -202,6 +212,8 @@ declare -A SYNONYMS=(
   [tgif]=friday        [weekend]=friday
   [focused]=determined [ready]=determined   [letsgo]=determined
   [whoops]=oops        [yikes]=oops         [uhoh]=oops          [sorry]=oops
+  [bail]=strut         [outtahere]=strut    [leaving]=strut      [bye]=strut
+  [swagger]=strut      [groove]=strut       [onward]=strut
 )
 
 # --- helpers ----------------------------------------------------------------

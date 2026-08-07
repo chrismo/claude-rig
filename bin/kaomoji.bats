@@ -48,6 +48,32 @@ clipboard() { cat "$BATS_TEST_TMPDIR/clipboard"; }
   grep -Fxq -f "$BATS_TEST_TMPDIR/clipboard" "$BATS_TEST_TMPDIR/faces"
 }
 
+@test "strut mood exists and has faces" {
+  run "$KAOMOJI" list strut
+  [ "$status" -eq 0 ]
+  [ "${#lines[@]}" -gt 1 ]
+}
+
+@test "the running man moved out of shrug into strut" {
+  run "$KAOMOJI" list strut
+  [[ "$output" == *"ᕕ( ᐛ )ᕗ"* ]]
+  run "$KAOMOJI" list shrug
+  [[ "$output" != *"ᕕ( ᐛ )ᕗ"* ]]
+}
+
+@test "shrug faces all have upturned-palm arms, not directional ones" {
+  # Regression guard for the actual bug: a face with ᕗ/ᕤ momentum arms is a
+  # strut, not a shrug.
+  run "$KAOMOJI" list shrug
+  [[ "$output" != *"ᕗ"* ]]
+  [[ "$output" != *"ᕤ"* ]]
+}
+
+@test "strut has synonyms" {
+  run "$KAOMOJI" --synonyms
+  [[ "$output" == *"strut"* ]]
+}
+
 @test "exact mood name wins over any partial interpretation" {
   run bash -c "diff <('$KAOMOJI' list cat) <('$KAOMOJI' list cat)"
   [ "$status" -eq 0 ]
