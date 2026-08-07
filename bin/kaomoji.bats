@@ -134,6 +134,38 @@ clipboard() { cat "$BATS_TEST_TMPDIR/clipboard"; }
   [ -n "$output" ]
 }
 
+@test "SKILL.md catalog lists every face the script has" {
+  # The skill inlines the catalog so the model can pick in ONE round-trip
+  # instead of shelling out to --list first. That duplication has to be kept
+  # honest, or /kaomoji starts copying faces the script doesn't know about.
+  skill="${BATS_TEST_DIRNAME}/../skills/kaomoji/SKILL.md"
+  [ -f "$skill" ] || skip "SKILL.md not found"
+
+  missing=""
+  while IFS= read -r face; do
+    [ -n "$face" ] || continue
+    grep -qF -- "$face" "$skill" || missing+="$face"$'\n'
+  done < <("$KAOMOJI" --list | while read -r m; do "$KAOMOJI" --list "$m"; done)
+
+  if [ -n "$missing" ]; then
+    echo "faces in bin/kaomoji but missing from SKILL.md catalog:" >&2
+    echo "$missing" >&2
+    return 1
+  fi
+}
+
+@test "SKILL.md catalog names every mood the script has" {
+  skill="${BATS_TEST_DIRNAME}/../skills/kaomoji/SKILL.md"
+  [ -f "$skill" ] || skip "SKILL.md not found"
+
+  while IFS= read -r mood; do
+    grep -qF -- "$mood" "$skill" || {
+      echo "mood '$mood' missing from SKILL.md catalog" >&2
+      return 1
+    }
+  done < <("$KAOMOJI" --list)
+}
+
 @test "every listed mood has at least one face" {
   run "$KAOMOJI" --list
   [ "$status" -eq 0 ]

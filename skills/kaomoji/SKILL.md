@@ -8,64 +8,88 @@ effort: low
 
 # kaomoji — summon a face
 
-`kaomoji` holds mood-grouped emoticons and copies your pick to the clipboard
-with `pbcopy`. **You** choose which face; the script just supplies candidates
-and does the clipboard write.
+Pick the face that fits, copy it, say one line. **Do it in a single Bash call.**
+The full catalog is below, so you never need to run `--list` first.
 
-## The one thing that matters
+## Do exactly this
 
-The user asked for a face because they want *the right face*. Read the room —
-what they just said, what just happened in the session, how the day is going —
-and pick accordingly. A random draw is the fallback, not the goal.
+One tool call, then one line of prose. Nothing else:
 
-## How to do it
+```
+printf '%s' '(・へ・)' | pbcopy
+```
 
-1. See what's available:
+Single-quote the face — they're full of backslashes and parens. If the face
+itself contains a single quote, use `kaomoji <mood>` instead to draw one.
 
-   ```
-   kaomoji --list          # mood names
-   kaomoji --list shrug    # every face in one mood
-   kaomoji --all           # everything, grouped
-   ```
+Then reply with just the face and a short clause on why. Example:
 
-2. Pick a face and copy it. To copy an exact face you chose:
+> `(・へ・)` — copied. Rage was too hot for "blerg"; this is the *oh, come on* face.
 
-   ```
-   printf '%s' '¯\_(ツ)_/¯' | pbcopy
-   ```
+Do not run `--list`, do not verify with `pbpaste`, do not explain your process.
+One call, one line.
 
-   Single-quote it — these are full of backslashes and parens.
+## Choosing
 
-3. Or let the script draw from a mood you picked, when any face in that mood
-   would do:
+Match the *intensity*, not just the valence. "Bummed" is deflated, not weeping.
+"Blerg" is exasperated, not enraged. When the argument is free text, map it to
+the nearest face below rather than the nearest mood name.
 
-   ```
-   kaomoji table-flip      # prints and copies one
-   kaomoji -n 5 happy      # prints 5, copies the first
-   ```
+With no argument, read the session: just shipped → celebrate, third failed test
+→ table-flip, Friday afternoon → friday. If nothing stands out, run bare
+`kaomoji`.
 
-4. Show the user what landed on the clipboard. One line, the face itself, and
-   maybe half a sentence about why that one. Don't write a paragraph about an
-   emoticon.
+## The catalog
 
-## Reading the argument
+```
+happy         (◕‿◕)  (＾▽＾)  (´･ω･`)ﾉ  ヽ(´▽`)/  (*^▽^*)
+              (๑˃ᴗ˂)ﻭ  (✿◠‿◠)  (≧◡≦)  ＼(^o^)／  (◍•ᴗ•◍)
 
-- `/kaomoji` with nothing — infer the mood from the session. Just shipped
-  something? `celebrate`. Third failed test run? `table-flip`. Friday
-  afternoon? `friday`. When genuinely nothing stands out, run bare `kaomoji`.
-- `/kaomoji shrug` — a real mood name. Use that mood.
-- `/kaomoji this deploy is cursed` — free text, not a mood name. Map it to the
-  closest mood yourself (that one's `rage` or `table-flip`), or hand-pick from
-  `--all`.
+excited       ヽ(°〇°)ﾉ  (ﾉ◕ヮ◕)ﾉ*:･ﾟ✧  ＼(≧▽≦)／  o(≧∇≦o)
+              (★^O^★)  ヽ(＾Д＾)ﾉ  (๑>◡<๑)  ٩(◕‿◕)۶
+
+shrug         ¯\_(ツ)_/¯  ╮(￣▽￣)╭  ┐(´д`)┌  ᕕ( ᐛ )ᕗ
+              ╮(︶︿︶)╭  乁( ⁰͡ Ĺ̯ ⁰͡ )ㄏ
+
+table-flip    (╯°□°)╯︵ ┻━┻  (ノಠ益ಠ)ノ彡┻━┻  (ノ`Д´)ノ彡┻━┻
+              ┻━┻ ︵ヽ(`Д´)ﾉ︵ ┻━┻
+
+table-unflip  ┬─┬ノ( º _ ºノ)  ┬──┬ ¯\_(ツ)  (╮°-°)╮┳━┳
+
+rage          (╬ ಠ益ಠ)  ヽ(≧Д≦)ノ  (＃`Д´)  (ﾉಥ益ಥ)ﾉ  ୧((#Φ益Φ#))୨
+
+sad           (╥﹏╥)  (っ- ‸ - ς)  (｡•́︿•̀｡)  (ಥ﹏ಥ)  (´；ω；`)  (◞‸◟)
+
+confused      (・_・?)  (⊙_⊙)?  (°ロ°) !  ٩(͡๏_๏)۶  (¬_¬)  (・∀・)?
+
+smug          (¬‿¬)  ( ͡° ͜ʖ ͡°)  (￣ω￣)  ヽ(・∀・)ﾉ  (^_~)  ( •_•)>⌐■-■  (⌐■_■)
+
+tired         (－_－) zzZ  (｡-‿-｡)  ( ˘･з･)  (・_・;)  (￣﹃￣)  （￣o￣） . z Z
+
+love          (♥ω♥*)  (*♡∀♡)  (´,,•ω•,,)♡  ♡( ◡‿◡ )  (っ˘з(˘⌣˘ )
+
+bear          ʕ•ᴥ•ʔ  ʕ￫ᴥ￩ʔ  ʕっ•ᴥ•ʔっ  ʕ•̀ω•́ʔ✧
+
+cat           (=^･ω･^=)  ฅ^•ﻌ•^ฅ  (=①ω①=)  ヾ(=｀ω´=)ノ”
+
+celebrate     ヽ(*⌒▽⌒*)ﾉ  (っ˘ω˘ς )  ＼(^▽^)／  (*≧▽≦)ﾉ ~☆  ٩(ˊᗜˋ*)و
+
+friday        ヽ(o^▽^o)ノ  (´｡• ᵕ •｡`) ♡  (ノ^_^)ノ  ＼(٥⁀▽⁀ )／
+              (っ^▿^)۶🍺  (*≧∀≦*)
+
+dunno         (•_•)  (￢_￢)  ( ˘⌒˘ )  (・へ・)
+
+determined    (ง •̀_•́)ง  ᕦ(ò_óˇ)ᕤ  (๑•̀ㅂ•́)و✧  o(￣ヘ￣o＃)
+
+oops          (・_・;)  (￣▽￣;)  (； ･`д･´)  (°ロ°;)  (⁄ ⁄•⁄ω⁄•⁄ ⁄)
+```
 
 ## Adding faces
 
 Faces live in the `MOODS` array in `bin/kaomoji` in the claude-rig repo — edit
-there, never `~/.local/bin/kaomoji` (a symlink). New moods need no other
-change; the tests iterate over whatever `--list` reports. Re-run:
+there, never `~/.local/bin/kaomoji` (a symlink). **Update the catalog above to
+match**, then re-run the tests, which check the two stay in sync:
 
 ```
 PATH="/opt/homebrew/opt/bash/bin:$PATH" bats bin/kaomoji.bats
 ```
-
-(bash 4+ needed for associative arrays, same as `ticket-sort`.)
