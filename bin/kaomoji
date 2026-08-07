@@ -336,36 +336,33 @@ mood_exists() {
 
 usage() {
   cat <<'EOF'
-usage: kaomoji [MOOD] [COUNT]
-       kaomoji list [MOOD]
-       kaomoji all
+usage: kaomoji [MOOD] [COUNT]        summon a face, copy it
+       kaomoji <view> [MOOD]         browse without copying
 
+summoning:
   MOOD      pick from a specific mood; omit for any mood
-  COUNT     print COUNT candidates, default 1; all of them are copied,
-            space-delimited on one line. A bare number, in either order --
-            `kaomoji happy 5` or `kaomoji 5`
-  -n COUNT  same as the positional COUNT
+  COUNT     how many, default 1. All of them are copied, space-delimited
+            on one line. A bare number, either order: `kaomoji happy 5`
 
-  list      list moods with their aliases, or every face in MOOD
-            (also -l, --list)
-  all       print every face in every mood (also --all)
-  --catalog   every mood and its faces, grouped (the browsable view)
-  --moods     bare mood names, one per line (for scripting)
-  --synonyms  the alias -> mood table
+browsing (never touches the clipboard):
+  moods     every mood with its aliases
+  faces     every mood's faces, grouped -- or just MOOD's with `faces sad`
+  synonyms  the alias -> mood table
+  names     bare mood names, one per line, for scripting
+
+A view word works in either position: `kaomoji faces sad` == `kaomoji sad faces`.
 
 MOOD matching: an exact mood name wins, then an exact synonym (mad -> rage),
 then substring anywhere. A partial that hits several moods pools all their
 faces, so `kaomoji table` draws from table-flip and table-unflip both.
 
-Browsing with list/all never touches the clipboard.
-
 examples:
   kaomoji              one face, any mood
   kaomoji shrug        one shrug
-  kaomoji happy 5      five happy candidates, all copied space-delimited
-  kaomoji list         mood names
-  kaomoji list sad     every sad face
-  kaomoji sad list     same thing
+  kaomoji mad          one rage face (alias)
+  kaomoji happy 5      five candidates, all copied space-delimited
+  kaomoji moods        what can I ask for?
+  kaomoji faces sad    show me the sad ones
 EOF
 }
 
@@ -379,20 +376,27 @@ mood=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
-    -l|--list) mode=list; shift ;;
+    # Documented surface is bare words (see usage). The --flag spellings are
+    # undocumented back-compat for anything already typed or scripted.
+    -l|--list) mode=moods_table; shift ;;
     --all) mode=all; shift ;;
     --synonyms) mode=synonyms; shift ;;
-    --moods) mode=moods; shift ;;
-    --catalog) mode=catalog; shift ;;
+    --moods) mode=names; shift ;;
+    --catalog) mode=faces; shift ;;
     -n)
       [[ $# -ge 2 ]] || { echo "kaomoji: -n needs a number" >&2; exit 2; }
       count="$2"; count_set=1; shift 2
       ;;
     -*) echo "kaomoji: unknown option $1" >&2; usage >&2; exit 2 ;;
-    # Bare `list` subcommand, in either position: `kaomoji list shrug` or
-    # `kaomoji shrug list`. Matched before the mood branch so it can never be
-    # read as a mood name; a test enforces no mood is called "list".
-    list|all) mode="$1"; shift ;;
+    # Bare-word views, usable in either position: `kaomoji faces sad` or
+    # `kaomoji sad faces`. Matched before the mood branch so they can never be
+    # read as mood names; a test enforces no mood shares these names.
+    moods)    mode=moods_table; shift ;;
+    faces)    mode=faces; shift ;;
+    synonyms) mode=synonyms; shift ;;
+    names)    mode=names; shift ;;
+    list)     mode=moods_table; shift ;;   # back-compat
+    all)      mode=all; shift ;;           # back-compat
     # A bare number is the count, in either position: `kaomoji happy 5` or
     # `kaomoji 5 happy`. No mood is all-digits, so this is unambiguous — a
     # test enforces that.
@@ -427,7 +431,9 @@ fi
 # --- modes ------------------------------------------------------------------
 
 case "$mode" in
-  list)
+  # `moods` alone lists moods with their aliases; given a MOOD it narrows to
+  # that mood's faces, which is what `list sad` has always done.
+  moods_table)
     if [[ -n "$resolved" ]]; then
       while read -r m; do faces_for "$m"; done <<< "$resolved"
     else
@@ -435,12 +441,17 @@ case "$mode" in
     fi
     exit 0
     ;;
-  moods)
-    mood_names
+  # `faces` alone is the grouped catalog; `faces MOOD` narrows to one mood.
+  faces)
+    if [[ -n "$resolved" ]]; then
+      while read -r m; do faces_for "$m"; done <<< "$resolved"
+    else
+      mood_catalog
+    fi
     exit 0
     ;;
-  catalog)
-    mood_catalog
+  names)
+    mood_names
     exit 0
     ;;
   synonyms)

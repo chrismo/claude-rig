@@ -9,7 +9,7 @@ effort: low
 # kaomoji — summon a face
 
 Pick the face that fits, copy it, say one line. **Do it in a single Bash call.**
-The full catalog is below, so you never need to run `--list` first.
+The full catalog is below, so you never need to run a lookup first.
 
 ## Do exactly this
 
@@ -26,7 +26,7 @@ Then reply with just the face and a short clause on why. Example:
 
 > `(・へ・)` — copied. Rage was too hot for "blerg"; this is the *oh, come on* face.
 
-Do not run `--list`, do not verify with `pbpaste`, do not explain your process.
+Do not run a lookup, do not verify with `pbpaste`, do not explain your process.
 One call, one line.
 
 ## Choosing
@@ -109,7 +109,7 @@ there, never `~/.local/bin/kaomoji` (a symlink).
 
 The catalog above is **generated**, not hand-maintained. After editing the
 faces, regenerate it and run the tests (one of which asserts the block matches
-`kaomoji --catalog` exactly, so drift fails the suite):
+`kaomoji faces` exactly, so drift fails the suite):
 
 ```
 ./bin/kaomoji-sync-skill

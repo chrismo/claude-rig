@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Regenerate the catalog block in skills/kaomoji/SKILL.md from `kaomoji
-# --catalog`, so the skill's copy can never drift from the script's faces.
+# faces`, so the skill's copy can never drift from the script's faces.
 # A bats test asserts the two match, so this is what you run after editing
 # the MOODS array.
 
@@ -15,7 +15,7 @@ kaomoji="$repo/bin/kaomoji"
 
 catalog_file=$(mktemp)
 trap 'rm -f "$catalog_file" "$skill.tmp"' EXIT
-"$kaomoji" --catalog > "$catalog_file"
+"$kaomoji" faces > "$catalog_file"
 
 # Replace the fenced block immediately following the "## The catalog" heading.
 # The catalog comes in via a file, not -v: BSD awk rejects a newline inside a

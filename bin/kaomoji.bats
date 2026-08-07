@@ -74,6 +74,80 @@ clipboard() { cat "$BATS_TEST_TMPDIR/clipboard"; }
   [[ "$output" == *"strut"* ]]
 }
 
+@test "faces is the grouped catalog view" {
+  run bash -c "diff <('$KAOMOJI' faces) <('$KAOMOJI' --catalog)"
+  [ "$status" -eq 0 ]
+}
+
+@test "faces MOOD prints just that mood's faces" {
+  run bash -c "diff <('$KAOMOJI' faces sad) <('$KAOMOJI' --list sad)"
+  [ "$status" -eq 0 ]
+}
+
+@test "MOOD faces also works" {
+  run bash -c "diff <('$KAOMOJI' sad faces) <('$KAOMOJI' --list sad)"
+  [ "$status" -eq 0 ]
+}
+
+@test "moods is the mood+alias listing" {
+  run bash -c "diff <('$KAOMOJI' moods) <('$KAOMOJI' --list)"
+  [ "$status" -eq 0 ]
+}
+
+@test "synonyms is the alias table" {
+  run bash -c "diff <('$KAOMOJI' synonyms) <('$KAOMOJI' --synonyms)"
+  [ "$status" -eq 0 ]
+}
+
+@test "names gives bare mood names for scripting" {
+  run bash -c "diff <('$KAOMOJI' names) <('$KAOMOJI' --moods)"
+  [ "$status" -eq 0 ]
+}
+
+@test "bare-word views never touch the clipboard" {
+  for sub in moods faces synonyms names; do
+    rm -f "$BATS_TEST_TMPDIR/clipboard"
+    run "$KAOMOJI" "$sub"
+    [ "$status" -eq 0 ]
+    [ ! -f "$BATS_TEST_TMPDIR/clipboard" ] || {
+      echo "'$sub' wrote the clipboard" >&2
+      return 1
+    }
+  done
+}
+
+@test "help shows no double-dash flags" {
+  run "$KAOMOJI" --help
+  [ "$status" -eq 0 ]
+  # The bare-word surface is the documented one; flags survive only as
+  # undocumented back-compat aliases.
+  [[ "$output" != *"--catalog"* ]]
+  [[ "$output" != *"--moods"* ]]
+  [[ "$output" != *"--synonyms"* ]]
+  [[ "$output" != *"--list"* ]]
+  [[ "$output" != *"--all"* ]]
+}
+
+@test "old flags still work as back-compat aliases" {
+  for flag in --list --all --catalog --moods --synonyms; do
+    run "$KAOMOJI" "$flag"
+    [ "$status" -eq 0 ] || { echo "$flag broke" >&2; return 1; }
+    [ -n "$output" ]
+  done
+}
+
+@test "no mood is named after a subcommand" {
+  run "$KAOMOJI" names
+  for reserved in moods faces synonyms names list all; do
+    while read -r mood; do
+      [ "$mood" != "$reserved" ] || {
+        echo "mood '$mood' collides with subcommand" >&2
+        return 1
+      }
+    done <<< "$output"
+  done
+}
+
 @test "--catalog groups faces under mood names" {
   run "$KAOMOJI" --catalog
   [ "$status" -eq 0 ]
