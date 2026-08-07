@@ -42,49 +42,57 @@ With no argument, read the session: just shipped → celebrate, third failed tes
 ## The catalog
 
 ```
-happy         (◕‿◕)  (＾▽＾)  (´･ω･`)ﾉ  ヽ(´▽`)/  (*^▽^*)
-              (๑˃ᴗ˂)ﻭ  (✿◠‿◠)  (≧◡≦)  ＼(^o^)／  (◍•ᴗ•◍)
-
-excited       ヽ(°〇°)ﾉ  (ﾉ◕ヮ◕)ﾉ*:･ﾟ✧  ＼(≧▽≦)／  o(≧∇≦o)
-              (★^O^★)  ヽ(＾Д＾)ﾉ  (๑>◡<๑)  ٩(◕‿◕)۶
-
-shrug         ¯\_(ツ)_/¯  ╮(￣▽￣)╭  ┐(´д`)┌
-              ╮(︶︿︶)╭  乁( ⁰͡ Ĺ̯ ⁰͡ )ㄏ
-
-strut         ᕕ( ᐛ )ᕗ  ᕕ(⌐■_■)ᕗ ♪  ᕙ(⇀‸↼‶)ᕗ  ᕕ( ᐖ )ᕗ
-              ♪┏(・o･)┛♪  ᕕ(╯°□°)ᕗ
-
-table-flip    (╯°□°)╯︵ ┻━┻  (ノಠ益ಠ)ノ彡┻━┻  (ノ`Д´)ノ彡┻━┻
-              ┻━┻ ︵ヽ(`Д´)ﾉ︵ ┻━┻
-
-table-unflip  ┬─┬ノ( º _ ºノ)  ┬──┬ ¯\_(ツ)  (╮°-°)╮┳━┳
-
-rage          (╬ ಠ益ಠ)  ヽ(≧Д≦)ノ  (＃`Д´)  (ﾉಥ益ಥ)ﾉ  ୧((#Φ益Φ#))୨
-
-sad           (╥﹏╥)  (っ- ‸ - ς)  (｡•́︿•̀｡)  (ಥ﹏ಥ)  (´；ω；`)  (◞‸◟)
-
-confused      (・_・?)  (⊙_⊙)?  (°ロ°) !  ٩(͡๏_๏)۶  (¬_¬)  (・∀・)?
-
-smug          (¬‿¬)  ( ͡° ͜ʖ ͡°)  (￣ω￣)  ヽ(・∀・)ﾉ  (^_~)  ( •_•)>⌐■-■  (⌐■_■)
-
-tired         (－_－) zzZ  (｡-‿-｡)  ( ˘･з･)  (・_・;)  (￣﹃￣)  （￣o￣） . z Z
-
-love          (♥ω♥*)  (*♡∀♡)  (´,,•ω•,,)♡  ♡( ◡‿◡ )  (っ˘з(˘⌣˘ )
-
 bear          ʕ•ᴥ•ʔ  ʕ￫ᴥ￩ʔ  ʕっ•ᴥ•ʔっ  ʕ•̀ω•́ʔ✧
 
 cat           (=^･ω･^=)  ฅ^•ﻌ•^ฅ  (=①ω①=)  ヾ(=｀ω´=)ノ”
 
-celebrate     ヽ(*⌒▽⌒*)ﾉ  (っ˘ω˘ς )  ＼(^▽^)／  (*≧▽≦)ﾉ ~☆  ٩(ˊᗜˋ*)و
+celebrate     ヽ(*⌒▽⌒*)ﾉ  (っ˘ω˘ς )  ＼(^▽^)／  (*≧▽≦)ﾉ ~☆
+              ٩(ˊᗜˋ*)و
+
+confused      (・_・?)  (⊙_⊙)?  (°ロ°) !  ٩(͡๏_๏)۶
+              (¬_¬)  (・∀・)?
+
+determined    (ง •̀_•́)ง  ᕦ(ò_óˇ)ᕤ  (๑•̀ㅂ•́)و✧  o(￣ヘ￣o＃)
+
+dunno         (•_•)  (￢_￢)  ( ˘⌒˘ )  (・へ・)
+
+excited       ヽ(°〇°)ﾉ  (ﾉ◕ヮ◕)ﾉ*:･ﾟ✧  ＼(≧▽≦)／  o(≧∇≦o)
+              (★^O^★)  ヽ(＾Д＾)ﾉ  (๑>◡<๑)  ٩(◕‿◕)۶
 
 friday        ヽ(o^▽^o)ノ  (´｡• ᵕ •｡`) ♡  (ノ^_^)ノ  ＼(٥⁀▽⁀ )／
               (っ^▿^)۶🍺  (*≧∀≦*)
 
-dunno         (•_•)  (￢_￢)  ( ˘⌒˘ )  (・へ・)
+happy         (◕‿◕)  (＾▽＾)  (´･ω･`)ﾉ  ヽ(´▽`)/
+              (*^▽^*)  (๑˃ᴗ˂)ﻭ  (✿◠‿◠)  (≧◡≦)
+              ＼(^o^)／  (◍•ᴗ•◍)
 
-determined    (ง •̀_•́)ง  ᕦ(ò_óˇ)ᕤ  (๑•̀ㅂ•́)و✧  o(￣ヘ￣o＃)
+love          (♥ω♥*)  (*♡∀♡)  (´,,•ω•,,)♡  ♡( ◡‿◡ )
+              (っ˘з(˘⌣˘ )
 
-oops          (・_・;)  (￣▽￣;)  (； ･`д･´)  (°ロ°;)  (⁄ ⁄•⁄ω⁄•⁄ ⁄)
+oops          (・_・;)  (￣▽￣;)  (； ･`д･´)  (°ロ°;)
+              (⁄ ⁄•⁄ω⁄•⁄ ⁄)
+
+rage          (╬ ಠ益ಠ)  ヽ(≧Д≦)ノ  (＃`Д´)  (ﾉಥ益ಥ)ﾉ
+              ୧((#Φ益Φ#))୨
+
+sad           (╥﹏╥)  (っ- ‸ - ς)  (｡•́︿•̀｡)  (ಥ﹏ಥ)
+              (´；ω；`)  (◞‸◟)
+
+shrug         ¯\_(ツ)_/¯  ╮(￣▽￣)╭  ┐(´д`)┌  ╮(︶︿︶)╭
+              乁( ⁰͡ Ĺ̯ ⁰͡ )ㄏ
+
+smug          (¬‿¬)  ( ͡° ͜ʖ ͡°)  (￣ω￣)  ヽ(・∀・)ﾉ
+              (^_~)  ( •_•)>⌐■-■  (⌐■_■)
+
+strut         ᕕ( ᐛ )ᕗ  ᕕ(⌐■_■)ᕗ ♪  ᕙ(⇀‸↼‶)ᕗ  ᕕ( ᐖ )ᕗ
+              ♪┏(・o･)┛♪  ᕕ(╯°□°)ᕗ
+
+table-flip    (╯°□°)╯︵ ┻━┻  (ノಠ益ಠ)ノ彡┻━┻  ┻━┻ ︵ヽ(`Д´)ﾉ︵ ┻━┻  (ノ`Д´)ノ彡┻━┻
+
+table-unflip  ┬─┬ノ( º _ ºノ)  ┬──┬ ¯\_(ツ)  (╮°-°)╮┳━┳
+
+tired         (－_－) zzZ  (｡-‿-｡)  ( ˘･з･)  (・_・;)
+              (￣﹃￣)  （￣o￣） . z Z
 ```
 
 ## Synonyms and partials (for the shell, not for you)
@@ -97,9 +105,13 @@ whole catalog above, so just pick the face directly.
 ## Adding faces
 
 Faces live in the `MOODS` array in `bin/kaomoji` in the claude-rig repo — edit
-there, never `~/.local/bin/kaomoji` (a symlink). **Update the catalog above to
-match**, then re-run the tests, which check the two stay in sync:
+there, never `~/.local/bin/kaomoji` (a symlink).
+
+The catalog above is **generated**, not hand-maintained. After editing the
+faces, regenerate it and run the tests (one of which asserts the block matches
+`kaomoji --catalog` exactly, so drift fails the suite):
 
 ```
+./bin/kaomoji-sync-skill
 PATH="/opt/homebrew/opt/bash/bin:$PATH" bats bin/kaomoji.bats
 ```

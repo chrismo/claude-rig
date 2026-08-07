@@ -233,6 +233,47 @@ synonyms_of() {
   synonym_pairs | awk -v m="$1" '$2 == m { print $1 }' | sort | tr '\n' ' '
 }
 
+# The grouped catalog: mood in the left column, faces flowing to the right,
+# wrapping onto continuation rows under a blank mood column.
+#
+# Deliberately does NOT measure display width. These faces mix wide CJK
+# (┻━┻ is 3 chars but 6 columns) with combining marks (乁( ⁰͡ Ĺ̯ ⁰͡ )ㄏ is 14
+# chars but far fewer columns), so ${#var} would misalign either way. Fixed
+# faces-per-row keeps it pure bash; the right edge is ragged by design.
+CATALOG_PER_ROW=4
+
+mood_catalog() {
+  local m faces n line first=1 width=0
+
+  # Derive the mood column from the longest name (+2 gutter) rather than
+  # hardcoding it, so a new longer mood can't silently collide with the faces.
+  # Mood names are ASCII, so ${#m} is honest here even though it isn't for faces.
+  while read -r m; do
+    (( ${#m} > width )) && width=${#m}
+  done < <(mood_names)
+  local CATALOG_MOOD_WIDTH=$((width + 2))
+  while read -r m; do
+    (( first )) || printf '\n'
+    first=0
+
+    n=0
+    line=""
+    while IFS= read -r face; do
+      [ -n "$face" ] || continue
+      if (( n == 0 )); then
+        line=$(printf '%-*s%s' "$CATALOG_MOOD_WIDTH" "$m" "$face")
+      elif (( n % CATALOG_PER_ROW == 0 )); then
+        printf '%s\n' "$line"
+        line=$(printf '%-*s%s' "$CATALOG_MOOD_WIDTH" "" "$face")
+      else
+        line+="  $face"
+      fi
+      n=$((n + 1))
+    done < <(faces_for "$m")
+    printf '%s\n' "$line"
+  done < <(mood_names)
+}
+
 # Mood names with their aliases in parens, column-aligned. Moods with no
 # aliases get no empty parens.
 mood_table() {
@@ -308,6 +349,7 @@ usage: kaomoji [MOOD] [COUNT]
   list      list moods with their aliases, or every face in MOOD
             (also -l, --list)
   all       print every face in every mood (also --all)
+  --catalog   every mood and its faces, grouped (the browsable view)
   --moods     bare mood names, one per line (for scripting)
   --synonyms  the alias -> mood table
 
@@ -341,6 +383,7 @@ while [[ $# -gt 0 ]]; do
     --all) mode=all; shift ;;
     --synonyms) mode=synonyms; shift ;;
     --moods) mode=moods; shift ;;
+    --catalog) mode=catalog; shift ;;
     -n)
       [[ $# -ge 2 ]] || { echo "kaomoji: -n needs a number" >&2; exit 2; }
       count="$2"; count_set=1; shift 2
@@ -394,6 +437,10 @@ case "$mode" in
     ;;
   moods)
     mood_names
+    exit 0
+    ;;
+  catalog)
+    mood_catalog
     exit 0
     ;;
   synonyms)

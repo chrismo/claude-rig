@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+#
+# Regenerate the catalog block in skills/kaomoji/SKILL.md from `kaomoji
+# --catalog`, so the skill's copy can never drift from the script's faces.
+# A bats test asserts the two match, so this is what you run after editing
+# the MOODS array.
+
+set -euo pipefail
+
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+skill="$repo/skills/kaomoji/SKILL.md"
+kaomoji="$repo/bin/kaomoji"
+
+[[ -f "$skill" ]] || { echo "not found: $skill" >&2; exit 1; }
+
+catalog_file=$(mktemp)
+trap 'rm -f "$catalog_file" "$skill.tmp"' EXIT
+"$kaomoji" --catalog > "$catalog_file"
+
+# Replace the fenced block immediately following the "## The catalog" heading.
+# The catalog comes in via a file, not -v: BSD awk rejects a newline inside a
+# -v assignment, so passing it as a variable fails on macOS.
+awk -v catfile="$catalog_file" '
+  /^## The catalog$/ { print; inheading = 1; next }
+  inheading && /^```$/ && !opened {
+    print
+    while ((getline line < catfile) > 0) print line
+    close(catfile)
+    opened = 1; skipping = 1; next
+  }
+  skipping && /^```$/ { print; skipping = 0; inheading = 0; next }
+  skipping { next }
+  { print }
+' "$skill" > "$skill.tmp"
+
+if ! grep -q '## The catalog' "$skill.tmp"; then
+  rm -f "$skill.tmp"
+  echo "refusing to write: catalog heading vanished" >&2
+  exit 1
+fi
+
+mv "$skill.tmp" "$skill"
+echo "✓ regenerated catalog in $skill"

@@ -74,6 +74,74 @@ clipboard() { cat "$BATS_TEST_TMPDIR/clipboard"; }
   [[ "$output" == *"strut"* ]]
 }
 
+@test "--catalog groups faces under mood names" {
+  run "$KAOMOJI" --catalog
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"shrug"* ]]
+  [[ "$output" == *"table-flip"* ]]
+}
+
+@test "--catalog puts the mood at the line start and faces after it" {
+  run "$KAOMOJI" --catalog
+  line=$(grep '^strut' <<< "$output")
+  [[ "$line" == *"ᕕ( ᐛ )ᕗ"* ]]
+}
+
+@test "--catalog wraps continuation rows with a blank mood column" {
+  run "$KAOMOJI" --catalog
+  # happy has 10 faces, so it must wrap; continuation lines start with spaces.
+  [[ "$output" == *$'\n'"              "* ]]
+}
+
+@test "--catalog contains every face" {
+  run "$KAOMOJI" --catalog
+  while IFS= read -r face; do
+    [ -n "$face" ] || continue
+    [[ "$output" == *"$face"* ]] || {
+      echo "face missing from --catalog: $face" >&2
+      return 1
+    }
+  done < <("$KAOMOJI" --moods | while read -r m; do "$KAOMOJI" --list "$m"; done)
+}
+
+@test "--catalog contains every mood" {
+  run "$KAOMOJI" --catalog
+  while IFS= read -r mood; do
+    grep -qE "^${mood} " <<< "$output" || {
+      echo "mood missing from --catalog: $mood" >&2
+      return 1
+    }
+  done < <("$KAOMOJI" --moods)
+}
+
+@test "--catalog mood column clears the longest mood name" {
+  run "$KAOMOJI" --catalog
+  longest=$("$KAOMOJI" --moods | awk '{ if (length($0) > n) { n = length($0) } } END { print n }')
+  # Every face-bearing line must start its faces past the longest name.
+  line=$(grep '^table-unflip' <<< "$output")
+  prefix="${line:0:$longest}"
+  [ "${line:$longest:1}" = " " ]
+}
+
+@test "--catalog separates moods with blank lines" {
+  run "$KAOMOJI" --catalog
+  [[ "$output" == *$'\n\n'* ]]
+}
+
+@test "--catalog does not touch the clipboard" {
+  run "$KAOMOJI" --catalog
+  [ "$status" -eq 0 ]
+  [ ! -f "$BATS_TEST_TMPDIR/clipboard" ]
+}
+
+@test "SKILL.md catalog block is exactly --catalog output" {
+  skill="${BATS_TEST_DIRNAME}/../skills/kaomoji/SKILL.md"
+  [ -f "$skill" ] || skip "SKILL.md not found"
+  # Extract the fenced block that follows the "## The catalog" heading.
+  block=$(awk '/^## The catalog/{f=1} f&&/^```$/{if(++n==1){inb=1;next}else exit} inb' "$skill")
+  [ "$block" = "$("$KAOMOJI" --catalog)" ]
+}
+
 @test "exact mood name wins over any partial interpretation" {
   run bash -c "diff <('$KAOMOJI' list cat) <('$KAOMOJI' list cat)"
   [ "$status" -eq 0 ]
