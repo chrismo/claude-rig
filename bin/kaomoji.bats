@@ -45,6 +45,100 @@ clipboard() { cat "$BATS_TEST_TMPDIR/clipboard"; }
   [ "$status" -eq 0 ]
 }
 
+@test "exact mood name wins over any partial interpretation" {
+  run bash -c "diff <('$KAOMOJI' list cat) <('$KAOMOJI' list cat)"
+  [ "$status" -eq 0 ]
+  run "$KAOMOJI" cat 99
+  [ "$status" -eq 0 ]
+  # 'cat' is exact, so the pool is exactly the cat faces (4 of them).
+  exact=$("$KAOMOJI" list cat | wc -l | tr -d ' ')
+  [ "${#lines[@]}" -eq "$exact" ]
+}
+
+@test "partial matches a single mood" {
+  # 'determ' hits only determined -- no synonym contains it.
+  run bash -c "diff <('$KAOMOJI' determ 99 | LC_ALL=C sort -u) <('$KAOMOJI' list determined | LC_ALL=C sort -u)"
+  [ "$status" -eq 0 ]
+}
+
+@test "a partial matching both a mood and a synonym pools both" {
+  # 'rag' hits mood 'rage' AND synonym 'ragequit' -> table-flip.
+  expected=$( { "$KAOMOJI" list rage; "$KAOMOJI" list table-flip; } | LC_ALL=C sort -u )
+  run bash -c "'$KAOMOJI' rag 99 | LC_ALL=C sort -u"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$expected" ]
+}
+
+@test "substring anywhere, not just prefix" {
+  # 'lebra' is inside 'celebrate'.
+  run bash -c "diff <('$KAOMOJI' lebra 99 | LC_ALL=C sort -u) <('$KAOMOJI' list celebrate | LC_ALL=C sort -u)"
+  [ "$status" -eq 0 ]
+}
+
+@test "ambiguous partial pools all matching moods" {
+  # 'table' hits table-flip and table-unflip; the pool is both.
+  expected=$( { "$KAOMOJI" list table-flip; "$KAOMOJI" list table-unflip; } | LC_ALL=C sort -u )
+  run bash -c "'$KAOMOJI' table 99 | LC_ALL=C sort -u"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$expected" ]
+}
+
+@test "ambiguous partial does not error" {
+  run "$KAOMOJI" table
+  [ "$status" -eq 0 ]
+  [ -n "$output" ]
+}
+
+@test "synonym resolves to its mood" {
+  run bash -c "diff <('$KAOMOJI' mad 99 | LC_ALL=C sort -u) <('$KAOMOJI' list rage | LC_ALL=C sort -u)"
+  [ "$status" -eq 0 ]
+}
+
+@test "synonyms are single words with no hyphens" {
+  run "$KAOMOJI" --synonyms
+  [ "$status" -eq 0 ]
+  while read -r alias target; do
+    [ -n "$alias" ] || continue
+    [[ ! "$alias" =~ [[:space:]] ]]
+    [[ ! "$alias" =~ - ]]
+  done <<< "$output"
+}
+
+@test "no synonym collides with a real mood name" {
+  moods=$("$KAOMOJI" list)
+  "$KAOMOJI" --synonyms | while read -r alias target; do
+    [ -n "$alias" ] || continue
+    if grep -qxF "$alias" <<< "$moods"; then
+      echo "synonym '$alias' shadows real mood '$alias'" >&2
+      exit 1
+    fi
+  done
+}
+
+@test "every synonym points at a real mood" {
+  moods=$("$KAOMOJI" list)
+  "$KAOMOJI" --synonyms | while read -r alias target; do
+    [ -n "$target" ] || continue
+    if ! grep -qxF "$target" <<< "$moods"; then
+      echo "synonym '$alias' -> unknown mood '$target'" >&2
+      exit 1
+    fi
+  done
+}
+
+@test "every synonym is summonable" {
+  "$KAOMOJI" --synonyms | while read -r alias target; do
+    [ -n "$alias" ] || continue
+    "$KAOMOJI" "$alias" >/dev/null || { echo "'$alias' failed" >&2; exit 1; }
+  done
+}
+
+@test "genuinely unknown mood still fails" {
+  run "$KAOMOJI" zzzznope
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no such mood"* ]]
+}
+
 @test "unknown mood fails with a helpful message" {
   run "$KAOMOJI" nonsense
   [ "$status" -eq 1 ]

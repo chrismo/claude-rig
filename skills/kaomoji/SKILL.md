@@ -84,6 +84,13 @@ determined    (ง •̀_•́)ง  ᕦ(ò_óˇ)ᕤ  (๑•̀ㅂ•́)و✧  o(
 oops          (・_・;)  (￣▽￣;)  (； ･`д･´)  (°ロ°;)  (⁄ ⁄•⁄ω⁄•⁄ ⁄)
 ```
 
+## Synonyms and partials (for the shell, not for you)
+
+`bin/kaomoji` accepts aliases (`mad` → rage, `meh` → shrug, `argh` → table-flip)
+and substring partials (`determ` → determined; `table` pools table-flip and
+table-unflip). That's a convenience for typing in a terminal — you have the
+whole catalog above, so just pick the face directly.
+
 ## Adding faces
 
 Faces live in the `MOODS` array in `bin/kaomoji` in the claude-rig repo — edit

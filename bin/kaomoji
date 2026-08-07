@@ -183,10 +183,63 @@ MOODS[oops]='
 (⁄ ⁄•⁄ω⁄•⁄ ⁄)
 '
 
+# Single-word aliases. Kept to one word, no hyphens, and none may collide with
+# a real mood name — tests enforce all three.
+declare -A SYNONYMS=(
+  [mad]=rage           [angry]=rage         [pissed]=rage        [furious]=rage
+  [meh]=shrug          [whatever]=shrug     [idk]=shrug          [eh]=shrug
+  [bummed]=sad         [down]=sad           [blue]=sad           [cry]=sad
+  [argh]=table-flip    [ugh]=table-flip     [ragequit]=table-flip
+  [calm]=table-unflip  [fixed]=table-unflip
+  [smirk]=smug         [lenny]=smug         [cool]=smug          [sunglasses]=smug
+  [glad]=happy         [joy]=happy          [yay]=excited        [woo]=excited
+  [hype]=excited       [pumped]=excited
+  [sleepy]=tired       [exhausted]=tired    [beat]=tired         [zzz]=tired
+  [huh]=confused       [what]=confused      [wat]=confused       [puzzled]=confused
+  [heart]=love         [adore]=love         [affection]=love
+  [kitty]=cat          [meow]=cat           [bearhug]=bear
+  [party]=celebrate    [win]=celebrate      [shipped]=celebrate  [success]=celebrate
+  [tgif]=friday        [weekend]=friday
+  [focused]=determined [ready]=determined   [letsgo]=determined
+  [whoops]=oops        [yikes]=oops         [uhoh]=oops          [sorry]=oops
+)
+
 # --- helpers ----------------------------------------------------------------
 
 mood_names() {
   printf '%s\n' "${!MOODS[@]}" | sort
+}
+
+synonym_pairs() {
+  local a
+  for a in "${!SYNONYMS[@]}"; do
+    printf '%s %s\n' "$a" "${SYNONYMS[$a]}"
+  done | sort
+}
+
+# Resolve a user-supplied mood word to one or more real mood names, printed one
+# per line. Exact name wins; then an exact synonym; then substring-anywhere,
+# which may match several moods (their faces get pooled). Prints nothing when
+# there is no match at all.
+resolve_moods() {
+  local want="$1"
+
+  if [[ -n "${MOODS[$want]+set}" ]]; then
+    printf '%s\n' "$want"
+    return
+  fi
+
+  if [[ -n "${SYNONYMS[$want]+set}" ]]; then
+    printf '%s\n' "${SYNONYMS[$want]}"
+    return
+  fi
+
+  # Substring over mood names, then over synonyms (mapped to their targets),
+  # so `rag` finds rage and `angr` finds angry -> rage.
+  {
+    mood_names | grep -F -- "$want" || true
+    synonym_pairs | awk -v w="$want" 'index($1, w) { print $2 }'
+  } | sort -u
 }
 
 faces_for() {
@@ -219,6 +272,11 @@ usage: kaomoji [MOOD] [COUNT]
 
   list      list mood names, or every face in MOOD (also -l, --list)
   all       print every face in every mood (also --all)
+  --synonyms  print the alias -> mood table
+
+MOOD matching: an exact mood name wins, then an exact synonym (mad -> rage),
+then substring anywhere. A partial that hits several moods pools all their
+faces, so `kaomoji table` draws from table-flip and table-unflip both.
 
 Browsing with list/all never touches the clipboard.
 
@@ -244,6 +302,7 @@ while [[ $# -gt 0 ]]; do
     -h|--help) usage; exit 0 ;;
     -l|--list) mode=list; shift ;;
     --all) mode=all; shift ;;
+    --synonyms) mode=synonyms; shift ;;
     -n)
       [[ $# -ge 2 ]] || { echo "kaomoji: -n needs a number" >&2; exit 2; }
       count="$2"; count_set=1; shift 2
@@ -274,17 +333,29 @@ done
   echo "kaomoji: -n needs a positive integer" >&2; exit 2
 }
 
-if [[ -n "$mood" ]] && ! mood_exists "$mood"; then
-  echo "kaomoji: no such mood: $mood" >&2
-  echo "moods: $(mood_names | tr '\n' ' ')" >&2
-  exit 1
+resolved=""
+if [[ -n "$mood" ]]; then
+  resolved=$(resolve_moods "$mood")
+  if [[ -z "$resolved" ]]; then
+    echo "kaomoji: no such mood: $mood" >&2
+    echo "moods: $(mood_names | tr '\n' ' ')" >&2
+    exit 1
+  fi
 fi
 
 # --- modes ------------------------------------------------------------------
 
 case "$mode" in
   list)
-    if [[ -n "$mood" ]]; then faces_for "$mood"; else mood_names; fi
+    if [[ -n "$resolved" ]]; then
+      while read -r m; do faces_for "$m"; done <<< "$resolved"
+    else
+      mood_names
+    fi
+    exit 0
+    ;;
+  synonyms)
+    synonym_pairs
     exit 0
     ;;
   all)
@@ -296,8 +367,9 @@ case "$mode" in
     ;;
 esac
 
-if [[ -n "$mood" ]]; then
-  pool=$(faces_for "$mood")
+if [[ -n "$resolved" ]]; then
+  # A partial may resolve to several moods; pool every matching mood's faces.
+  pool=$(while read -r m; do faces_for "$m"; done <<< "$resolved")
 else
   pool=$(all_faces)
 fi
