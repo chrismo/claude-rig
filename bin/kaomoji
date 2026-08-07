@@ -217,6 +217,29 @@ synonym_pairs() {
   done | sort
 }
 
+synonyms_of() {
+  synonym_pairs | awk -v m="$1" '$2 == m { print $1 }' | sort | tr '\n' ' '
+}
+
+# Mood names with their aliases in parens, column-aligned. Moods with no
+# aliases get no empty parens.
+mood_table() {
+  local m aliases width=0
+  while read -r m; do
+    (( ${#m} > width )) && width=${#m}
+  done < <(mood_names)
+
+  while read -r m; do
+    aliases=$(synonyms_of "$m")
+    aliases="${aliases% }"
+    if [[ -n "$aliases" ]]; then
+      printf '%-*s  (%s)\n' "$width" "$m" "$aliases"
+    else
+      printf '%s\n' "$m"
+    fi
+  done < <(mood_names)
+}
+
 # Resolve a user-supplied mood word to one or more real mood names, printed one
 # per line. Exact name wins; then an exact synonym; then substring-anywhere,
 # which may match several moods (their faces get pooled). Prints nothing when
@@ -270,9 +293,11 @@ usage: kaomoji [MOOD] [COUNT]
             `kaomoji happy 5` or `kaomoji 5`
   -n COUNT  same as the positional COUNT
 
-  list      list mood names, or every face in MOOD (also -l, --list)
+  list      list moods with their aliases, or every face in MOOD
+            (also -l, --list)
   all       print every face in every mood (also --all)
-  --synonyms  print the alias -> mood table
+  --moods     bare mood names, one per line (for scripting)
+  --synonyms  the alias -> mood table
 
 MOOD matching: an exact mood name wins, then an exact synonym (mad -> rage),
 then substring anywhere. A partial that hits several moods pools all their
@@ -303,6 +328,7 @@ while [[ $# -gt 0 ]]; do
     -l|--list) mode=list; shift ;;
     --all) mode=all; shift ;;
     --synonyms) mode=synonyms; shift ;;
+    --moods) mode=moods; shift ;;
     -n)
       [[ $# -ge 2 ]] || { echo "kaomoji: -n needs a number" >&2; exit 2; }
       count="$2"; count_set=1; shift 2
@@ -350,8 +376,12 @@ case "$mode" in
     if [[ -n "$resolved" ]]; then
       while read -r m; do faces_for "$m"; done <<< "$resolved"
     else
-      mood_names
+      mood_table
     fi
+    exit 0
+    ;;
+  moods)
+    mood_names
     exit 0
     ;;
   synonyms)

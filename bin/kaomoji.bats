@@ -41,8 +41,11 @@ clipboard() { cat "$BATS_TEST_TMPDIR/clipboard"; }
 @test "a mood argument picks from that mood" {
   run "$KAOMOJI" shrug
   [ "$status" -eq 0 ]
-  run bash -c "'$KAOMOJI' --list shrug | grep -Fxq \"$(cat "$BATS_TEST_TMPDIR/clipboard")\""
-  [ "$status" -eq 0 ]
+  # Compare via files, not an interpolated shell string: `¯\_(ツ)_/¯` has
+  # backslashes that a "$(cat ...)" round-trip mangles, so the old form
+  # failed only on the draws that happened to pick it.
+  "$KAOMOJI" --list shrug > "$BATS_TEST_TMPDIR/faces"
+  grep -Fxq -f "$BATS_TEST_TMPDIR/clipboard" "$BATS_TEST_TMPDIR/faces"
 }
 
 @test "exact mood name wins over any partial interpretation" {
@@ -105,7 +108,7 @@ clipboard() { cat "$BATS_TEST_TMPDIR/clipboard"; }
 }
 
 @test "no synonym collides with a real mood name" {
-  moods=$("$KAOMOJI" list)
+  moods=$("$KAOMOJI" --moods)
   "$KAOMOJI" --synonyms | while read -r alias target; do
     [ -n "$alias" ] || continue
     if grep -qxF "$alias" <<< "$moods"; then
@@ -116,7 +119,7 @@ clipboard() { cat "$BATS_TEST_TMPDIR/clipboard"; }
 }
 
 @test "every synonym points at a real mood" {
-  moods=$("$KAOMOJI" list)
+  moods=$("$KAOMOJI" --moods)
   "$KAOMOJI" --synonyms | while read -r alias target; do
     [ -n "$target" ] || continue
     if ! grep -qxF "$target" <<< "$moods"; then
@@ -161,6 +164,58 @@ clipboard() { cat "$BATS_TEST_TMPDIR/clipboard"; }
   for line in "${lines[@]}"; do
     [ -n "$line" ]
   done
+}
+
+@test "list shows synonyms in parens after the mood" {
+  run "$KAOMOJI" list
+  [ "$status" -eq 0 ]
+  # Aliases are sorted, so rage's line reads "(angry furious mad pissed)".
+  [[ "$output" == *"rage"*"(angry"*"mad"*")"* ]]
+}
+
+@test "every mood with synonyms shows them all in its list line" {
+  run "$KAOMOJI" list
+  [ "$status" -eq 0 ]
+  while read -r alias target; do
+    [ -n "$alias" ] || continue
+    line=$(grep -E "^${target}( |\$)" <<< "$output")
+    [[ "$line" == *"$alias"* ]] || {
+      echo "list line for '$target' is missing synonym '$alias': $line" >&2
+      return 1
+    }
+  done < <("$KAOMOJI" --synonyms)
+}
+
+@test "a mood with no synonyms has no empty parens" {
+  run "$KAOMOJI" list
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"()"* ]]
+}
+
+@test "list still names every mood at line start" {
+  run "$KAOMOJI" list
+  [ "$status" -eq 0 ]
+  while read -r mood; do
+    grep -qE "^${mood}( |\$)" <<< "$output" || {
+      echo "mood '$mood' not at start of any list line" >&2
+      return 1
+    }
+  done < <("$KAOMOJI" --moods)
+}
+
+@test "--moods prints bare names for scripting" {
+  run "$KAOMOJI" --moods
+  [ "$status" -eq 0 ]
+  # No parens, no synonyms -- just names, one per line.
+  [[ "$output" != *"("* ]]
+  [[ "$output" == *"rage"* ]]
+}
+
+@test "list MOOD still prints faces, not synonyms" {
+  run bash -c "diff <('$KAOMOJI' list shrug) <('$KAOMOJI' --list shrug)"
+  [ "$status" -eq 0 ]
+  run "$KAOMOJI" list shrug
+  [[ "$output" != *"meh"* ]]
 }
 
 @test "bare 'list' subcommand lists mood names" {
@@ -393,7 +448,7 @@ clipboard() { cat "$BATS_TEST_TMPDIR/clipboard"; }
   while IFS= read -r face; do
     [ -n "$face" ] || continue
     grep -qF -- "$face" "$skill" || missing+="$face"$'\n'
-  done < <("$KAOMOJI" --list | while read -r m; do "$KAOMOJI" --list "$m"; done)
+  done < <("$KAOMOJI" --moods | while read -r m; do "$KAOMOJI" --list "$m"; done)
 
   if [ -n "$missing" ]; then
     echo "faces in bin/kaomoji but missing from SKILL.md catalog:" >&2
@@ -411,11 +466,11 @@ clipboard() { cat "$BATS_TEST_TMPDIR/clipboard"; }
       echo "mood '$mood' missing from SKILL.md catalog" >&2
       return 1
     }
-  done < <("$KAOMOJI" --list)
+  done < <("$KAOMOJI" --moods)
 }
 
 @test "every listed mood has at least one face" {
-  run "$KAOMOJI" --list
+  run "$KAOMOJI" --moods
   [ "$status" -eq 0 ]
   for mood in $output; do
     run "$KAOMOJI" --list "$mood"
@@ -425,7 +480,7 @@ clipboard() { cat "$BATS_TEST_TMPDIR/clipboard"; }
 }
 
 @test "every mood is summonable" {
-  moods=$("$KAOMOJI" --list)
+  moods=$("$KAOMOJI" --moods)
   for mood in $moods; do
     run "$KAOMOJI" "$mood"
     [ "$status" -eq 0 ]
