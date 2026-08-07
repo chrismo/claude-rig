@@ -2,6 +2,8 @@
 name: kaomoji
 description: Summon a Japanese-style emoticon (kaomoji) and put it on the clipboard. Pick one that fits the mood — the user's, the moment's, or the conversation's. Invoked as /kaomoji, optionally with a mood or a free-text vibe.
 allowed-tools: Bash
+model: haiku
+effort: low
 ---
 
 # kaomoji — summon a face
