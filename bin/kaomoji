@@ -207,20 +207,28 @@ mood_exists() {
 
 usage() {
   cat <<'EOF'
-usage: kaomoji [-n COUNT] [MOOD]
+usage: kaomoji [MOOD] [COUNT]
        kaomoji --list [MOOD]
        kaomoji --all
 
   MOOD      pick from a specific mood; omit for any mood
-  -n COUNT  print COUNT candidates (the first is the one copied)
+  COUNT     print COUNT candidates, default 1 (the first is the one copied);
+            a bare number, in either order -- `kaomoji happy 5` or `kaomoji 5`
+  -n COUNT  same as the positional COUNT
   --list    list mood names, or every face in MOOD
   --all     print every face in every mood
+
+examples:
+  kaomoji              one face, any mood
+  kaomoji shrug        one shrug
+  kaomoji happy 5      five happy candidates, first one copied
 EOF
 }
 
 # --- arg parsing ------------------------------------------------------------
 
 count=1
+count_set=""
 mode=summon
 mood=""
 
@@ -231,9 +239,19 @@ while [[ $# -gt 0 ]]; do
     --all) mode=all; shift ;;
     -n)
       [[ $# -ge 2 ]] || { echo "kaomoji: -n needs a number" >&2; exit 2; }
-      count="$2"; shift 2
+      count="$2"; count_set=1; shift 2
       ;;
     -*) echo "kaomoji: unknown option $1" >&2; usage >&2; exit 2 ;;
+    # A bare number is the count, in either position: `kaomoji happy 5` or
+    # `kaomoji 5 happy`. No mood is all-digits, so this is unambiguous — a
+    # test enforces that.
+    [0-9]*)
+      [[ "$1" =~ ^[0-9]+$ ]] || {
+        echo "kaomoji: no such mood: $1" >&2; exit 1
+      }
+      [[ -z "$count_set" ]] || { echo "kaomoji: too many counts" >&2; exit 2; }
+      count="$1"; count_set=1; shift
+      ;;
     *)
       [[ -z "$mood" ]] || { echo "kaomoji: too many arguments" >&2; exit 2; }
       mood="$1"; shift

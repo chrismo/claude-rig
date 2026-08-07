@@ -94,6 +94,68 @@ clipboard() { cat "$BATS_TEST_TMPDIR/clipboard"; }
   [ "$(clipboard)" = "${lines[0]}" ]
 }
 
+@test "omitting the count defaults to one" {
+  run "$KAOMOJI" happy
+  [ "$status" -eq 0 ]
+  [ "${#lines[@]}" -eq 1 ]
+}
+
+@test "count as a positional second argument" {
+  run "$KAOMOJI" happy 5
+  [ "$status" -eq 0 ]
+  [ "${#lines[@]}" -eq 5 ]
+}
+
+@test "positional count still copies only the first" {
+  run "$KAOMOJI" happy 3
+  [ "$status" -eq 0 ]
+  [ "$(clipboard)" = "${lines[0]}" ]
+}
+
+@test "positional count works without a mood" {
+  run "$KAOMOJI" 4
+  [ "$status" -eq 0 ]
+  [ "${#lines[@]}" -eq 4 ]
+}
+
+@test "count may precede the mood" {
+  run "$KAOMOJI" 3 shrug
+  [ "$status" -eq 0 ]
+  [ "${#lines[@]}" -eq 3 ]
+}
+
+@test "positional count rejects zero" {
+  run "$KAOMOJI" happy 0
+  [ "$status" -eq 2 ]
+}
+
+@test "two positional counts is an error" {
+  run "$KAOMOJI" 2 3
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"too many"* ]]
+}
+
+@test "a bare number is a count, never a mood" {
+  # Guards against a future mood named e.g. "7" silently shadowing the count.
+  run "$KAOMOJI" --list
+  [ "$status" -eq 0 ]
+  for mood in $output; do
+    [[ ! "$mood" =~ ^[0-9]+$ ]]
+  done
+}
+
+@test "-n still works alongside positional form" {
+  run "$KAOMOJI" -n 2 happy
+  [ "$status" -eq 0 ]
+  [ "${#lines[@]}" -eq 2 ]
+}
+
+@test "--list MOOD ignores a positional count" {
+  run "$KAOMOJI" --list shrug 3
+  [ "$status" -eq 0 ]
+  [ "${#lines[@]}" -gt 3 ]
+}
+
 @test "-n rejects non-numeric values" {
   run "$KAOMOJI" -n abc
   [ "$status" -eq 2 ]
