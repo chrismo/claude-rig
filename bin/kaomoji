@@ -1,0 +1,280 @@
+#!/usr/bin/env bash
+#
+# kaomoji - summon a Japanese-style emoticon, copy it to the clipboard.
+#
+#   kaomoji                 random mood, random face
+#   kaomoji shrug           one face from the "shrug" mood
+#   kaomoji --list          list mood names
+#   kaomoji --list shrug    print every face in that mood (no clipboard write)
+#   kaomoji --all           print every face in every mood (no clipboard write)
+#   kaomoji -n 5 happy      print 5 candidates; the first is copied
+#
+# Faces are stored one-per-line in mood blocks below. UTF-8 throughout.
+
+set -euo pipefail
+
+# macOS ships bash 3.2, which has no associative arrays. Re-exec under a newer
+# bash when one is available (same trick ticket-sort uses).
+# Keg paths come first: `brew install bash` does not always link into
+# /opt/homebrew/bin, so searching only the linked paths finds nothing.
+if [ -z "${KAOMOJI_REEXEC:-}" ] && [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
+  for candidate in "${KAOMOJI_BASH:-}" \
+                   /opt/homebrew/opt/bash/bin/bash \
+                   /usr/local/opt/bash/bin/bash \
+                   /opt/homebrew/bin/bash \
+                   /usr/local/bin/bash; do
+    [ -n "$candidate" ] && [ -x "$candidate" ] || continue
+    KAOMOJI_REEXEC=1 exec "$candidate" "$0" "$@"
+  done
+  echo "kaomoji: needs bash 4+ (brew install bash, or point KAOMOJI_BASH at one)" >&2
+  exit 1
+fi
+
+declare -A MOODS
+
+MOODS[happy]='
+(◕‿◕)
+(＾▽＾)
+(´･ω･`)ﾉ
+ヽ(´▽`)/
+(*^▽^*)
+(๑˃ᴗ˂)ﻭ
+(✿◠‿◠)
+(≧◡≦)
+＼(^o^)／
+(◍•ᴗ•◍)
+'
+
+MOODS[excited]='
+ヽ(°〇°)ﾉ
+(ﾉ◕ヮ◕)ﾉ*:･ﾟ✧
+＼(≧▽≦)／
+o(≧∇≦o)
+(★^O^★)
+ヽ(＾Д＾)ﾉ
+(๑>◡<๑)
+٩(◕‿◕)۶
+'
+
+MOODS[shrug]='
+¯\_(ツ)_/¯
+╮(￣▽￣)╭
+┐(´д`)┌
+ᕕ( ᐛ )ᕗ
+╮(︶︿︶)╭
+乁( ⁰͡ Ĺ̯ ⁰͡ )ㄏ
+'
+
+MOODS[table-flip]='
+(╯°□°)╯︵ ┻━┻
+(ノಠ益ಠ)ノ彡┻━┻
+┻━┻ ︵ヽ(`Д´)ﾉ︵ ┻━┻
+(ノ`Д´)ノ彡┻━┻
+'
+
+MOODS[table-unflip]='
+┬─┬ノ( º _ ºノ)
+┬──┬ ¯\_(ツ)
+(╮°-°)╮┳━┳
+'
+
+MOODS[rage]='
+(╬ ಠ益ಠ)
+ヽ(≧Д≦)ノ
+(＃`Д´)
+(ﾉಥ益ಥ)ﾉ
+୧((#Φ益Φ#))୨
+'
+
+MOODS[sad]='
+(╥﹏╥)
+(っ- ‸ - ς)
+(｡•́︿•̀｡)
+(ಥ﹏ಥ)
+(´；ω；`)
+(◞‸◟)
+'
+
+MOODS[confused]='
+(・_・?)
+(⊙_⊙)?
+(°ロ°) !
+٩(͡๏_๏)۶
+(¬_¬)
+(・∀・)?
+'
+
+MOODS[smug]='
+(¬‿¬)
+( ͡° ͜ʖ ͡°)
+(￣ω￣)
+ヽ(・∀・)ﾉ
+(^_~)
+( •_•)>⌐■-■  (⌐■_■)
+'
+
+MOODS[tired]='
+(－_－) zzZ
+(｡-‿-｡)
+( ˘･з･)
+(・_・;)
+(￣﹃￣)
+（￣o￣） . z Z
+'
+
+MOODS[love]='
+(♥ω♥*)
+(*♡∀♡)
+(´,,•ω•,,)♡
+♡( ◡‿◡ )
+(っ˘з(˘⌣˘ )
+'
+
+MOODS[bear]='
+ʕ•ᴥ•ʔ
+ʕ￫ᴥ￩ʔ
+ʕっ•ᴥ•ʔっ
+ʕ•̀ω•́ʔ✧
+'
+
+MOODS[cat]='
+(=^･ω･^=)
+ฅ^•ﻌ•^ฅ
+(=①ω①=)
+ヾ(=｀ω´=)ノ”
+'
+
+MOODS[celebrate]='
+ヽ(*⌒▽⌒*)ﾉ
+(っ˘ω˘ς )
+＼(^▽^)／
+(*≧▽≦)ﾉ ~☆
+٩(ˊᗜˋ*)و
+'
+
+MOODS[friday]='
+ヽ(o^▽^o)ノ
+(´｡• ᵕ •｡`) ♡
+(ノ^_^)ノ
+＼(٥⁀▽⁀ )／
+(っ^▿^)۶🍺
+(*≧∀≦*)
+'
+
+MOODS[dunno]='
+(•_•)
+(￢_￢)
+( ˘⌒˘ )
+(・へ・)
+'
+
+MOODS[determined]='
+(ง •̀_•́)ง
+ᕦ(ò_óˇ)ᕤ
+(๑•̀ㅂ•́)و✧
+o(￣ヘ￣o＃)
+'
+
+MOODS[oops]='
+(・_・;)
+(￣▽￣;)
+(； ･`д･´)
+(°ロ°;)
+(⁄ ⁄•⁄ω⁄•⁄ ⁄)
+'
+
+# --- helpers ----------------------------------------------------------------
+
+mood_names() {
+  printf '%s\n' "${!MOODS[@]}" | sort
+}
+
+faces_for() {
+  local mood="$1"
+  printf '%s\n' "${MOODS[$mood]}" | grep -v '^[[:space:]]*$'
+}
+
+all_faces() {
+  local mood
+  while read -r mood; do
+    faces_for "$mood"
+  done < <(mood_names)
+}
+
+mood_exists() {
+  [[ -n "${MOODS[$1]+set}" ]]
+}
+
+usage() {
+  cat <<'EOF'
+usage: kaomoji [-n COUNT] [MOOD]
+       kaomoji --list [MOOD]
+       kaomoji --all
+
+  MOOD      pick from a specific mood; omit for any mood
+  -n COUNT  print COUNT candidates (the first is the one copied)
+  --list    list mood names, or every face in MOOD
+  --all     print every face in every mood
+EOF
+}
+
+# --- arg parsing ------------------------------------------------------------
+
+count=1
+mode=summon
+mood=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    --list) mode=list; shift ;;
+    --all) mode=all; shift ;;
+    -n)
+      [[ $# -ge 2 ]] || { echo "kaomoji: -n needs a number" >&2; exit 2; }
+      count="$2"; shift 2
+      ;;
+    -*) echo "kaomoji: unknown option $1" >&2; usage >&2; exit 2 ;;
+    *)
+      [[ -z "$mood" ]] || { echo "kaomoji: too many arguments" >&2; exit 2; }
+      mood="$1"; shift
+      ;;
+  esac
+done
+
+[[ "$count" =~ ^[0-9]+$ && "$count" -gt 0 ]] || {
+  echo "kaomoji: -n needs a positive integer" >&2; exit 2
+}
+
+if [[ -n "$mood" ]] && ! mood_exists "$mood"; then
+  echo "kaomoji: no such mood: $mood" >&2
+  echo "moods: $(mood_names | tr '\n' ' ')" >&2
+  exit 1
+fi
+
+# --- modes ------------------------------------------------------------------
+
+case "$mode" in
+  list)
+    if [[ -n "$mood" ]]; then faces_for "$mood"; else mood_names; fi
+    exit 0
+    ;;
+  all)
+    while read -r m; do
+      printf '%s:\n' "$m"
+      faces_for "$m" | sed 's/^/  /'
+    done < <(mood_names)
+    exit 0
+    ;;
+esac
+
+if [[ -n "$mood" ]]; then
+  pool=$(faces_for "$mood")
+else
+  pool=$(all_faces)
+fi
+
+picks=$(printf '%s\n' "$pool" | sort -R | head -n "$count")
+
+# The first pick is the one that lands in the clipboard.
+printf '%s' "$(printf '%s\n' "$picks" | head -n 1)" | pbcopy
+printf '%s\n' "$picks"
