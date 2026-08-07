@@ -151,10 +151,10 @@ clipboard() { cat "$BATS_TEST_TMPDIR/clipboard"; }
   [ "${#lines[@]}" -eq 3 ]
 }
 
-@test "-n copies only the first candidate" {
+@test "-n copies all candidates space-delimited" {
   run "$KAOMOJI" -n 3 happy
   [ "$status" -eq 0 ]
-  [ "$(clipboard)" = "${lines[0]}" ]
+  [ "$(clipboard)" = "${lines[0]} ${lines[1]} ${lines[2]}" ]
 }
 
 @test "omitting the count defaults to one" {
@@ -169,10 +169,39 @@ clipboard() { cat "$BATS_TEST_TMPDIR/clipboard"; }
   [ "${#lines[@]}" -eq 5 ]
 }
 
-@test "positional count still copies only the first" {
+@test "positional count copies all candidates space-delimited" {
   run "$KAOMOJI" happy 3
   [ "$status" -eq 0 ]
+  [ "$(clipboard)" = "${lines[0]} ${lines[1]} ${lines[2]}" ]
+}
+
+@test "count of 1 copies a bare face with no padding" {
+  run "$KAOMOJI" happy 1
+  [ "$status" -eq 0 ]
   [ "$(clipboard)" = "${lines[0]}" ]
+}
+
+@test "multi-copy still has no trailing newline" {
+  run "$KAOMOJI" happy 3
+  [ "$status" -eq 0 ]
+  [ "$(wc -l < "$BATS_TEST_TMPDIR/clipboard" | tr -d ' ')" -eq 0 ]
+}
+
+@test "multi-copy joins with exactly one space" {
+  run "$KAOMOJI" happy 4
+  [ "$status" -eq 0 ]
+  # No double spaces, no leading/trailing space.
+  [[ "$(clipboard)" != *"  "* ]]
+  [[ "$(clipboard)" != " "* ]]
+  [[ "$(clipboard)" != *" " ]]
+}
+
+@test "clipboard still shows exactly what was printed" {
+  run "$KAOMOJI" shrug 3
+  [ "$status" -eq 0 ]
+  printed=$(printf '%s\n' "${lines[@]}" | tr '\n' ' ')
+  printed="${printed% }"
+  [ "$(clipboard)" = "$printed" ]
 }
 
 @test "positional count works without a mood" {

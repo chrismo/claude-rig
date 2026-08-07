@@ -212,8 +212,9 @@ usage: kaomoji [MOOD] [COUNT]
        kaomoji all
 
   MOOD      pick from a specific mood; omit for any mood
-  COUNT     print COUNT candidates, default 1 (the first is the one copied);
-            a bare number, in either order -- `kaomoji happy 5` or `kaomoji 5`
+  COUNT     print COUNT candidates, default 1; all of them are copied,
+            space-delimited on one line. A bare number, in either order --
+            `kaomoji happy 5` or `kaomoji 5`
   -n COUNT  same as the positional COUNT
 
   list      list mood names, or every face in MOOD (also -l, --list)
@@ -224,7 +225,7 @@ Browsing with list/all never touches the clipboard.
 examples:
   kaomoji              one face, any mood
   kaomoji shrug        one shrug
-  kaomoji happy 5      five happy candidates, first one copied
+  kaomoji happy 5      five happy candidates, all copied space-delimited
   kaomoji list         mood names
   kaomoji list sad     every sad face
   kaomoji sad list     same thing
@@ -303,6 +304,7 @@ fi
 
 picks=$(printf '%s\n' "$pool" | sort -R | head -n "$count")
 
-# The first pick is the one that lands in the clipboard.
-printf '%s' "$(printf '%s\n' "$picks" | head -n 1)" | pbcopy
+# Everything printed lands on the clipboard, space-delimited on one line.
+# With the default count of 1 that is just the bare face, unpadded.
+printf '%s' "$(printf '%s\n' "$picks" | paste -sd' ' -)" | pbcopy
 printf '%s\n' "$picks"
