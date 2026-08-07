@@ -208,20 +208,26 @@ mood_exists() {
 usage() {
   cat <<'EOF'
 usage: kaomoji [MOOD] [COUNT]
-       kaomoji --list [MOOD]
-       kaomoji --all
+       kaomoji list [MOOD]
+       kaomoji all
 
   MOOD      pick from a specific mood; omit for any mood
   COUNT     print COUNT candidates, default 1 (the first is the one copied);
             a bare number, in either order -- `kaomoji happy 5` or `kaomoji 5`
   -n COUNT  same as the positional COUNT
-  --list    list mood names, or every face in MOOD
-  --all     print every face in every mood
+
+  list      list mood names, or every face in MOOD (also -l, --list)
+  all       print every face in every mood (also --all)
+
+Browsing with list/all never touches the clipboard.
 
 examples:
   kaomoji              one face, any mood
   kaomoji shrug        one shrug
   kaomoji happy 5      five happy candidates, first one copied
+  kaomoji list         mood names
+  kaomoji list sad     every sad face
+  kaomoji sad list     same thing
 EOF
 }
 
@@ -235,13 +241,17 @@ mood=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
-    --list) mode=list; shift ;;
+    -l|--list) mode=list; shift ;;
     --all) mode=all; shift ;;
     -n)
       [[ $# -ge 2 ]] || { echo "kaomoji: -n needs a number" >&2; exit 2; }
       count="$2"; count_set=1; shift 2
       ;;
     -*) echo "kaomoji: unknown option $1" >&2; usage >&2; exit 2 ;;
+    # Bare `list` subcommand, in either position: `kaomoji list shrug` or
+    # `kaomoji shrug list`. Matched before the mood branch so it can never be
+    # read as a mood name; a test enforces no mood is called "list".
+    list|all) mode="$1"; shift ;;
     # A bare number is the count, in either position: `kaomoji happy 5` or
     # `kaomoji 5 happy`. No mood is all-digits, so this is unambiguous — a
     # test enforces that.

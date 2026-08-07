@@ -69,6 +69,69 @@ clipboard() { cat "$BATS_TEST_TMPDIR/clipboard"; }
   done
 }
 
+@test "bare 'list' subcommand lists mood names" {
+  run "$KAOMOJI" list
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"shrug"* ]]
+  [[ "$output" == *"friday"* ]]
+}
+
+@test "'list MOOD' prints that mood's faces" {
+  run "$KAOMOJI" list shrug
+  [ "$status" -eq 0 ]
+  run bash -c "diff <('$KAOMOJI' list shrug) <('$KAOMOJI' --list shrug)"
+  [ "$status" -eq 0 ]
+}
+
+@test "'MOOD list' also works" {
+  run bash -c "diff <('$KAOMOJI' shrug list) <('$KAOMOJI' --list shrug)"
+  [ "$status" -eq 0 ]
+}
+
+@test "-l lists mood names" {
+  run bash -c "diff <('$KAOMOJI' -l) <('$KAOMOJI' --list)"
+  [ "$status" -eq 0 ]
+}
+
+@test "-l MOOD prints that mood's faces" {
+  run bash -c "diff <('$KAOMOJI' -l shrug) <('$KAOMOJI' --list shrug)"
+  [ "$status" -eq 0 ]
+}
+
+@test "'list' does not touch the clipboard" {
+  run "$KAOMOJI" list
+  [ "$status" -eq 0 ]
+  [ ! -f "$BATS_TEST_TMPDIR/clipboard" ]
+}
+
+@test "-l does not touch the clipboard" {
+  run "$KAOMOJI" -l shrug
+  [ "$status" -eq 0 ]
+  [ ! -f "$BATS_TEST_TMPDIR/clipboard" ]
+}
+
+@test "bare 'all' subcommand matches --all" {
+  run bash -c "diff <('$KAOMOJI' all) <('$KAOMOJI' --all)"
+  [ "$status" -eq 0 ]
+}
+
+@test "no mood is named 'all'" {
+  run "$KAOMOJI" --list
+  [ "$status" -eq 0 ]
+  for mood in $output; do
+    [ "$mood" != "all" ]
+  done
+}
+
+@test "no mood is named 'list'" {
+  # Otherwise the subcommand would shadow a real mood.
+  run "$KAOMOJI" --list
+  [ "$status" -eq 0 ]
+  for mood in $output; do
+    [ "$mood" != "list" ]
+  done
+}
+
 @test "--list does not touch the clipboard" {
   run "$KAOMOJI" --list
   [ "$status" -eq 0 ]
