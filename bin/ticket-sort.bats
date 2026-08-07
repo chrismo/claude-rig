@@ -199,6 +199,9 @@ select_nums() {
   ts_ask 0 1 2> "$ui" && r1=0 || r1=1
   [ "$r1" -eq 1 ]     # answered "2" - right ticket wins
   grep -q "Which should be worked next" "$ui"
+  # The blocked-work rule sits with the question, not in the docs: it is only
+  # needed at the moment you are looking at a paused ticket.
+  grep -q "blocked/waiting, rank them as if you COULD work them today" "$ui"
 
   # Same pair again, and the reversed pair: both must come from the memo.
   # There is no second line of input, so a real prompt would abort here.

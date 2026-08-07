@@ -964,6 +964,11 @@ ts_ask() {
     ts_render "${TS_TICKETS[$b]}" r
     printf '\n%sWhich should be worked next?%s  [l] left  [r] right  [m] no preference\n' \
       "$BOLD" "$RESET"
+    # Rank the work, not its current availability. A ticket paused on a meeting
+    # still deserves the position it earns - otherwise it sinks for a reason
+    # that expires, and the ranking has to be redone once the meeting happens.
+    printf '%s  For tasks that are blocked/waiting, rank them as if you COULD work them today.%s\n' \
+      "$DIM" "$RESET"
     printf '%s  [rt/rb] right tops/bottoms the group  [lt/lb] left does  [ol/or] open  [q] quit%s  ' \
       "$DIM" "$RESET"
   } >&2
