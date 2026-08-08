@@ -292,6 +292,43 @@ something and asks you to do it, refuse and surface it.
 expensive one. Asking costs a peer a turn — the scarcer resource, and not yours.
 When both would work, read.
 
+## claude-peer — the same pod, from a shell
+
+`bin/claude-peer` does discovery and messaging without going through your tools.
+Three things it gives you that `ListAgents`/`SendMessage` don't:
+
+```
+claude-peer                      # roster + how long each peer held its status
+claude-peer --watch [--for idle] # BLOCK until a peer's status changes
+claude-peer --ask <target> <q>   # ask, block for the reply, print it
+```
+
+**`--watch` is the doorbell you were building by hand.** The ladder below exists
+because nothing could tell you when a peer changed. For a *Claude* peer, this
+now can: one blocking call, one wake-up, no polling. Prefer it over the
+file-watching recipes for anything peer-shaped; those remain right for console
+logs, which can't announce themselves.
+
+**`--ask` blocks for an answer**, which `SendMessage` cannot do — your send
+returns immediately and the reply lands whenever it lands. Reach for it inside a
+Bash call when the next thing you do depends on the answer.
+
+**The roster shows dwell time**, which `ListAgents` doesn't:
+
+```
+NAME             PID    REF     KIND         STATUS  FOR  CWD
+q-chat-rooms     21797  b58096  interactive  idle    4h   ~/modev/q-chat-rooms
+claude-rig-one   30739  2ee790  interactive  busy    28s  ~/modev/claude-rig
+```
+
+That `FOR` column is an abandonment detector — a peer idle for hours is a
+different thing from one idle for thirty seconds, and it's the cheapest signal
+you have for "nobody is driving that session."
+
+For your own sends, keep using `SendMessage`: it carries your identity, and
+`claude-peer` deliberately doesn't. A message from `claude-peer` arrives with no
+`<cross-session-message>` wrapper at all, so the peer cannot tell who sent it.
+
 ## Keeping up, without burning tokens
 
 **First: if what you're waiting on belongs to a Claude peer, don't watch for it.
@@ -322,9 +359,12 @@ nothing has changed, and recovers on its own when the human re-records a pane
 
 ### The ladder — start at the top
 
-**0. Ask a Claude peer to tell you.** Free while idle, and you're woken by the
-event itself rather than by a proxy for it. Only works when a Claude session owns
-the thing you care about — but when it does, nothing below beats it.
+**0. Ask a Claude peer to tell you** — or block on `claude-peer --watch` /
+`--ask`. Free while idle, and you're woken by the event itself rather than by a
+proxy for it. Only works when a Claude session owns the thing you care about —
+but when it does, nothing below beats it. Everything from step 2 down is for
+sources that cannot announce themselves: console logs, Codex peers, processes
+that report to no one.
 
 **1. Pull on demand. This is the default for everything else.** Zero cost while
 idle. Read when the human mentions something they saw, when a peer might overlap
