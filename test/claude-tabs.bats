@@ -10,13 +10,51 @@ setup() {
   TEST_DIR="$(mktemp -d "${TMPDIR:-/tmp}/claude-tabs-test.XXXXXX")"
   export CLAUDE_TABS_PROJECTS_DIR="$TEST_DIR/projects"
   export CLAUDE_TABS_MANIFEST="$TEST_DIR/tab-state.json"
+  export CLAUDE_TABS_SESSIONS_DIR="$TEST_DIR/sessions"
 
-  mkdir -p "$CLAUDE_TABS_PROJECTS_DIR"
+  mkdir -p "$CLAUDE_TABS_PROJECTS_DIR" "$CLAUDE_TABS_SESSIONS_DIR"
 }
 
 teardown() {
   if [[ -n "$TEST_DIR" && -d "$TEST_DIR" ]]; then
     rm -rf "$TEST_DIR"
+  fi
+}
+
+# write_session <pid> <cwd> <session_id> [kind]
+# Writes a registry file shaped like the real ~/.claude/sessions/<pid>.json.
+# Pass "" as kind to omit the field entirely (older sessions had no `kind`).
+write_session() {
+  local pid="$1" cwd="$2" sid="$3" kind="${4-interactive}"
+  local kind_field=""
+  [[ -n "$kind" ]] && kind_field="\"kind\":\"$kind\","
+  cat > "$CLAUDE_TABS_SESSIONS_DIR/$pid.json" <<JSON
+{"pid":$pid,"sessionId":"$sid","cwd":"$cwd","startedAt":1786147045266,"version":"2.1.224","peerProtocol":1,$kind_field"entrypoint":"cli","messagingSocketPath":"/tmp/cc-socks/$pid.sock","name":"fixture","status":"idle"}
+JSON
+}
+
+# write_transcript <cwd> <session_id>
+# The transcript `claude --resume <session_id>` would reopen.
+write_transcript() {
+  local dir="$CLAUDE_TABS_PROJECTS_DIR/$(echo "${1%/}" | tr / -)"
+  mkdir -p "$dir"
+  touch "$dir/$2.jsonl"
+}
+
+# Fixture PIDs aren't real processes — let every registry entry through.
+# Call after sourcing claude-tabs; the override sticks for the whole test.
+stub_pid_liveness() {
+  pid_is_live() { return 0; }
+}
+
+# registry_line <cwd> <session_id> [kind]
+# One line of the NDJSON that read_registry emits and detect_sessions consumes.
+registry_line() {
+  local kind="${3-interactive}"
+  if [[ -n "$kind" ]]; then
+    printf '{"cwd":"%s","sessionId":"%s","kind":"%s"}\n' "$1" "$2" "$kind"
+  else
+    printf '{"cwd":"%s","sessionId":"%s"}\n' "$1" "$2"
   fi
 }
 
@@ -43,92 +81,104 @@ teardown() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# detect_sessions (from mock lsof output)
+# detect_sessions (registry NDJSON → manifest)
 # ─────────────────────────────────────────────────────────────────────────────
 
-@test "detect_sessions finds Claude session from lsof output" {
+@test "detect_sessions builds a manifest row from a registry entry" {
   source "$CLAUDE_TABS"
 
-  # Create mock projects dir with JSONL
-  mkdir -p "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-ds5"
-  touch "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-ds5/abc-123-def.jsonl"
+  write_transcript /Users/chrismo/dev/ds5 abc-123-def
 
-  # Mock lsof output: pid line then cwd line
-  lsof_output="$(printf 'p925\nn/Users/chrismo/dev/ds5\np3616\nn/Users/chrismo/dev/not-a-claude-project\n')"
-
-  run detect_sessions "$lsof_output"
+  run detect_sessions "$(registry_line /Users/chrismo/dev/ds5 abc-123-def)"
   [[ "$status" -eq 0 ]]
   [[ "$output" == *'"path": "/Users/chrismo/dev/ds5"'* ]]
   [[ "$output" == *'"session_id": "abc-123-def"'* ]]
   [[ "$output" == *'"name": "ds5"'* ]]
 }
 
-@test "detect_sessions skips non-Claude node processes" {
+@test "detect_sessions pairs each session with its own recorded session_id" {
   source "$CLAUDE_TABS"
 
-  # No projects dir for this path
-  lsof_output="$(printf 'p3616\nn/Users/chrismo/dev/not-a-claude-project\n')"
+  # Three sessions in one directory. The registry records which session id
+  # belongs to which — the old lsof path could only rank the directory's
+  # transcripts by mtime and hope the pairing was right.
+  write_transcript /Users/chrismo/dev/ds5 sess-a
+  write_transcript /Users/chrismo/dev/ds5 sess-b
+  write_transcript /Users/chrismo/dev/ds5 sess-c
+  # A stale transcript from an exited session must not be resurrected.
+  write_transcript /Users/chrismo/dev/ds5 old-stale
 
-  run detect_sessions "$lsof_output"
-  [[ "$status" -eq 0 ]]
-  [[ "$output" == "[]" ]]
-}
+  ndjson="$(registry_line /Users/chrismo/dev/ds5 sess-a
+            registry_line /Users/chrismo/dev/ds5 sess-b
+            registry_line /Users/chrismo/dev/ds5 sess-c)"
 
-@test "detect_sessions returns one entry per active PID sharing a cwd" {
-  source "$CLAUDE_TABS"
-
-  mkdir -p "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-ds5"
-  # Three JSONLs with distinct mtimes — newest three should be picked
-  touch -t 202601010000 "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-ds5/old-stale.jsonl"
-  touch -t 202602010000 "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-ds5/sess-c.jsonl"
-  touch -t 202603010000 "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-ds5/sess-b.jsonl"
-  touch -t 202604010000 "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-ds5/sess-a.jsonl"
-
-  # Same cwd from three different PIDs — three active tabs
-  lsof_output="$(printf 'p925\nn/Users/chrismo/dev/ds5\np926\nn/Users/chrismo/dev/ds5\np927\nn/Users/chrismo/dev/ds5\n')"
-
-  run detect_sessions "$lsof_output"
+  run detect_sessions "$ndjson"
   [[ "$status" -eq 0 ]]
 
   local path_count
   path_count=$(echo "$output" | grep -c '"path": "/Users/chrismo/dev/ds5"')
   [[ "$path_count" -eq 3 ]]
 
-  # Three newest JSONLs should each appear exactly once
   [[ "$output" == *'"session_id": "sess-a"'* ]]
   [[ "$output" == *'"session_id": "sess-b"'* ]]
   [[ "$output" == *'"session_id": "sess-c"'* ]]
-  # The stale one should NOT appear
   [[ "$output" != *'"session_id": "old-stale"'* ]]
 }
 
-@test "detect_sessions picks most recent JSONL as session ID" {
+@test "detect_sessions skips a session with no transcript on disk" {
   source "$CLAUDE_TABS"
 
-  mkdir -p "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-ds5"
-  # Create two JSONLs with different mtimes
-  touch -t 202601010000 "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-ds5/old-session.jsonl"
-  sleep 0.1
-  touch "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-ds5/new-session.jsonl"
-
-  lsof_output="$(printf 'p925\nn/Users/chrismo/dev/ds5\n')"
-
-  run detect_sessions "$lsof_output"
+  # A tab opened but never typed into: the registry has it, but Claude has
+  # written no transcript, so `claude --resume` has nothing to reopen.
+  run detect_sessions "$(registry_line /Users/chrismo/dev/ds5 never-prompted)"
   [[ "$status" -eq 0 ]]
-  [[ "$output" == *'"session_id": "new-session"'* ]]
+  [[ "$output" == "[]" ]]
+}
+
+@test "detect_sessions skips sessions that aren't terminal tabs" {
+  source "$CLAUDE_TABS"
+
+  # kind is one of interactive / bg / daemon / daemon-worker. Only the first
+  # is a tab someone wants reopened.
+  write_transcript /Users/chrismo/dev/ds5 bg-1
+  write_transcript /Users/chrismo/dev/ds5 daemon-1
+
+  ndjson="$(registry_line /Users/chrismo/dev/ds5 bg-1 bg
+            registry_line /Users/chrismo/dev/ds5 daemon-1 daemon)"
+
+  run detect_sessions "$ndjson"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == "[]" ]]
+}
+
+@test "detect_sessions keeps entries written before kind existed" {
+  source "$CLAUDE_TABS"
+
+  write_transcript /Users/chrismo/dev/ds5 no-kind
+
+  run detect_sessions "$(registry_line /Users/chrismo/dev/ds5 no-kind '')"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *'"session_id": "no-kind"'* ]]
+}
+
+@test "detect_sessions returns an empty array for no input" {
+  source "$CLAUDE_TABS"
+
+  run detect_sessions ""
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == "[]" ]]
 }
 
 @test "detect_sessions handles multiple Claude sessions" {
   source "$CLAUDE_TABS"
 
-  mkdir -p "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-ds5"
-  touch "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-ds5/abc-123.jsonl"
-  mkdir -p "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-mta"
-  touch "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-mta/def-456.jsonl"
+  write_transcript /Users/chrismo/dev/ds5 abc-123
+  write_transcript /Users/chrismo/dev/mta def-456
 
-  lsof_output="$(printf 'p925\nn/Users/chrismo/dev/ds5\np3616\nn/Users/chrismo/dev/mta\n')"
+  ndjson="$(registry_line /Users/chrismo/dev/ds5 abc-123
+            registry_line /Users/chrismo/dev/mta def-456)"
 
-  run detect_sessions "$lsof_output"
+  run detect_sessions "$ndjson"
   [[ "$status" -eq 0 ]]
   [[ "$output" == *'"name": "ds5"'* ]]
   [[ "$output" == *'"name": "mta"'* ]]
@@ -137,76 +187,78 @@ teardown() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# get_lsof_output (process discovery)
+# read_registry (session discovery)
 # ─────────────────────────────────────────────────────────────────────────────
+#
+# These use real PIDs against the real liveness check: $$ is this bats process
+# (alive), and 999999 is above macOS's default pid_max so it never exists.
 
-@test "get_lsof_output uses pgrep to find claude PIDs and lsof for cwd" {
-  # Mock pgrep + lsof so we don't depend on the real environment.
-  export PATH="$TEST_DIR/bin:$PATH"
-  mkdir -p "$TEST_DIR/bin"
-
-  cat > "$TEST_DIR/bin/pgrep" <<'MOCK'
-#!/bin/bash
-# Verify the script asks pgrep for `claude` matches, not `node`.
-echo "$*" > "${PGREP_ARGS_FILE}"
-echo "925"
-echo "926"
-MOCK
-  chmod +x "$TEST_DIR/bin/pgrep"
-
-  cat > "$TEST_DIR/bin/lsof" <<'MOCK'
-#!/bin/bash
-echo "$*" > "${LSOF_ARGS_FILE}"
-printf 'p925\nn/Users/chrismo/dev/ds5\np926\nn/Users/chrismo/dev/ds5\n'
-MOCK
-  chmod +x "$TEST_DIR/bin/lsof"
-
-  export PGREP_ARGS_FILE="$TEST_DIR/pgrep-args"
-  export LSOF_ARGS_FILE="$TEST_DIR/lsof-args"
-
+@test "read_registry emits a line per live session" {
   source "$CLAUDE_TABS"
-  run get_lsof_output
+
+  write_session "$$" /Users/chrismo/dev/ds5 abc-123
+
+  run read_registry
   [[ "$status" -eq 0 ]]
-
-  # pgrep was asked for `claude` matches
-  local pgrep_args
-  pgrep_args=$(cat "$PGREP_ARGS_FILE")
-  [[ "$pgrep_args" == *"claude"* ]]
-  [[ "$pgrep_args" != *"node"* ]]
-
-  # lsof was asked for those specific PIDs
-  local lsof_args
-  lsof_args=$(cat "$LSOF_ARGS_FILE")
-  [[ "$lsof_args" == *"925"* ]]
-  [[ "$lsof_args" == *"926"* ]]
-
-  # Output is the lsof payload
-  [[ "$output" == *"/Users/chrismo/dev/ds5"* ]]
+  [[ "$output" == *'"cwd":"/Users/chrismo/dev/ds5"'* ]]
+  [[ "$output" == *'"sessionId":"abc-123"'* ]]
 }
 
-@test "get_lsof_output returns nothing when no claude processes running" {
-  export PATH="$TEST_DIR/bin:$PATH"
-  mkdir -p "$TEST_DIR/bin"
-
-  # pgrep with no matches exits 1 and prints nothing — mimic that.
-  cat > "$TEST_DIR/bin/pgrep" <<'MOCK'
-#!/bin/bash
-exit 1
-MOCK
-  chmod +x "$TEST_DIR/bin/pgrep"
-
-  # If lsof is invoked here, fail loudly.
-  cat > "$TEST_DIR/bin/lsof" <<'MOCK'
-#!/bin/bash
-echo "lsof should not be called" >&2
-exit 99
-MOCK
-  chmod +x "$TEST_DIR/bin/lsof"
-
+@test "read_registry skips sessions whose process is gone" {
   source "$CLAUDE_TABS"
-  run get_lsof_output
+
+  # Claude removes its registry file on a clean exit, but a killed session
+  # (Ghostty quit, SIGKILL) leaves one behind.
+  write_session 999999 /Users/chrismo/dev/dead dead-1
+  write_session "$$" /Users/chrismo/dev/ds5 abc-123
+
+  run read_registry
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *'"sessionId":"abc-123"'* ]]
+  [[ "$output" != *"dead-1"* ]]
+}
+
+@test "read_registry ignores files that aren't <pid>.json" {
+  source "$CLAUDE_TABS"
+
+  echo '{"cwd":"/Users/chrismo/dev/junk","sessionId":"junk-1"}' \
+    > "$CLAUDE_TABS_SESSIONS_DIR/not-a-pid.json"
+  echo 'not json' > "$CLAUDE_TABS_SESSIONS_DIR/README.txt"
+
+  run read_registry
+  [[ "$status" -eq 0 ]]
+  [[ "$output" != *"junk-1"* ]]
+  [[ "$output" != *"not json"* ]]
+}
+
+@test "read_registry emits nothing when the registry dir is missing" {
+  source "$CLAUDE_TABS"
+
+  export CLAUDE_TABS_SESSIONS_DIR="$TEST_DIR/no-such-dir"
+  run read_registry
   [[ "$status" -eq 0 ]]
   [[ -z "$output" ]]
+}
+
+@test "read_registry does not shell out to pgrep or lsof" {
+  # The old discovery path missed running sessions when `pgrep` was called
+  # from a claude-spawned subprocess. Reading the registry must not depend
+  # on either tool being visible or working.
+  export PATH="$TEST_DIR/bin:$PATH"
+  mkdir -p "$TEST_DIR/bin"
+  for tool in pgrep lsof; do
+    printf '#!/bin/bash\necho "%s should not be called" >&2\nexit 99\n' "$tool" \
+      > "$TEST_DIR/bin/$tool"
+    chmod +x "$TEST_DIR/bin/$tool"
+  done
+
+  source "$CLAUDE_TABS"
+  write_session "$$" /Users/chrismo/dev/ds5 abc-123
+
+  run read_registry
+  [[ "$status" -eq 0 ]]
+  [[ "$output" != *"should not be called"* ]]
+  [[ "$output" == *'"sessionId":"abc-123"'* ]]
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -215,12 +267,10 @@ MOCK
 
 @test "save writes manifest and list-active reads it back" {
   source "$CLAUDE_TABS"
+  stub_pid_liveness
 
-  mkdir -p "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-ds5"
-  touch "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-ds5/abc-123.jsonl"
-
-  mock_lsof="$(printf 'p925\nn/Users/chrismo/dev/ds5\n')"
-  export CLAUDE_TABS_LSOF_OUTPUT="$mock_lsof"
+  write_session 925 /Users/chrismo/dev/ds5 abc-123
+  write_transcript /Users/chrismo/dev/ds5 abc-123
 
   # Save
   run cmd_save
@@ -235,14 +285,12 @@ MOCK
 
 @test "save reports count of sessions saved" {
   source "$CLAUDE_TABS"
+  stub_pid_liveness
 
-  mkdir -p "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-ds5"
-  touch "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-ds5/abc-123.jsonl"
-  mkdir -p "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-mta"
-  touch "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-mta/def-456.jsonl"
-
-  mock_lsof="$(printf 'p925\nn/Users/chrismo/dev/ds5\np3616\nn/Users/chrismo/dev/mta\n')"
-  export CLAUDE_TABS_LSOF_OUTPUT="$mock_lsof"
+  write_session 925 /Users/chrismo/dev/ds5 abc-123
+  write_transcript /Users/chrismo/dev/ds5 abc-123
+  write_session 3616 /Users/chrismo/dev/mta def-456
+  write_transcript /Users/chrismo/dev/mta def-456
 
   run cmd_save
   [[ "$status" -eq 0 ]]
@@ -251,12 +299,10 @@ MOCK
 
 @test "list-active pipes JSON through grdy for table display" {
   source "$CLAUDE_TABS"
+  stub_pid_liveness
 
-  mkdir -p "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-ds5"
-  touch "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-ds5/abc-123.jsonl"
-
-  mock_lsof="$(printf 'p925\nn/Users/chrismo/dev/ds5\n')"
-  export CLAUDE_TABS_LSOF_OUTPUT="$mock_lsof"
+  write_session 925 /Users/chrismo/dev/ds5 abc-123
+  write_transcript /Users/chrismo/dev/ds5 abc-123
 
   run cmd_list_active
   [[ "$status" -eq 0 ]]
@@ -271,16 +317,15 @@ MOCK
 
 @test "save writes manifest sorted by name" {
   source "$CLAUDE_TABS"
+  stub_pid_liveness
 
-  mkdir -p "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-zebra"
-  touch "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-zebra/z-1.jsonl"
-  mkdir -p "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-apple"
-  touch "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-apple/a-1.jsonl"
-  mkdir -p "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-mango"
-  touch "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-mango/m-1.jsonl"
-
-  # Input in non-alphabetical order
-  export CLAUDE_TABS_LSOF_OUTPUT="$(printf 'p1\nn/Users/chrismo/dev/zebra\np2\nn/Users/chrismo/dev/apple\np3\nn/Users/chrismo/dev/mango\n')"
+  # Written in non-alphabetical order; the registry is read in filename order.
+  write_session 1 /Users/chrismo/dev/zebra z-1
+  write_transcript /Users/chrismo/dev/zebra z-1
+  write_session 2 /Users/chrismo/dev/apple a-1
+  write_transcript /Users/chrismo/dev/apple a-1
+  write_session 3 /Users/chrismo/dev/mango m-1
+  write_transcript /Users/chrismo/dev/mango m-1
 
   cmd_save
 
@@ -298,9 +343,10 @@ MOCK
 
 @test "list-active with no sessions produces no output" {
   source "$CLAUDE_TABS"
+  stub_pid_liveness
 
-  mock_lsof="$(printf 'p3616\nn/Users/chrismo/dev/not-a-claude-project\n')"
-  export CLAUDE_TABS_LSOF_OUTPUT="$mock_lsof"
+  # In the registry but with no transcript — nothing to resume, nothing to show.
+  write_session 3616 /Users/chrismo/dev/never-prompted zzz-999
 
   run cmd_list_active
   [[ "$status" -eq 0 ]]
@@ -330,13 +376,13 @@ MANIFEST
   [[ "$output" == *"abc-123"* ]]
 }
 
-@test "list-saved does not consult live processes" {
+@test "list-saved does not consult live sessions" {
   source "$CLAUDE_TABS"
+  stub_pid_liveness
 
   # A live session that is NOT in the manifest must not appear.
-  mkdir -p "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-live-only"
-  touch "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-live-only/live-999.jsonl"
-  export CLAUDE_TABS_LSOF_OUTPUT="$(printf 'p925\nn/Users/chrismo/dev/live-only\n')"
+  write_session 925 /Users/chrismo/dev/live-only live-999
+  write_transcript /Users/chrismo/dev/live-only live-999
 
   cat > "$CLAUDE_TABS_MANIFEST" <<'MANIFEST'
 [
@@ -509,12 +555,11 @@ MANIFEST
 
 @test "save copies manifest to history dir" {
   source "$CLAUDE_TABS"
+  stub_pid_liveness
   export CLAUDE_TABS_HISTORY_DIR="$TEST_DIR/tab-history"
 
-  mkdir -p "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-ds5"
-  touch "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-ds5/abc-123.jsonl"
-
-  export CLAUDE_TABS_LSOF_OUTPUT="$(printf 'p925\nn/Users/chrismo/dev/ds5\n')"
+  write_session 925 /Users/chrismo/dev/ds5 abc-123
+  write_transcript /Users/chrismo/dev/ds5 abc-123
 
   cmd_save
 
@@ -526,12 +571,11 @@ MANIFEST
 
 @test "save history content matches manifest" {
   source "$CLAUDE_TABS"
+  stub_pid_liveness
   export CLAUDE_TABS_HISTORY_DIR="$TEST_DIR/tab-history"
 
-  mkdir -p "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-ds5"
-  touch "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-ds5/abc-123.jsonl"
-
-  export CLAUDE_TABS_LSOF_OUTPUT="$(printf 'p925\nn/Users/chrismo/dev/ds5\n')"
+  write_session 925 /Users/chrismo/dev/ds5 abc-123
+  write_transcript /Users/chrismo/dev/ds5 abc-123
 
   cmd_save
 
@@ -542,12 +586,11 @@ MANIFEST
 
 @test "save creates multiple history files on repeated saves" {
   source "$CLAUDE_TABS"
+  stub_pid_liveness
   export CLAUDE_TABS_HISTORY_DIR="$TEST_DIR/tab-history"
 
-  mkdir -p "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-ds5"
-  touch "$CLAUDE_TABS_PROJECTS_DIR/-Users-chrismo-dev-ds5/abc-123.jsonl"
-
-  export CLAUDE_TABS_LSOF_OUTPUT="$(printf 'p925\nn/Users/chrismo/dev/ds5\n')"
+  write_session 925 /Users/chrismo/dev/ds5 abc-123
+  write_transcript /Users/chrismo/dev/ds5 abc-123
 
   cmd_save
   sleep 1
