@@ -56,6 +56,30 @@ asserting on one would fail for a rename that broke nothing.
 | B3 | Records carry `pid`, `sessionId`, `cwd`, `kind`, `status`, `startedAt` | `claude-tabs`, `claude-pod` name map | Whichever field vanished — `sessionId` is the worst, it's the transcript join. |
 | B4 | `kind` ∈ `interactive\|bg\|daemon\|daemon-worker`, `status` ∈ `busy\|shell\|idle\|waiting` | status rendering | A new value renders as garbage rather than crashing. Add it. |
 
+### R — runtime activation
+
+Everything above asserts that a mechanism is *present*. This group asserts it is
+**running**, which is not the same thing and was not always true.
+
+On 2026-08-08 cross-session messaging was off for newly started sessions for
+part of the morning. Every A-series anchor stayed green the whole time — the
+code was all in the bundle, it just wasn't activating. The gate is evaluated at
+startup (`tengu_harbor_kite`, overridable with `CLAUDE_CODE_HARBOR_KITE`), so a
+session can be on a build that fully supports messaging and still have no inbox.
+
+| ID | Assumption | Relied on by | If it fails |
+|---|---|---|---|
+| R1 | This session has a live inbox (`CLAUDE_CODE_MESSAGING_SOCKET` set, socket bound) | everything peer-related | Messaging did not activate for this session. Check the startup gate, not the bundle — the A-series will still be green. |
+| R2 | Live sessions on the **installed** build are getting inboxes | new sessions | Newly started sessions come up with no inbox, even while this one still works. `CLAUDE_CODE_HARBOR_KITE=1` forces the gate open. |
+
+R1 guards on `CLAUDE_CODE_SESSION_ID`, not on the messaging variable —
+deliberately. Guarding on the messaging variable would make the test *skip*
+in exactly the case it exists to catch.
+
+R2 looks at the installed build rather than the running one because that is
+what the next session will launch: R1 can stay green on a long-lived session
+while every new one comes up dead.
+
 ### E — addressability (what `claude-peer --ask` stands on)
 
 `--ask` gets a reply by telling the peer to answer a `uds:` socket path. That is

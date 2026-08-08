@@ -266,3 +266,69 @@ finally:
   # process has no way to receive a reply.
   assert_anchor 'reply to an incoming message'
 }
+
+# --- R: runtime activation -----------------------------------------------
+#
+# Why this group exists. On 2026-08-08 cross-session messaging was off for
+# newly started sessions for part of the morning, and every A-series anchor
+# stayed green throughout: the code was all present in the bundle, it simply
+# was not running. Asserting code presence is a proxy; this asserts the
+# feature actually activated.
+#
+# The gate is evaluated at startup — nt("tengu_harbor_kite", false), with a
+# CLAUDE_CODE_HARBOR_KITE env override — so a session can be on a build that
+# supports messaging and still have no inbox.
+#
+# Note the skip guard below is CLAUDE_CODE_SESSION_ID, deliberately. Guarding
+# on CLAUDE_CODE_MESSAGING_SOCKET would skip precisely when messaging failed
+# to activate, which is the one case worth catching.
+
+@test "R1: this session actually has a live messaging inbox" {
+  [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] || skip "not running inside a Claude session"
+
+  [ -n "${CLAUDE_CODE_MESSAGING_SOCKET:-}" ] || {
+    echo "This session has no CLAUDE_CODE_MESSAGING_SOCKET: cross-session" >&2
+    echo "messaging did not activate. The code may still be present (see the" >&2
+    echo "A-series) — check the startup gate rather than the bundle." >&2
+    return 1; }
+
+  [ -S "$CLAUDE_CODE_MESSAGING_SOCKET" ] || {
+    echo "socket path advertised but nothing is bound: $CLAUDE_CODE_MESSAGING_SOCKET" >&2
+    return 1; }
+}
+
+@test "R2: sessions on the installed build are getting inboxes" {
+  # The installed build is what the NEXT session will run, so this is the
+  # early warning: R1 can stay green on a long-lived session while every newly
+  # started one comes up without an inbox.
+  local launcher installed
+  launcher=$(command -v claude 2>/dev/null) || skip "no claude on PATH"
+  installed=$(readlink "$launcher" 2>/dev/null) || installed="$launcher"
+  installed=$(basename "$installed")
+  [[ "$installed" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] || skip "cannot resolve the installed build"
+
+  [ -d "$SESSIONS_DIR" ] || skip "no registry at $SESSIONS_DIR"
+
+  local f pid total=0 withsock=0 ver sock
+  for f in "$SESSIONS_DIR"/*.json; do
+    [ -e "$f" ] || continue
+    pid=$(basename "$f" .json)
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    kill -0 "$pid" 2>/dev/null || continue
+
+    ver=$(super -f line -c 'values {...{version:""}, ...this} | values version' "$f" 2>/dev/null)
+    [ "$ver" = "$installed" ] || continue
+    total=$((total + 1))
+
+    sock=$(super -f line -c 'values {...{messagingSocketPath:""}, ...this} | values messagingSocketPath' "$f" 2>/dev/null)
+    [ -n "$sock" ] && withsock=$((withsock + 1))
+  done
+
+  [ "$total" -gt 0 ] || skip "no live sessions on the installed build ($installed)"
+
+  [ "$withsock" -gt 0 ] || {
+    echo "$total live session(s) on $installed and NONE has a messagingSocketPath." >&2
+    echo "New sessions are coming up without an inbox — the startup gate is off." >&2
+    echo "Workaround: CLAUDE_CODE_HARBOR_KITE=1 forces it open." >&2
+    return 1; }
+}
