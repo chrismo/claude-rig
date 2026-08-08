@@ -44,10 +44,22 @@ For a peer session, `kind` is the literal `session` and `id` is that session's
 ref = sha256("session:" + messagingSocketPath).hexdigest()[:6]
 ```
 
-`uu` is the bundle's hash helper; its definition was not located (two-character
-identifiers are impractical to grep). It was identified **by result**: of md5,
-sha1, sha256, sha512, blake2b, blake2s and sha3-256, only sha256 reproduced the
-observed refs, and it reproduced all four.
+`uu` is the bundle's hash helper:
+
+```js
+function uu(e){ return yp(V_u.createHash("sha256").update(e).digest("hex").slice(0,12)) }
+var V_u = require("crypto")
+```
+
+Note the **`.slice(0,12)`**: the digest is cut to 12 hex characters before the
+ref logic ever sees it. So the collision walk above can lengthen a ref to at
+most 12 characters, not 64 — with enough colliding sessions the loop exits on
+`i < o.length` and returns a ref that is *not* unique. Nothing on a normal
+machine will get near that.
+
+This was also confirmed independently by result, before the definition was
+found: of md5, sha1, sha256, sha512, blake2b, blake2s and sha3-256, only sha256
+reproduced the observed refs, and it reproduced all four.
 
 **Verification.** Computed from `~/.claude/sessions/*.json` and compared against
 a live `ListAgents` roster:
