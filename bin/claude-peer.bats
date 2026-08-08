@@ -351,40 +351,44 @@ json.dump(d, open(f,'w'))
 
 ASK_SOCK_DIR() { echo "$BATS_TEST_TMPDIR/socks"; }
 
-# A peer that answers: on receiving anything, finds the ask entry in the
-# registry and writes a reply to its socket — what a real Claude does when it
-# addresses a name from its roster.
+# A peer that answers by reading the uds: reply address out of the message it
+# received — what a real Claude does. Deliberately does NOT consult the
+# registry: --ask must work without registering, so a helper that found the
+# socket that way would hide a broken default.
 start_answering_peer() {
   local sock="$1" reply="$2"
   python3 -c "
-import socket, os, sys, json, glob, threading, time
-sock, reply, regdir = sys.argv[1], sys.argv[2], sys.argv[3]
+import socket, os, sys, json, re, threading, time
+sock, reply = sys.argv[1], sys.argv[2]
 try: os.unlink(sock)
 except FileNotFoundError: pass
 s = socket.socket(socket.AF_UNIX); s.bind(sock); s.listen(4)
 def serve():
     while True:
         c,_ = s.accept()
-        if c.recv(65536):
-            for f in glob.glob(os.path.join(regdir, '*.json')):
-                try: d = json.load(open(f))
-                except Exception: continue
-                if 'peer-ask' not in (d.get('messagingSocketPath') or ''): continue
-                out = socket.socket(socket.AF_UNIX)
-                try:
-                    out.connect(d['messagingSocketPath'])
-                    out.sendall((json.dumps({'type':'user','message':{'role':'user',
-                        'content':'<cross-session-message from=\"uds:/x.sock\" from-name=\"peer\">\n'
-                                   + reply + '\n</cross-session-message>'}})+'\n').encode())
-                finally: out.close()
+        data = c.recv(65536)
         c.close()
+        if not data: continue
+        m = re.search(r'uds:(\S+?\.sock)', data.decode('utf-8','replace'))
+        if not m: continue
+        out = socket.socket(socket.AF_UNIX)
+        try:
+            out.connect(m.group(1))
+            out.sendall((json.dumps({'type':'user','message':{'role':'user',
+                'content':'<cross-session-message from=\"uds:/x.sock\" from-name=\"peer\">\n'
+                           + reply + '\n</cross-session-message>'}})+'\n').encode())
+        except OSError: pass
+        finally: out.close()
 threading.Thread(target=serve, daemon=True).start()
 time.sleep(30)
-" "$sock" "$reply" "$CLAUDE_SESSIONS_META_DIR" &
+" "$sock" "$reply" &
   LISTENERS+=($!)
   local i=0
   while [ ! -S "$sock" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
 }
+
+# Registry entry count, for asserting what --ask does and doesn't leave behind.
+reg_count() { ls "$CLAUDE_SESSIONS_META_DIR" 2>/dev/null | wc -l | tr -d ' '; }
 
 @test "--ask prints the peer's reply, envelope stripped" {
   local sock="$BATS_TEST_TMPDIR/peer.sock"
@@ -397,15 +401,56 @@ time.sleep(30)
   [[ "$output" != *"cross-session-message"* ]]
 }
 
-@test "--ask registers itself so the peer can address it" {
+# These two observe state DURING the ask, so they use a peer that never
+# answers: an answering peer finishes in ~0.3s and the sampler races it.
+@test "--ask does NOT register by default" {
+  # Registering puts a non-Claude process on the roster of every live session.
+  # That is opt-in: the reply comes back via the uds: address in the prompt,
+  # which needs no registry entry at all.
+  local sock="$BATS_TEST_TMPDIR/peer.sock"
+  start_listener "$sock" "$BATS_TEST_TMPDIR/got"
+  write_session $$ "mute" "$sock"
+
+  local before during
+  before=$(reg_count)
+  ( sleep 1; reg_count > "$BATS_TEST_TMPDIR/during" ) &
+  CLAUDE_PEER_SOCKET_DIR="$(ASK_SOCK_DIR)" run "$PEER" --ask mute "hello" --timeout 4
+  [ "$status" -eq 2 ]
+
+  during=$(cat "$BATS_TEST_TMPDIR/during")
+  [ "$during" -eq "$before" ]
+}
+
+@test "--ask --register makes itself visible on the roster while waiting" {
+  local sock="$BATS_TEST_TMPDIR/peer.sock"
+  start_listener "$sock" "$BATS_TEST_TMPDIR/got"
+  write_session $$ "mute" "$sock"
+
+  local before during
+  before=$(reg_count)
+  ( sleep 1; reg_count > "$BATS_TEST_TMPDIR/during"
+    grep -l 'asker' "$CLAUDE_SESSIONS_META_DIR"/*.json > "$BATS_TEST_TMPDIR/named" 2>/dev/null ) &
+  CLAUDE_PEER_SOCKET_DIR="$(ASK_SOCK_DIR)" run "$PEER" --ask mute "hello" \
+    --register --name asker --timeout 4
+  [ "$status" -eq 2 ]
+
+  during=$(cat "$BATS_TEST_TMPDIR/during")
+  [ "$during" -gt "$before" ]
+  [ -s "$BATS_TEST_TMPDIR/named" ]
+}
+
+@test "--ask --register removes its entry afterwards" {
   local sock="$BATS_TEST_TMPDIR/peer.sock"
   start_answering_peer "$sock" "seen"
   write_session $$ "builder" "$sock"
 
-  CLAUDE_PEER_SOCKET_DIR="$(ASK_SOCK_DIR)" run "$PEER" --ask builder "hello" --timeout 15
+  local before after
+  before=$(reg_count)
+  CLAUDE_PEER_SOCKET_DIR="$(ASK_SOCK_DIR)" run "$PEER" --ask builder "hello" \
+    --register --timeout 15
   [ "$status" -eq 0 ]
-  # The reply could only arrive if the peer found our registry entry.
-  [[ "$output" == *"seen"* ]]
+  after=$(reg_count)
+  [ "$before" -eq "$after" ]
 }
 
 @test "--ask removes its registry entry and socket afterwards" {

@@ -13,6 +13,7 @@
 #   claude-peer --watch               # block until any peer's status changes
 #   claude-peer --watch --for idle    # block until a peer reaches that status
 #   claude-peer --ask <target> <q>    # ask, block for the reply, print it
+#   claude-peer --ask ... --register  # also be findable on the roster while asking
 #
 #   claude-peer --send builder "deploy finished, tests green"
 #   ./run-tests.sh || claude-peer --send builder "suite went red"
@@ -50,7 +51,7 @@ SOCKET_DIR="${CLAUDE_PEER_SOCKET_DIR:-/tmp/cc-socks}"
 die() { echo "claude-peer: $*" >&2; exit 1; }
 
 usage() {
-  sed -n '3,27p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '3,28p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
 }
 
@@ -280,12 +281,13 @@ cmd_ask() {
   [[ $# -ge 2 ]] || die "no question (use - to read stdin)"
   shift 2
 
-  local timeout=60 ask_name="claude-peer-ask"
+  local timeout=60 ask_name="claude-peer-ask" register="no"
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --timeout) timeout="${2:-60}"; shift 2 ;;
-      --name)    ask_name="${2:-claude-peer-ask}"; shift 2 ;;
-      *)         die "unknown --ask option '$1'" ;;
+      --timeout)  timeout="${2:-60}"; shift 2 ;;
+      --name)     ask_name="${2:-claude-peer-ask}"; shift 2 ;;
+      --register) register="yes"; shift ;;
+      *)          die "unknown --ask option '$1'" ;;
     esac
   done
 
@@ -310,6 +312,7 @@ import socket, os, sys, json, re, time, signal
 
 target, question, ask_name = sys.argv[1], sys.argv[2], sys.argv[3]
 timeout, sockdir, regdir = float(sys.argv[4]), sys.argv[5], sys.argv[6]
+register = sys.argv[7] == "yes"
 
 pid = os.getpid()
 # NOT "<pid>.sock" — that is the shape a real session uses, and this is not a
@@ -318,7 +321,8 @@ sock_path = os.path.join(sockdir, "peer-ask-%d.sock" % pid)
 reg_path = os.path.join(regdir, "%d.json" % pid)
 
 def cleanup(*_):
-    for p in (sock_path, reg_path):
+    paths = [sock_path] + ([reg_path] if register else [])
+    for p in paths:
         try: os.unlink(p)
         except FileNotFoundError: pass
 
@@ -336,13 +340,18 @@ try:
     srv.listen(4)
     srv.settimeout(timeout)
 
-    now = int(time.time() * 1000)
-    os.makedirs(regdir, exist_ok=True)
-    with open(reg_path, "w") as f:
-        json.dump({"pid": pid, "sessionId": "00000000-0000-4000-8000-%012d" % (pid % 10**12),
-                   "cwd": os.getcwd(), "name": ask_name, "kind": "interactive",
-                   "status": "waiting", "startedAt": now, "statusUpdatedAt": now,
-                   "peerProtocol": 1, "messagingSocketPath": sock_path}, f)
+    # Registration is opt-in. It puts a non-Claude process on the roster of every
+    # live session, worth it only when you WANT to be found — a human running
+    # ListAgents seeing who is asking, or a peer messaging the asker unprompted.
+    # The reply itself never needs it: it comes back to the uds: address below.
+    if register:
+        now = int(time.time() * 1000)
+        os.makedirs(regdir, exist_ok=True)
+        with open(reg_path, "w") as f:
+            json.dump({"pid": pid, "sessionId": "00000000-0000-4000-8000-%012d" % (pid % 10**12),
+                       "cwd": os.getcwd(), "name": ask_name, "kind": "interactive",
+                       "status": "waiting", "startedAt": now, "statusUpdatedAt": now,
+                       "peerProtocol": 1, "messagingSocketPath": sock_path}, f)
 
     # Reply to the raw uds: path, NOT to the name. Pins are keyed to a ref, and
     # this process gets a fresh pid -> socket -> ref on every invocation, so a
@@ -389,7 +398,7 @@ try:
     sys.exit(2)
 finally:
     cleanup()
-' "$sock" "$question" "$ask_name" "$timeout" "$SOCKET_DIR" "$SESSIONS_DIR"
+' "$sock" "$question" "$ask_name" "$timeout" "$SOCKET_DIR" "$SESSIONS_DIR" "$register"
 }
 
 main() {
