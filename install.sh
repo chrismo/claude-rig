@@ -430,7 +430,7 @@ fi
 # When adding a new user-facing command to bin/, add it here.
 LOCAL_BIN="${LOCAL_BIN:-$HOME/.local/bin}"
 mkdir -p "$LOCAL_BIN"
-for cmd in claude-slot claude-tabs claude-search claude-pod work-context gt ticket-sort kaomoji; do
+for cmd in claude-slot claude-tabs claude-search claude-pod claude-src work-context gt ticket-sort kaomoji; do
   src="$REPO_DIR/bin/$cmd"
   dest="$LOCAL_BIN/$cmd"
   if [[ -f "$src" ]]; then

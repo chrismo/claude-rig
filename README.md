@@ -29,6 +29,7 @@ User-level rules (`.md` files) symlinked into `~/.claude/rules/`. Loaded at the 
 CLI tools symlinked into `~/.local/bin/`:
 
 - **permissions-audit** — consolidate allow/deny permission rules across git worktrees and global settings. Run from a repo root to discover `.claude/settings.local.json` in all worktrees plus `~/.claude/settings.json`. Flags: `--local-only` (skip global), `--sup` (structured output for piping into `super`).
+- **claude-src** — search Claude Code's own source, extracted from the installed binary. `claude-src '[uds-messaging]'`. See [docs/reading-the-claude-binary.md](docs/reading-the-claude-binary.md).
 
 ### `skills/`
 
@@ -127,6 +128,7 @@ See `tab-status/tab-status.md` for detailed flow diagrams.
 
 - **`claude-rig-breakout-spec.md`** — how this repo was extracted from a monorepo
 - **`multi-session-coordination.md`** — notes on orchestrating multiple Claude sessions
+- **`reading-the-claude-binary.md`** — how `claude-src` gets Claude Code's source out of the shipped binary, and what it has settled so far
 - **`mcp-slack.md`** — Slack MCP integration research
 - **`block-claude-plugin.sh`** — script to block the JetBrains Claude plugin (if you prefer Claude Code over the IDE plugin)
 

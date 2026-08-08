@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+#
+# claude-src - Read Claude Code's own source, straight out of the binary
+#
+# Usage:
+#   claude-src <pattern> [context] [width]   grep the bundle (default 2 lines, 1200 cols)
+#   claude-src --path                        print the extracted bundle, extracting if needed
+#   claude-src --which                       print the binary being read
+#
+# Why this exists: claude-rig keeps needing to know how Claude Code actually
+# behaves — where it writes its session registry, how peer addressing resolves,
+# what a roster row is made of. Probing sockets and diffing observed behaviour
+# answers those slowly and leaves you with a theory. The answers are in the
+# shipped binary.
+#
+# `claude` is a bun-compiled Mach-O of ~265MB, but the JS bundle inside it is
+# embedded as plain text, not bytecode-only. Scanning the file in blocks and
+# keeping the ones that are overwhelmingly printable ASCII pulls out ~32MB of
+# minified-but-readable source in about 9 seconds. There are no offsets or
+# section names here, so this keeps working across version bumps.
+#
+# The bundle is one enormous line, which makes grep quadratic and unreadable, so
+# extraction also splits on `;`. Statements land on their own lines; function
+# bodies still run long, hence the width cap on output.
+#
+# The cache is keyed to the binary's filename, which IS its version
+# (~/.local/share/claude/versions/2.1.224), so an upgrade re-extracts on its own.
+#
+# What you're reading is minified: identifiers are mangled (`tfa`, `vWt`), so
+# search for the things minifiers can't rename — string literals, log prefixes
+# (`[uds-messaging]`), env var names, JSON field names, tool prompts. Find one of
+# those, then follow the mangled names around it.
+#
+# Requires: perl.
+#
+
+set -euo pipefail
+
+# Blocks that are >90% printable are kept. 64KiB is small enough to cut cleanly
+# between the bytecode and text regions, large enough to scan 265MB quickly.
+CLAUDE_SRC_BLOCK_BYTES="${CLAUDE_SRC_BLOCK_BYTES:-65536}"
+CLAUDE_SRC_CACHE_DIR="${CLAUDE_SRC_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claude-rig/cli-src}"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Functions (sourced by tests)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# resolve_claude_binary
+# The launcher on PATH is a symlink into versions/<version>; we want the file it
+# points at, since its name is the cache key.
+resolve_claude_binary() {
+  if [[ -n "${CLAUDE_SRC_BINARY:-}" ]]; then
+    echo "$CLAUDE_SRC_BINARY"
+    return 0
+  fi
+
+  # Inside a Claude session this names the running build exactly.
+  if [[ -n "${CLAUDE_CODE_EXECPATH:-}" && -f "${CLAUDE_CODE_EXECPATH}" ]]; then
+    echo "$CLAUDE_CODE_EXECPATH"
+    return 0
+  fi
+
+  local p
+  p=$(command -v claude 2>/dev/null) || {
+    echo "claude-src: no 'claude' on PATH; set CLAUDE_SRC_BINARY" >&2
+    return 1
+  }
+
+  local target
+  while [[ -L "$p" ]]; do
+    target=$(readlink "$p")
+    [[ "$target" == /* ]] || target="$(dirname "$p")/$target"
+    p="$target"
+  done
+  echo "$p"
+}
+
+# cache_path_for <binary>
+cache_path_for() {
+  echo "$CLAUDE_SRC_CACHE_DIR/${1##*/}.lines"
+}
+
+# extract_bundle <binary>
+# Emits the readable JS to stdout, one statement per line.
+extract_bundle() {
+  CLAUDE_SRC_BLOCK_BYTES="$CLAUDE_SRC_BLOCK_BYTES" perl -e '
+    my $blk = $ENV{CLAUDE_SRC_BLOCK_BYTES} || 65536;
+    open my $fh, "<:raw", $ARGV[0] or die "claude-src: $ARGV[0]: $!\n";
+    while (read($fh, my $buf, $blk)) {
+      my $printable = () = $buf =~ /[\t\n\x20-\x7e]/g;
+      next if $printable < 0.9 * length($buf);
+      $buf =~ s/[^\t\n\x20-\x7e]//g;
+      $buf =~ s/;/\n/g;
+      print $buf;
+    }
+  ' "$1"
+}
+
+# ensure_extracted <binary>
+# Prints the cache path, extracting first if the cache is missing or stale.
+ensure_extracted() {
+  local binary="$1"
+  local cache
+  cache=$(cache_path_for "$binary")
+
+  if [[ -f "$cache" && "$cache" -nt "$binary" ]]; then
+    echo "$cache"
+    return 0
+  fi
+
+  mkdir -p "$(dirname "$cache")"
+  echo "claude-src: extracting $(basename "$binary")…" >&2
+  # Write to a temp file first so an interrupted run can't leave a half bundle
+  # that later looks cached.
+  local tmp="$cache.partial.$$"
+  extract_bundle "$binary" > "$tmp"
+  mv "$tmp" "$cache"
+  echo "$cache"
+}
+
+# cmd_search <pattern> [context] [width]
+cmd_search() {
+  local pattern="$1"
+  local context="${2:-2}"
+  local width="${3:-1200}"
+
+  local binary cache
+  binary=$(resolve_claude_binary)
+  cache=$(ensure_extracted "$binary")
+
+  local hits
+  hits=$(LC_ALL=C grep -n -C "$context" -- "$pattern" "$cache" | cut -c "1-$width") || {
+    echo "claude-src: no match for '$pattern' in $(basename "$binary")" >&2
+    return 1
+  }
+  printf '%s\n' "$hits"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Main (skipped when sourced)
+# ─────────────────────────────────────────────────────────────────────────────
+
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+  return 0 2>/dev/null || true
+fi
+
+usage() {
+  echo "Usage: claude-src <pattern> [context-lines] [max-width]"
+  echo "       claude-src --path     print the extracted bundle path"
+  echo "       claude-src --which    print the binary being read"
+  echo ""
+  echo "Search the Claude Code CLI's own (minified) source. Match on string"
+  echo "literals, log prefixes, env var names — identifiers are mangled."
+  echo ""
+  echo "Cache: $CLAUDE_SRC_CACHE_DIR"
+}
+
+case "${1:-}" in
+  --path)    ensure_extracted "$(resolve_claude_binary)" ;;
+  --which)   resolve_claude_binary ;;
+  -h|--help) usage ;;
+  "")        usage; exit 1 ;;
+  *)         cmd_search "$@" ;;
+esac

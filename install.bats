@@ -325,6 +325,15 @@ EOF
   [[ "$target" == "$BATS_TEST_DIRNAME/bin/ticket-sort" ]]
 }
 
+@test "bin: claude-src is symlinked from bin/" {
+  run_installer
+  [ "$status" -eq 0 ]
+  [ -L "$LOCAL_BIN/claude-src" ]
+  local target
+  target=$(readlink "$LOCAL_BIN/claude-src")
+  [[ "$target" == "$BATS_TEST_DIRNAME/bin/claude-src" ]]
+}
+
 @test "bin: analysis scripts in bin/ are not installed as commands" {
   # The install list is an allowlist for exactly this reason - adding a
   # user-facing command means adding it there, and a new .sh left in bin/
