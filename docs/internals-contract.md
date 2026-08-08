@@ -75,28 +75,36 @@ it is a data format rather than a mechanism.
 |---|---|---|
 | D1 | `docs/verified-against` matches the running build | Not a breakage. The assumptions were confirmed against a different build. Re-verify — **including the behavioural checks below** — then bump the file. |
 
-## What the suite cannot check
+## What is automated, and the one thing that isn't
 
-Bash cannot call `ListAgents` or `SendMessage`, so the behavioural half is
-manual. Ask a Claude session to run these when D1 goes red. They take one turn.
+`bin/claude-peer` reimplements discovery, ref derivation and sending in the
+shell, so most of the behavioural half is now machine-checkable — `bats
+bin/claude-peer.bats` stands up real unix sockets and exercises the probe and
+the send for real:
 
-1. **Roster shape.** Run `ListAgents`. Each row should still read
-   `name [ref] · kind · status · started N ago`. A changed row format means the
-   renderer moved.
-2. **Ref derivation.** Compute
-   `sha256("session:" + messagingSocketPath)[:6]` for a live peer from its
-   registry file and compare against the ref in the roster. This is the single
-   highest-value check — it exercises A2, A5 and the roster together.
-3. **The addressing rule.** Send to a peer by bare name with no prior pin: it
-   should be rejected with an error naming the ref. Send with the ref: it should
-   land. Send bare again: it should land. A change here means the `pod-peer`
-   skill's addressing guidance is wrong.
-4. **Reachability.** Confirm a session with a `messagingSocketPath` whose
-   process is dead does *not* appear on the roster — the roster connect-probes,
-   so a recorded path never implies reachable.
+- **Roster contents** — `claude-peer --list` builds its own roster from the
+  registry plus a connect probe. Compare it against a Claude session's
+  `ListAgents` output; the names and refs should match row for row.
+- **Ref derivation** — computed with `shasum -a 256` and asserted in the suite.
+- **Reachability** — asserted directly: a socket file with no listener behind it
+  must not appear, and a send to it must fail.
+- **Delivery** — a full round trip (write to a socket, confirm the bytes land)
+  runs against a real listener in the suite.
 
-Checks 2 and 3 are recorded in [inter-claude-protocol.md](inter-claude-protocol.md)
-with the exact commands and their last observed output.
+**The one genuinely manual check is Claude's tool layer**, because bash cannot
+call `SendMessage`:
+
+- **The addressing rule.** Send to a peer by bare name with no prior pin: it
+  should be rejected with an error naming the ref. Send with the ref: it should
+  land. Send bare again: it should land. A change here means the `pod-peer`
+  skill's addressing guidance is wrong.
+
+That distinction matters: `claude-peer` proves the *transport and registry*
+still work. It cannot prove that Claude's own resolver, pins and message
+envelope are unchanged, because it deliberately bypasses all three.
+
+Recorded in [inter-claude-protocol.md](inter-claude-protocol.md) with the exact
+commands and their last observed output.
 
 ## When something goes red
 

@@ -173,6 +173,31 @@ Sending has its own guards: a 5s timeout, and a refusal to connect anywhere
 non-local (`Refusing to connect to non-local IPC path`). On macOS the writer
 delays `end()` briefly after writing rather than closing immediately.
 
+### Sender attribution is advisory, not enforced
+
+The `<cross-session-message from=… from-name=… from-mode=…>` wrapper a receiving
+Claude sees is constructed by the **`SendMessage` tool**, not by the socket, the
+daemon, or anything in the transport.
+
+Established by comparing four deliveries into one session:
+
+| sender | envelope seen by receiver |
+|---|---|
+| raw `AF_UNIX` write | none |
+| `bin/claude-peer` | none |
+| `SendMessage` with a ref | present, populated |
+| `SendMessage` with a bare name | present, identical |
+
+So anything that can write to the socket is delivered as an ordinary user turn,
+and can omit the attribution entirely — or supply its own, since nothing
+downstream verifies it. **A `from-name` is a claim, not proof.** The security
+boundary is filesystem permission on `/tmp/cc-socks` (mode `0700`, owner only),
+not anything in the message.
+
+The harness's own framing — the "this came from another Claude session" preamble
+and the permission-laundering warning — is attached on ingest regardless of how
+the bytes arrived, including for a raw write.
+
 ### Reply-address guard
 
 Before sending a hold receipt, the reply address is checked to be in the same

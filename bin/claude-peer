@@ -1,0 +1,189 @@
+#!/usr/bin/env bash
+#
+# claude-peer - list and message live Claude sessions, from a shell
+#
+# Claude's own ListAgents/SendMessage tools are only callable by Claude. This
+# does the same two jobs from outside: any script, cron job, CI step or git hook
+# can see which sessions are running and drop a message into one.
+#
+#   claude-peer                       # reachable peers: name, pid, ref, cwd
+#   claude-peer --all                 # include sessions that no longer answer
+#   claude-peer --send <target> <msg> # deliver a message; target is name|pid|ref
+#   claude-peer --send <target> -     # read the message body from stdin
+#
+#   claude-peer --send builder "deploy finished, tests green"
+#   ./run-tests.sh || claude-peer --send builder "suite went red"
+#
+# How it works (see docs/inter-claude-protocol.md — none of this is a supported
+# API, and bin/claude-contract.bats is what tells you when it stops being true):
+#
+#   discovery  every ~/.claude/sessions/<pid>.json, filename filtered to
+#              /^\d+\.json$/, liveness by kill -0, then a connect probe
+#   reachable  a recorded messagingSocketPath does NOT mean reachable — a
+#              registry file outlives the process, so the socket is probed
+#   ref        sha256("session:" + messagingSocketPath), first 6 hex, which is
+#              the same [ref] Claude prints in a ListAgents roster
+#   send       one line of JSON on the peer's unix socket; the receiver treats
+#              it as an ordinary user turn
+#
+# A message sent this way carries no reply address, so no delivery receipt comes
+# back. Fire and forget: a zero exit means the bytes were accepted by the
+# socket, not that a human or model has read them.
+#
+# Requires: nc, shasum, python3 (JSON parse and escape).
+
+set -uo pipefail
+
+SESSIONS_DIR="${CLAUDE_SESSIONS_META_DIR:-$HOME/.claude/sessions}"
+SELF_SOCK="${CLAUDE_CODE_MESSAGING_SOCKET:-}"
+PROBE_TIMEOUT="${CLAUDE_PEER_PROBE_TIMEOUT:-1}"
+
+die() { echo "claude-peer: $*" >&2; exit 1; }
+
+usage() {
+  sed -n '3,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  exit "${1:-0}"
+}
+
+pid_is_live() { kill -0 "$1" 2>/dev/null; }
+
+# Connect and hang up. Distinguishes a live listener from both a missing path
+# and a leftover socket file with nobody behind it.
+socket_answers() {
+  nc -U -w "$PROBE_TIMEOUT" "$1" < /dev/null > /dev/null 2>&1
+}
+
+ref_for() { printf '%s' "session:$1" | shasum -a 256 | cut -c1-6; }
+
+# One TSV row per live registry record: pid, name, kind, status, sock, cwd.
+# The filename is the pid and is the only thing trusted to identify the file;
+# Claude applies the same filter.
+collect_rows() {
+  [[ -d "$SESSIONS_DIR" ]] || return 0
+
+  local f pid
+  for f in "$SESSIONS_DIR"/*.json; do
+    [[ -f "$f" ]] || continue
+    pid="${f##*/}"; pid="${pid%.json}"
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    pid_is_live "$pid" || continue
+
+    python3 -c '
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(0)
+sock = d.get("messagingSocketPath") or ""
+if not sock:
+    sys.exit(0)
+def clean(v):
+    return str(v if v is not None else "").replace("\t", " ").replace("\n", " ")
+print("\t".join(clean(x) for x in (
+    d.get("pid", ""), d.get("name", ""), d.get("kind", ""),
+    d.get("status", ""), sock, d.get("cwd", ""))))
+' "$f"
+  done
+}
+
+cmd_list() {
+  local show_all="$1"
+  local rows pid name kind status sock cwd ref reach
+  rows=$(collect_rows)
+  [[ -n "$rows" ]] || return 0
+
+  local out=""
+  while IFS=$'\t' read -r pid name kind status sock cwd; do
+    [[ -n "$sock" ]] || continue
+    # Never list yourself; Claude excludes self the same way, by socket path.
+    [[ -n "$SELF_SOCK" && "$sock" == "$SELF_SOCK" ]] && continue
+
+    if socket_answers "$sock"; then
+      reach=""
+    else
+      [[ "$show_all" == "yes" ]] || continue
+      reach="unreachable"
+    fi
+
+    ref=$(ref_for "$sock")
+    out+=$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s' \
+      "${name:-(unnamed)}" "$pid" "$ref" "$kind" "$status" "$cwd" "$reach")
+    out+=$'\n'
+  done <<< "$rows"
+
+  [[ -n "$out" ]] || return 0
+
+  {
+    printf 'NAME\tPID\tREF\tKIND\tSTATUS\tCWD\t\n'
+    printf '%s' "$out"
+  } | column -t -s $'\t'
+}
+
+# Resolve a target to "sock<TAB>name<TAB>pid". Matches a name exactly, a pid
+# exactly, or a ref by prefix — the same three handles a roster row shows.
+resolve_target() {
+  local want="$1" rows pid name kind status sock cwd ref
+  rows=$(collect_rows)
+  [[ -n "$rows" ]] || return 1
+
+  local match="" count=0
+  while IFS=$'\t' read -r pid name kind status sock cwd; do
+    [[ -n "$sock" ]] || continue
+    ref=$(ref_for "$sock")
+    if [[ "$name" == "$want" || "$pid" == "$want" || "$ref" == "$want"* ]]; then
+      match="$sock"$'\t'"$name"$'\t'"$pid"
+      count=$((count + 1))
+    fi
+  done <<< "$rows"
+
+  [[ "$count" -eq 0 ]] && return 1
+  [[ "$count" -gt 1 ]] && { echo "claude-peer: '$want' matches $count sessions; use a pid or ref" >&2; return 2; }
+  printf '%s\n' "$match"
+}
+
+cmd_send() {
+  local want="${1:-}" body="${2:-}"
+  [[ -n "$want" ]] || usage 1
+  [[ $# -ge 2 ]] || die "no message body (use - to read stdin)"
+
+  [[ "$body" == "-" ]] && body=$(cat)
+
+  local resolved rc sock name pid
+  resolved=$(resolve_target "$want"); rc=$?
+  [[ $rc -eq 2 ]] && exit 1
+  [[ $rc -ne 0 ]] && die "no session matching '$want' (try: claude-peer --all)"
+
+  IFS=$'\t' read -r sock name pid <<< "$resolved"
+
+  if [[ -n "$SELF_SOCK" && "$sock" == "$SELF_SOCK" ]]; then
+    die "'$want' is this session; refusing to message yourself"
+  fi
+
+  socket_answers "$sock" \
+    || die "'$name' (pid $pid) is listed but its socket does not answer — the session likely exited"
+
+  # json.dumps does the escaping; hand-rolling it breaks on quotes and
+  # backslashes, and a malformed line is silently discarded by the receiver.
+  local line
+  line=$(printf '%s' "$body" | python3 -c '
+import json, sys
+print(json.dumps({"type": "user",
+                  "message": {"role": "user", "content": sys.stdin.read()}}))
+') || die "failed to encode message"
+
+  printf '%s\n' "$line" | nc -U -w 2 "$sock" > /dev/null 2>&1 \
+    || die "failed to write to $sock"
+}
+
+main() {
+  local show_all="no"
+  case "${1:---list}" in
+    --list)        cmd_list "no" ;;
+    --all)         cmd_list "yes" ;;
+    --send)        shift; cmd_send "$@" ;;
+    -h|--help)     usage 0 ;;
+    *)             die "unknown option '$1' (try --help)" ;;
+  esac
+}
+
+main "$@"
