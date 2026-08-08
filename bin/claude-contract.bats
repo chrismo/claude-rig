@@ -209,3 +209,52 @@ sys.exit(0 if ok else 1)
     echo "verified against $stamp, running $running — re-verify, then bump docs/verified-against" >&2
     return 1; }
 }
+
+# --- E: addressability, what claude-peer --ask stands on -----------------
+
+@test "E1: the session registry directory is writable" {
+  [ -d "$SESSIONS_DIR" ] || skip "no registry at $SESSIONS_DIR"
+  local probe="$SESSIONS_DIR/.claude-rig-write-probe"
+  echo x > "$probe" 2>/dev/null || {
+    echo "cannot write $SESSIONS_DIR — claude-peer --ask cannot register" >&2
+    return 1; }
+  rm -f "$probe"
+}
+
+@test "E2: a roster entry needs only a live pid and an answering socket" {
+  # The assumption most likely to be closed off deliberately. Asserted the same
+  # way claude-peer relies on it: register a plain process, confirm claude-peer
+  # (which reimplements rfa) lists it, then clean up.
+  local peer="$BATS_TEST_DIRNAME/claude-peer"
+  command -v python3 >/dev/null || skip "python3 required"
+
+  run python3 -c '
+import socket, os, json, sys, time, subprocess, tempfile
+regdir = os.path.expanduser(os.environ.get("CLAUDE_SESSIONS_META_DIR", "~/.claude/sessions"))
+regdir = os.path.expanduser(regdir)
+sockdir = tempfile.mkdtemp()
+pid = os.getpid()
+sock = os.path.join(sockdir, "peer-ask-%d.sock" % pid)
+reg = os.path.join(regdir, "%d.json" % pid)
+srv = socket.socket(socket.AF_UNIX); srv.bind(sock); srv.listen(2)
+now = int(time.time()*1000)
+try:
+    json.dump({"pid": pid, "name": "contract-probe", "kind": "interactive",
+               "status": "waiting", "startedAt": now, "statusUpdatedAt": now,
+               "messagingSocketPath": sock}, open(reg, "w"))
+    out = subprocess.run([sys.argv[1], "--list"], capture_output=True, text=True).stdout
+    print("LISTED" if "contract-probe" in out else "NOT-LISTED")
+finally:
+    for p in (sock, reg):
+        try: os.unlink(p)
+        except FileNotFoundError: pass
+' "$peer"
+  [ "$status" -eq 0 ] || { echo "$output" >&2; return 1; }
+  [[ "$output" == *"LISTED"* ]] || {
+    echo "a registered process was NOT listed — registration may now be validated" >&2
+    echo "$output" >&2; return 1; }
+}
+
+@test "E3: attribution is a text wrapper inside message.content" {
+  assert_anchor 'cross-session-message'
+}

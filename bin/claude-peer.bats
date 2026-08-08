@@ -460,3 +460,19 @@ time.sleep(30)
   after=$(ls "$CLAUDE_SESSIONS_META_DIR" | wc -l | tr -d ' ')
   [ "$before" -eq "$after" ]
 }
+
+@test "--ask tells the peer to reply to a uds: path, not to a name" {
+  # Pins are keyed to a ref, and each --ask invocation gets a fresh pid, socket
+  # and therefore ref. A bare-name reply would bounce every time; a uds: path
+  # needs no pin, no ref and no roster entry.
+  local sock="$BATS_TEST_TMPDIR/peer.sock" got="$BATS_TEST_TMPDIR/got"
+  start_listener "$sock" "$got"
+  write_session $$ "mute" "$sock"
+
+  CLAUDE_PEER_SOCKET_DIR="$(ASK_SOCK_DIR)" run "$PEER" --ask mute "q" --timeout 3
+  [ "$status" -eq 2 ]
+
+  run cat "$got"
+  [[ "$output" == *"uds:"* ]]
+  [[ "$output" == *"peer-ask-"* ]]
+}

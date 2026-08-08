@@ -344,10 +344,14 @@ try:
                    "status": "waiting", "startedAt": now, "statusUpdatedAt": now,
                    "peerProtocol": 1, "messagingSocketPath": sock_path}, f)
 
-    body = (question + "\n\n[Asked by " + ask_name + ", a shell process waiting on your "
-            "reply. Reply with SendMessage to \"" + ask_name + "\" — it is on your roster "
-            "for as long as this question is open. Your reply is printed to a terminal, "
-            "so keep it short.]")
+    # Reply to the raw uds: path, NOT to the name. Pins are keyed to a ref, and
+    # this process gets a fresh pid -> socket -> ref on every invocation, so a
+    # bare-name reply bounces every time no matter how many succeeded before.
+    # A uds: path needs no pin, no ref and no roster entry.
+    body = (question + "\n\n[Asked by " + ask_name + ", a shell process blocked on your "
+            "reply. Reply with SendMessage to \"uds:" + sock_path + "\" — address it "
+            "exactly like that, not by name. Your reply is printed to a terminal, so "
+            "keep it short and plain.]")
     out = socket.socket(socket.AF_UNIX)
     out.connect(target)
     out.sendall((json.dumps({"type": "user",

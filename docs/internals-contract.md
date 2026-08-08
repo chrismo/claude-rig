@@ -56,6 +56,23 @@ asserting on one would fail for a rename that broke nothing.
 | B3 | Records carry `pid`, `sessionId`, `cwd`, `kind`, `status`, `startedAt` | `claude-tabs`, `claude-pod` name map | Whichever field vanished — `sessionId` is the worst, it's the transcript join. |
 | B4 | `kind` ∈ `interactive\|bg\|daemon\|daemon-worker`, `status` ∈ `busy\|shell\|idle\|waiting` | status rendering | A new value renders as garbage rather than crashing. Add it. |
 
+### E — addressability (what `claude-peer --ask` stands on)
+
+`--ask` is a shipped feature that depends on being able to *join* the roster,
+not just read it. That is a deeper dependency than anything else here: it writes
+into Claude's own registry directory.
+
+| ID | Assumption | Relied on by | If it fails |
+|---|---|---|---|
+| E1 | The registry directory is writable by us | `claude-peer --ask` | `--ask` cannot register and must fail loudly rather than hang. Check whether Claude started policing the directory. |
+| E2 | A roster entry needs only a live pid + an answering socket — no proof of being a real Claude | `claude-peer --ask` | Registration is being validated somehow (signature, cookie, process identity). `--ask` is dead; fall back to reading the peer's transcript for its reply. |
+| E3 | Attribution is a text wrapper inside `message.content`, not a verified field | `--ask` reply parsing | The envelope moved. `--ask` will print protocol furniture, or nothing, instead of the answer. |
+
+E2 is the one to watch. It is the assumption most likely to be deliberately
+closed off, precisely because it is what lets a non-Claude process pose as a
+peer — and if it is closed off, that is a *reasonable* change to make, not a
+bug. Do not work around it; switch `--ask` to transcript-tailing instead.
+
 ### C — transcripts
 
 The widest blast radius in the repo: seven scripts read these

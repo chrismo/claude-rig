@@ -101,10 +101,34 @@ What a real send puts on the wire:
  ...(n?.length ?? 0) > 0 && {file_attachments:n}}
 ```
 
-`c` carries the generated `msg_id`. `from` is the sender's own socket address —
-this is why a reply's `from` is a `uds:` path rather than the name you sent to.
-`priority` is `next` for an ordinary send; `now` exists and is dispatched
-differently (below). `file_attachments` is omitted entirely when empty.
+`c` carries the generated `msg_id`. `priority` is `next` for an ordinary send;
+`now` exists and is dispatched differently (below). `file_attachments` is
+omitted entirely when empty.
+
+A capture of a real `SendMessage`, taken by having a non-Claude process receive
+one (below), shows what actually goes on the wire:
+
+```json
+{"msgV":1,
+ "msg_id":"14292e75-85cb-4548-b368-b1258f2cc43c",
+ "type":"user",
+ "message":{"role":"user","content":
+   "<cross-session-message from=\"uds:/tmp/cc-socks/98880.sock\" from-name=\"claude-rig\" from-mode=\"prompting\">\n…\n</cross-session-message>"},
+ "priority":"next",
+ "from":"uds:/tmp/cc-socks/98880.sock"}
+```
+
+Two things there are easy to get wrong.
+
+**`msgV` is a protocol version field.** Worth checking on an upgrade; a bump is
+the clearest possible signal that the envelope changed.
+
+**The envelope's `from` field is not what the model sees.** It is on the wire
+and it is load-bearing — the hold-receipt path reads it to route
+`peer_message_status` back, and refuses an address outside its own socket
+directory. But nothing surfaces it to the receiving *model*, which reads only
+`message.content`. Setting it on a hand-written message gives the peer nothing
+to answer; writing the address into the content does.
 
 ### `type: "control"` — out-of-band actions
 
@@ -188,15 +212,69 @@ Established by comparing four deliveries into one session:
 | `SendMessage` with a ref | present, populated |
 | `SendMessage` with a bare name | present, identical |
 
-So anything that can write to the socket is delivered as an ordinary user turn,
-and can omit the attribution entirely — or supply its own, since nothing
-downstream verifies it. **A `from-name` is a claim, not proof.** The security
-boundary is filesystem permission on `/tmp/cc-socks` (mode `0700`, owner only),
-not anything in the message.
+The mechanism is visible in the capture above: the wrapper is **text inside
+`message.content`**, not a field on the envelope. The receiving model reads
+message content; it never sees `from`.
+
+That single fact explains all of it:
+
+- A raw socket write arrives **bare**. Asked directly, a receiving session
+  reported: *"I cannot see a sender address on this message. It arrived bare —
+  no `<cross-session-message>` wrapper, no `from`, no `from-name`."*
+- Setting the envelope's `from` **field** changes nothing the model can act on:
+  the receiver reads content, and the sender never wrote the address into it.
+- Attribution is **forgeable by writing the wrapper text yourself**. A
+  `from-name` is a claim, not proof.
+
+**This is not the same as "you cannot reply to a `from` address."** A `uds:`
+path is a perfectly valid `SendMessage` target:
+
+```json
+{"to": "uds:/tmp/cc-socks/30739.sock", "message": "…"}   // accepted
+```
+
+Verified both directions: a peer copied a `from` attribute out of a message and
+replied to it, and a send addressed straight at a `uds:` path was accepted. The
+tool's own prompt says to do this — *"To reply to an incoming message, copy its
+`from` attribute as your `to`."*
+
+So the accurate statement is about **what the receiver was given**, not about
+routing: a raw write that omits the wrapper leaves the receiver nothing to copy.
+Write the address into the message and a reply comes back. Routing was never the
+problem.
+
+The security boundary is filesystem permission on `/tmp/cc-socks` (mode `0700`,
+owner only), not anything in the message.
 
 The harness's own framing — the "this came from another Claude session" preamble
 and the permission-laundering warning — is attached on ingest regardless of how
 the bytes arrived, including for a raw write.
+
+## Making a non-Claude process addressable
+
+Since `from` is not a reply path, a shell process that wants an *answer* has to
+become something the peer can address. It can: the roster is built from the
+registry, and the requirements are all satisfiable by any process.
+
+Write `~/.claude/sessions/<pid>.json` with at least `pid`, `name`, `kind`,
+`status` and `messagingSocketPath`, and listen on that socket. The roster
+requires only that the pid is alive (`kill -0`) and that the socket answers a
+connect probe. Confirmed by registering a plain Python process, which then
+appeared on another session's roster:
+
+```
+ask-probe [f17ed5]  ·  interactive  ·  waiting  ·  started 2s ago
+```
+
+`SendMessage` to that name then delivered the bytes shown in the capture above.
+This is what `bin/claude-peer --ask` does: register, ask, block for the reply,
+deregister.
+
+**Two obligations if you do this.** Name the socket so it cannot be confused
+with a session's own (`peer-ask-<pid>.sock`, never `<pid>.sock`). And remove
+both the socket and the registry file on every exit path — a leftover entry is
+exactly the stale row the roster garbage-collects, and until it does, the entry
+sits on every other session's roster as a peer that never answers.
 
 ### Reply-address guard
 
