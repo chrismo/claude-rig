@@ -1,7 +1,9 @@
 # The inter-Claude messaging protocol
 
 How one Claude Code session addresses and talks to another on the same machine.
-Established against **2.1.224** by reading the shipped bundle with
+Established against **2.1.224** and re-verified unchanged on **2.1.226** —
+including all four behavioural checks in
+[internals-contract.md](internals-contract.md) — by reading the shipped bundle with
 `bin/claude-src` and verifying against live sessions. See
 [reading-the-claude-binary.md](reading-the-claude-binary.md) for the extraction
 method and its caveats — most importantly that identifiers are re-mangled every
