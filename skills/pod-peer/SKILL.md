@@ -70,7 +70,10 @@ addressable session opens a Unix socket at `/tmp/cc-socks/<PID>.sock` on startup
 sessions launched by a version that predates the feature never open one, and
 stay unaddressable for their whole life no matter how many times the CLI is
 upgraded around them. (Observed on 2.1.224: sessions on .220/.221/.223 had no
-socket, and four of seven live sessions were invisible to `ListAgents`.)
+socket, and four of seven live sessions were invisible to `ListAgents`.) The
+roster is built from live sessions that both recorded a socket path and still
+answer a connection on it, so a leftover `.sock` file doesn't put a dead session
+back on the list.
 
 This is the usual reason `claude-pod --peers` shows a session that `ListAgents`
 doesn't. `claude-pod` reads `.jsonl` off disk and works on any version; messaging
@@ -209,16 +212,22 @@ works in *their* environment rather than in a tool-call subshell.
 `ListAgents` gives you the roster; `SendMessage` sends to a row on it.
 
 ```
-ListAgents                                   # name [ref] · mode · state · age
-SendMessage to: "api-worker [3ca88e]"        # the ref is not optional — see below
+ListAgents                                   # name [ref] · kind · status · age
+SendMessage to: "api-worker [3ca88e]"        # ref needed the first time — see below
 ```
 
-**You cannot address a peer from memory.** A bare name works only for subagents
-you spawned yourself. Reaching a separate session requires the ` [ref]` exactly
-as a listing printed it, as confirmation you mean that session and not something
-of your own with the same name. Send the bare name and you get back an error
-naming the ref — recoverable, but a wasted round trip. Run `ListAgents` first,
-every time; a ref you remember from earlier in the conversation may be stale.
+**The first message to a peer needs its ` [ref]`.** A bare name resolves on its
+own only for an agent in your own process — a subagent you spawned. For a
+separate session, the first bare-name send comes back as an ambiguity error
+listing the candidates *with their refs*: recoverable, but a wasted round trip.
+Send it once as `name [ref]` and that resolution is pinned for the rest of your
+session, after which the bare name reaches the same peer. So: `ListAgents`
+before the first message to a peer, not before every message.
+
+Two things still send you back to the roster. A ref you did not read from a
+listing or an error will not resolve. And if a name matches both a peer and
+something in-process, the in-process one always wins — the ref is how you say
+you meant the peer.
 
 **The reply comes from a different address than you sent to.** You send to
 `api-worker [3ca88e]`; the answer arrives as `<cross-session-message
@@ -226,10 +235,12 @@ from="uds:/tmp/cc-socks/81153.sock">`. To continue the exchange, copy that
 `from` attribute verbatim as your next `to`. The outbound name and the inbound
 address are not interchangeable, and guessing at the mapping does not work.
 
-**There is no busy state.** Messages enqueue and drain at the receiver's next
-tool round, so messaging a working session isn't an error — it's an
-interruption, which is the actual cost. An idle peer typically answers within a
-turn.
+**Busy is not a rejection.** Each roster row carries a status — `idle`, `busy`,
+`waiting`, `shell` — but none of them turn a message away. Messages enqueue and
+drain at the receiver's next tool round, so messaging a working session isn't an
+error; it's an interruption, which is the actual cost. An idle peer typically
+answers within a turn. Read the status to judge what you're about to cost
+someone, not whether the send will land.
 
 ### Writing a message worth someone's turn
 
