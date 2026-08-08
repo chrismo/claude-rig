@@ -141,6 +141,38 @@ attachments, is processed immediately. Everything else is appended to a promise
 chain and processed in order — so ordinary sends queue behind whatever the
 receiver is already draining.
 
+### What the receiver rejects
+
+The server's own log lines enumerate its validation, and they're the cheapest
+map of what it will refuse:
+
+```
+[uds-messaging] Ignoring message without valid type field
+[uds-messaging] Ignoring user message with missing or non-string content
+[uds-messaging] Dropping ${e.type} message: session_id mismatch
+[uds-messaging] Buffer exceeded 1 MiB without newline
+[uds-messaging] Failed to parse JSON line: …
+[uds-messaging] Failed to materialize file_attachments: …
+[uds-messaging] Routed user message to queue (priority=${i}): …
+[uds-messaging] Skipped: cross-session messaging gate off
+[uds-messaging] Skipped: remote thin client
+[uds-messaging] Refusing non-local socket …
+```
+
+Two of these matter for anyone writing to a socket by hand. Malformed input is
+**silently discarded** — the server logs and moves on rather than replying or
+closing, so a probe with the wrong shape looks identical to a probe that was
+ignored for any other reason. And a `session_id` mismatch drops the message, so
+a wrong `session_id` fails quietly.
+
+There are also two conditions under which a session never opens a socket at all
+— the cross-session messaging gate being off, and running as a remote thin
+client. Either produces a live session with no `messagingSocketPath`.
+
+Sending has its own guards: a 5s timeout, and a refusal to connect anywhere
+non-local (`Refusing to connect to non-local IPC path`). On macOS the writer
+delays `end()` briefly after writing rather than closing immediately.
+
 ### Reply-address guard
 
 Before sending a hold receipt, the reply address is checked to be in the same
@@ -173,10 +205,46 @@ one you spawned. For a peer session on this machine, a bare name returns
 sending to a bare peer name failed with an error that named the ref, and the
 same bare name worked afterwards.
 
-**Not established:** the exact site where a pin is consulted to turn a bare name
-back into a candidate. The pin write and the ambiguity branch are both located;
-the read that joins them is not. The behaviour is confirmed from the outside
-(ref once, bare name thereafter) but the code path is inferred.
+The pin is consulted in two places. On the **send** path it guards against a
+name that has quietly re-pointed at a different session:
+
+```js
+let s = $B(i.name), a = Object.hasOwn(n.sendMessagePins, s) ? n.sendMessagePins[s] : void 0
+if (a !== void 0 && a.id === i.id) return {kind:"proceed", pin:a}   // pin matches → send
+if (a !== void 0) { let c = Vxr(e) !== null                          // explicit ref typed?
+  if (!c && e === i.name && e !== a.name) return {kind:"proceed", pin:void 0}
+  if (!c) { /* re-resolve against a freshly fetched roster */ } }
+```
+
+On the **resolve** path it turns a pinned name back into a target, and drops
+itself when the target is gone or the name has moved:
+
+```js
+let s = r.find((a) => (i ? a.kind==="cloud-session" : a.kind==="session")
+                       && a.where !== "in-process" && a.id === o.id)
+if (s === void 0) { Oe("send_message_pin","stale"); return }         // pinned session gone
+if (n !== void 0 && s.name !== n && r.some((a) => a.name === n)) return  // name now someone else's
+return Se("send_message_pin"), s
+```
+
+That second guard is the interesting one: if the session you pinned has been
+renamed *and* some other agent has since taken the old name, the pin refuses to
+resolve rather than silently delivering to the wrong session.
+
+**VERIFIED.** Three sends to one peer, in order:
+
+| # | `to` | result |
+|---|---|---|
+| 1 | `claude-rig-one` (no pin yet) | rejected — ambiguity error naming the ref |
+| 2 | `claude-rig-one [2ee790]` | delivered, pin written |
+| 3 | `claude-rig-one` (bare again) | delivered |
+
+So the rule is **ref once per peer per session, bare name thereafter** — and the
+rejection in step 1 costs nothing, since it never reaches the peer.
+
+Worth knowing from the receiving end: the peer cannot tell which of these it
+got. Addressing is resolved entirely sender-side, so a bare-name send and a ref
+send arrive byte-identical.
 
 ## 4. Where roster metadata comes from — partial
 
@@ -209,15 +277,61 @@ name [ref]  ·  kind  ·  status  ·  [tmux <name>]  ·  started <n> ago
 `kind` ∈ `interactive | bg | daemon | daemon-worker`;
 `status` ∈ `busy | shell | idle | waiting`.
 
-**Not established by this document:** that the roster also *connect-probes* each
-socket before listing it. That claim comes from a peer session's reading of
-`rfa()` and is plausible, but was not confirmed here. The indirect evidence is
-weak: a decoy socket placed in `/tmp/cc-socks` named after a live non-Claude PID
-never appeared on the roster — but that is equally explained by the registry
-being the source of truth, since the decoy had no registry file at all. Treat
-"present socket path ⇒ reachable" as *optimistic* either way: a registry file
-can outlive the process that wrote it, which is why liveness is checked with
-`kill(pid, 0)`.
+### The roster does connect-probe
+
+Listing live peers reads the registry *and* probes every socket:
+
+```js
+async function rfa(){
+  let e = WXo()                                               // own socket path
+  let t = (await tfa()).filter((i) => i.sock && i.sock !== e) // has a socket, and isn't me
+  let r = await Promise.all(t.map((i) => p1p(i.sock)))        // probe all, concurrently
+  let n = Wt() !== "wsl", o = []
+  for (let i = 0; i < t.length; i++){ let {file:s, ...a} = t[i]
+    if (r[i]) o.push(a)                                       // probe answered → on the roster
+    else if (n && !zC(a.pid)) nIr.unlink(s).catch(()=>{}) }   // no answer + dead pid → delete file
+  return o }
+```
+
+The probe is a 250ms connect that never sends anything:
+
+```js
+function p1p(e){ return new Promise((t)=>{
+  if(!Z_e(e)){ t(!1); return }
+  let r = Qpa.connect({path:e}), n = (o)=>{ r.destroy(); t(o) }
+  r.on("connect", ()=>n(!0))
+  r.on("error", (o)=>n(zt(o)==="EBUSY"))    // EBUSY counts as alive
+  r.setTimeout(250, ()=>n(!1)) }) }
+```
+
+Three consequences. A registry file whose socket no longer answers **and** whose
+PID is dead is deleted as a side effect of listing — the roster garbage-collects
+itself (skipped on WSL). `EBUSY` is treated as reachable, since a listener too
+busy to accept is still a listener. And self-exclusion is by socket path
+compared against `CLAUDE_CODE_MESSAGING_SOCKET`, which is why you never see
+yourself on your own roster.
+
+So `messagingSocketPath` present does **not** imply reachable: it means the
+session claimed an address, not that anything still answers there. Any tool
+marking sessions "messageable" from the field alone will disagree with
+`ListAgents` on a session that died without cleaning up.
+
+This also corrects an earlier guess of mine. A decoy socket placed in
+`/tmp/cc-socks` was never contacted — not because of any process-identity check,
+but because enumeration starts from `~/.claude/sessions/*.json` and the decoy had
+no registry file. It was never a candidate to probe.
+
+The registry read underneath it:
+
+```js
+async function tfa(){ let e = Xpa.join(Tn(), "sessions"), t
+  try { t = await nIr.readdir(e) } catch { return [] }
+  return (await Promise.all(t.filter((n) => /^\d+\.json$/.test(n)).map(async (n) => {
+    let o = n.replace(/\.json$/, ""), i = parseInt(o, 10) …
+```
+
+The filename is the PID and is the only thing trusted to identify the file;
+anything not matching `/^\d+\.json$/` is ignored.
 
 ## What this means for claude-rig
 
