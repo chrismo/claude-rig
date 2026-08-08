@@ -39,7 +39,7 @@
 # back. Fire and forget: a zero exit means the bytes were accepted by the
 # socket, not that a human or model has read them.
 #
-# Requires: nc, shasum, python3 (JSON parse and escape).
+# Requires: nc, shasum, super (SuperDB, for all JSON parse and encode).
 
 set -uo pipefail
 
@@ -78,22 +78,15 @@ collect_rows() {
     [[ "$pid" =~ ^[0-9]+$ ]] || continue
     pid_is_live "$pid" || continue
 
-    python3 -c '
-import json, sys
-try:
-    d = json.load(open(sys.argv[1]))
-except Exception:
-    sys.exit(0)
-sock = d.get("messagingSocketPath") or ""
-if not sock:
-    sys.exit(0)
-def clean(v):
-    return str(v if v is not None else "").replace("\t", " ").replace("\n", " ")
-print("\t".join(clean(x) for x in (
-    d.get("pid", ""), d.get("name", ""), d.get("kind", ""),
-    d.get("status", ""), sock, d.get("cwd", ""),
-    d.get("statusUpdatedAt", ""))))
-' "$f"
+    # Spread defaults under the record first: most of these fields are optional
+    # (`name` is absent on a session that was never named, `statusUpdatedAt` on
+    # one that has not changed status) and referencing an absent field is an
+    # error, not a null. Same {...defaults, ...this} idiom install.sh uses.
+    super -f line -c 'values {...{pid:0,name:"",kind:"",status:"",
+        messagingSocketPath:"",cwd:"",statusUpdatedAt:0}, ...this}
+      | values join([cast(pid, <string>), name, kind, status,
+                     messagingSocketPath, cwd, cast(statusUpdatedAt, <string>)], "\t")' \
+      "$f" 2>/dev/null
   done
 }
 
@@ -104,6 +97,8 @@ print("\t".join(clean(x) for x in (
 fmt_age() {
   local ms="$1"
   [[ "$ms" =~ ^[0-9]+$ ]] || { printf '%s' "-"; return; }
+  # 0 is the "absent" default from the spread above, not an epoch.
+  [[ "$ms" == "0" ]] && { printf '%s' "-"; return; }
   local now delta
   now=$(date +%s)
   delta=$(( now - ms / 1000 ))
@@ -254,14 +249,14 @@ cmd_send() {
   socket_answers "$sock" \
     || die "'$name' (pid $pid) is listed but its socket does not answer — the session likely exited"
 
-  # json.dumps does the escaping; hand-rolling it breaks on quotes and
-  # backslashes, and a malformed line is silently discarded by the receiver.
+  # super does the escaping; hand-rolling it breaks on quotes and backslashes,
+  # and a malformed line is silently discarded by the receiver. Reading the body
+  # as `line` input and re-joining keeps multi-line messages intact — one record
+  # per line otherwise, which would send the first line only.
   local line
-  line=$(printf '%s' "$body" | python3 -c '
-import json, sys
-print(json.dumps({"type": "user",
-                  "message": {"role": "user", "content": sys.stdin.read()}}))
-') || die "failed to encode message"
+  line=$(printf '%s' "$body" | super -i line -f json -c \
+    'collect(this) | values {type:"user", message:{role:"user", content:join(this, "\n")}}' - \
+    | tr -d '\n') || die "failed to encode message"
 
   printf '%s\n' "$line" | nc -U -w 2 "$sock" > /dev/null 2>&1 \
     || die "failed to write to $sock"
@@ -281,7 +276,11 @@ cmd_ask() {
   [[ $# -ge 2 ]] || die "no question (use - to read stdin)"
   shift 2
 
-  local timeout=60 ask_name="claude-peer-ask" register="no"
+  local timeout=60 ask_name="claude-peer-ask"
+  # NOT local: the EXIT trap fires after this function has returned, and bash
+  # locals are gone by then — cleanup would run with empty paths and delete
+  # nothing, silently leaking a socket and a registry entry.
+  register="no"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --timeout)  timeout="${2:-60}"; shift 2 ;;
@@ -307,98 +306,80 @@ cmd_ask() {
   mkdir -p "$SOCKET_DIR" 2>/dev/null
   chmod 700 "$SOCKET_DIR" 2>/dev/null
 
-  python3 -c '
-import socket, os, sys, json, re, time, signal
+  mkdir -p "$SOCKET_DIR" 2>/dev/null
+  chmod 700 "$SOCKET_DIR" 2>/dev/null
 
-target, question, ask_name = sys.argv[1], sys.argv[2], sys.argv[3]
-timeout, sockdir, regdir = float(sys.argv[4]), sys.argv[5], sys.argv[6]
-register = sys.argv[7] == "yes"
+  # NOT "<pid>.sock" — that is the shape a real session uses, and this is not a
+  # session. The registry entry, when we write one, is keyed by pid regardless.
+  sock_path="$SOCKET_DIR/peer-ask-$$.sock"
+  reg_path="$SESSIONS_DIR/$$.json"
+  reply_file=$(mktemp) || die "cannot create temp file"
 
-pid = os.getpid()
-# NOT "<pid>.sock" — that is the shape a real session uses, and this is not a
-# session. The registry entry is keyed by pid regardless.
-sock_path = os.path.join(sockdir, "peer-ask-%d.sock" % pid)
-reg_path = os.path.join(regdir, "%d.json" % pid)
+  # A leaked socket or registry entry is exactly the stale row the roster
+  # garbage-collects, so clean up on every exit path including signals.
+  ask_cleanup() {
+    [[ -n "${nc_pid:-}" ]] && kill "$nc_pid" 2>/dev/null
+    rm -f "$sock_path" "$reply_file"
+    [[ "$register" == "yes" ]] && rm -f "$reg_path"
+    return 0
+  }
+  trap ask_cleanup EXIT INT TERM
 
-def cleanup(*_):
-    paths = [sock_path] + ([reg_path] if register else [])
-    for p in paths:
-        try: os.unlink(p)
-        except FileNotFoundError: pass
+  rm -f "$sock_path"
+  nc -lU "$sock_path" > "$reply_file" 2>/dev/null &
+  nc_pid=$!
 
-# A leaked entry is exactly the stale row the roster garbage-collects, so clean
-# up on every exit path including signals.
-signal.signal(signal.SIGINT, lambda *a: (cleanup(), sys.exit(130)))
-signal.signal(signal.SIGTERM, lambda *a: (cleanup(), sys.exit(143)))
+  # Bind before sending, or the peer can answer into a socket that is not there.
+  local i=0
+  while [[ ! -S "$sock_path" && $i -lt 50 ]]; do sleep 0.1; i=$((i + 1)); done
+  [[ -S "$sock_path" ]] || die "could not bind $sock_path"
 
-try:
-    try: os.unlink(sock_path)
-    except FileNotFoundError: pass
-    srv = socket.socket(socket.AF_UNIX)
-    srv.bind(sock_path)
-    os.chmod(sock_path, 0o600)
-    srv.listen(4)
-    srv.settimeout(timeout)
+  # Registration is opt-in. It puts a non-Claude process on the roster of every
+  # live session, worth it only when you WANT to be found — a human running
+  # ListAgents seeing who is asking, or a peer messaging the asker unprompted.
+  # The reply never needs it: it comes back to the uds: address in the prompt.
+  if [[ "$register" == "yes" ]]; then
+    local now
+    now=$(( $(date +%s) * 1000 ))
+    mkdir -p "$SESSIONS_DIR" 2>/dev/null
+    printf '%s' "$ask_name" | super -i line -f json -c \
+      "values {pid:$$, name:this, kind:\"interactive\", status:\"waiting\",
+               startedAt:$now, statusUpdatedAt:$now, peerProtocol:1,
+               cwd:\"$PWD\", messagingSocketPath:\"$sock_path\"}" - | tr -d '\n' > "$reg_path" \
+      || die "could not register at $reg_path"
+  fi
 
-    # Registration is opt-in. It puts a non-Claude process on the roster of every
-    # live session, worth it only when you WANT to be found — a human running
-    # ListAgents seeing who is asking, or a peer messaging the asker unprompted.
-    # The reply itself never needs it: it comes back to the uds: address below.
-    if register:
-        now = int(time.time() * 1000)
-        os.makedirs(regdir, exist_ok=True)
-        with open(reg_path, "w") as f:
-            json.dump({"pid": pid, "sessionId": "00000000-0000-4000-8000-%012d" % (pid % 10**12),
-                       "cwd": os.getcwd(), "name": ask_name, "kind": "interactive",
-                       "status": "waiting", "startedAt": now, "statusUpdatedAt": now,
-                       "peerProtocol": 1, "messagingSocketPath": sock_path}, f)
+  # Reply to the raw uds: path, NOT to the name. Pins are keyed to a ref, and
+  # this process gets a fresh pid -> socket -> ref on every invocation, so a
+  # bare-name reply bounces every time no matter how many succeeded before.
+  # A uds: path needs no pin, no ref and no roster entry.
+  local body
+  body="$question
 
-    # Reply to the raw uds: path, NOT to the name. Pins are keyed to a ref, and
-    # this process gets a fresh pid -> socket -> ref on every invocation, so a
-    # bare-name reply bounces every time no matter how many succeeded before.
-    # A uds: path needs no pin, no ref and no roster entry.
-    body = (question + "\n\n[Asked by " + ask_name + ", a shell process blocked on your "
-            "reply. Reply with SendMessage to \"uds:" + sock_path + "\" — address it "
-            "exactly like that, not by name. Your reply is printed to a terminal, so "
-            "keep it short and plain.]")
-    out = socket.socket(socket.AF_UNIX)
-    out.connect(target)
-    out.sendall((json.dumps({"type": "user",
-                             "message": {"role": "user", "content": body}}) + "\n").encode())
-    out.close()
+[Asked by $ask_name, a shell process blocked on your reply. Reply with SendMessage to \"uds:$sock_path\" — address it exactly like that, not by name. Your reply is printed to a terminal, so keep it short and plain.]"
 
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        srv.settimeout(max(0.1, deadline - time.time()))
-        try:
-            conn, _ = srv.accept()
-        except socket.timeout:
-            break
-        data = conn.recv(1 << 20)
-        conn.close()
-        if not data:
-            continue
-        for line in data.decode("utf-8", "replace").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try: rec = json.loads(line)
-            except Exception: continue
-            if rec.get("type") != "user":
-                continue
-            content = rec.get("message", {}).get("content", "")
-            if not isinstance(content, str):
-                continue
-            # Attribution is a text wrapper inside content, not a field. Strip it
-            # so callers get the answer rather than protocol furniture.
-            m = re.search(r"<cross-session-message[^>]*>\s*(.*?)\s*</cross-session-message>",
-                          content, re.S)
-            print((m.group(1) if m else content).strip())
-            sys.exit(0)
-    sys.exit(2)
-finally:
-    cleanup()
-' "$sock" "$question" "$ask_name" "$timeout" "$SOCKET_DIR" "$SESSIONS_DIR" "$register"
+  local line
+  line=$(printf '%s' "$body" | super -i line -f json -c \
+    'collect(this) | values {type:"user", message:{role:"user", content:join(this, "\n")}}' - \
+    | tr -d '\n') || die "failed to encode question"
+  printf '%s\n' "$line" | nc -U -w 2 "$sock" > /dev/null 2>&1 \
+    || die "failed to write to $sock"
+
+  local waited=0
+  while [[ ! -s "$reply_file" ]]; do
+    sleep 0.2
+    waited=$(( waited + 1 ))
+    (( waited * 2 / 10 >= timeout )) && exit 2
+  done
+  # nc exits once the peer closes; give the last bytes a moment to land.
+  sleep 0.2
+
+  # Attribution is a text wrapper inside content, not a field. Strip it so
+  # callers get the answer rather than protocol furniture.
+  super -f line -c 'values {...{message:{role:"",content:""}}, ...this}
+                    | values message.content' "$reply_file" 2>/dev/null \
+    | sed -e '/^<cross-session-message/d' -e '/^<\/cross-session-message>/d' \
+    | sed -e '/./,$!d'
 }
 
 main() {
