@@ -63,6 +63,23 @@ Any of them may come back empty. That's a normal answer: no peers, or no console
 recording. Don't treat it as a problem, and don't nag the human to start one —
 mention it only if you actually need what it would contain.
 
+### A session can be running and still not be messageable
+
+Messaging is bound to the **running process**, not the installed version. Each
+addressable session opens a Unix socket at `/tmp/cc-socks/<PID>.sock` on startup;
+sessions launched by a version that predates the feature never open one, and
+stay unaddressable for their whole life no matter how many times the CLI is
+upgraded around them. (Observed on 2.1.224: sessions on .220/.221/.223 had no
+socket, and four of seven live sessions were invisible to `ListAgents`.)
+
+This is the usual reason `claude-pod --peers` shows a session that `ListAgents`
+doesn't. `claude-pod` reads `.jsonl` off disk and works on any version; messaging
+needs a live socket. If the human wants to reach an old long-running session,
+the fix is to restart it — nothing you can do from your side.
+
+So when `ListAgents` comes up short, don't conclude the pod is empty. Check
+`--peers` too, and say which sessions you can read but not reach.
+
 The current worktree is the default scope. Everything below also takes a path,
 so you can look into another worktree when the human points you at one.
 
