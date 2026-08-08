@@ -242,3 +242,101 @@ s = socket.socket(socket.AF_UNIX); s.bind('$sock'); s.close()"
   run "$PEER" --list
   [ "$status" -eq 0 ]
 }
+
+# --- status awareness ----------------------------------------------------
+#
+# Only `status` and `statusUpdatedAt` are actually written by live sessions.
+# tempo / waitingFor / needs / state / detail are parsed by Claude's own reader
+# but populated in 0 of 10 observed registry files, so nothing here depends on
+# them: a filter built on those would never fire.
+
+set_status() {
+  local pid="$1" status="$2" when="${3:-}"
+  local f="$CLAUDE_SESSIONS_META_DIR/$pid.json"
+  [ -n "$when" ] || when=$(python3 -c 'import time; print(int(time.time()*1000))')
+  python3 -c "
+import json,sys
+f='$f'
+d=json.load(open(f))
+d['status']='$status'
+d['statusUpdatedAt']=$when
+json.dump(d, open(f,'w'))
+"
+}
+
+@test "--list reports how long a peer has held its status" {
+  local sock="$BATS_TEST_TMPDIR/peer.sock"
+  start_listener "$sock" "$BATS_TEST_TMPDIR/got"
+  write_session $$ "alpha" "$sock"
+  # 12 minutes ago
+  local when
+  when=$(python3 -c 'import time; print(int(time.time()*1000) - 12*60*1000)')
+  set_status $$ idle "$when"
+
+  run "$PEER" --list
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"12m"* ]]
+}
+
+@test "--list tolerates a record with no statusUpdatedAt" {
+  local sock="$BATS_TEST_TMPDIR/peer.sock"
+  start_listener "$sock" "$BATS_TEST_TMPDIR/got"
+  write_session $$ "alpha" "$sock"
+
+  run "$PEER" --list
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"alpha"* ]]
+}
+
+@test "--watch exits 0 when a peer's status changes" {
+  local sock="$BATS_TEST_TMPDIR/peer.sock"
+  start_listener "$sock" "$BATS_TEST_TMPDIR/got"
+  write_session $$ "alpha" "$sock"
+  set_status $$ busy
+
+  ( sleep 1; set_status $$ idle ) &
+
+  run "$PEER" --watch --interval 0.2 --timeout 15
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"alpha"* ]]
+  [[ "$output" == *"idle"* ]]
+}
+
+@test "--watch --for waits for one specific status and ignores others" {
+  local sock="$BATS_TEST_TMPDIR/peer.sock"
+  start_listener "$sock" "$BATS_TEST_TMPDIR/got"
+  write_session $$ "alpha" "$sock"
+  set_status $$ busy
+
+  # A change it should ignore, then the one it wants.
+  ( sleep 0.8; set_status $$ shell; sleep 1.2; set_status $$ idle ) &
+
+  run "$PEER" --watch --for idle --interval 0.2 --timeout 15
+  [ "$status" -eq 0 ]
+  # It fires on the transition INTO idle. The line names the prior status too,
+  # so assert on what it fired on, not on the mere presence of the word.
+  [[ "$output" == *"-> idle"* ]]
+  [[ "$output" != *"-> shell"* ]]
+}
+
+@test "--watch exits 2 on timeout when nothing changes" {
+  local sock="$BATS_TEST_TMPDIR/peer.sock"
+  start_listener "$sock" "$BATS_TEST_TMPDIR/got"
+  write_session $$ "alpha" "$sock"
+  set_status $$ idle
+
+  run "$PEER" --watch --interval 0.2 --timeout 1
+  [ "$status" -eq 2 ]
+}
+
+@test "--watch ignores this session's own status changes" {
+  local sock="$BATS_TEST_TMPDIR/self.sock"
+  start_listener "$sock" "$BATS_TEST_TMPDIR/got"
+  write_session $$ "myself" "$sock"
+  set_status $$ busy
+
+  ( sleep 0.6; set_status $$ idle ) &
+
+  run "$PEER" --watch --interval 0.2 --timeout 2
+  [ "$status" -eq 2 ]
+}

@@ -6,13 +6,20 @@
 # does the same two jobs from outside: any script, cron job, CI step or git hook
 # can see which sessions are running and drop a message into one.
 #
-#   claude-peer                       # reachable peers: name, pid, ref, cwd
+#   claude-peer                       # reachable peers: name, pid, ref, age, cwd
 #   claude-peer --all                 # include sessions that no longer answer
 #   claude-peer --send <target> <msg> # deliver a message; target is name|pid|ref
 #   claude-peer --send <target> -     # read the message body from stdin
+#   claude-peer --watch               # block until any peer's status changes
+#   claude-peer --watch --for idle    # block until a peer reaches that status
 #
 #   claude-peer --send builder "deploy finished, tests green"
 #   ./run-tests.sh || claude-peer --send builder "suite went red"
+#   claude-peer --watch --for idle && say "a session went idle"
+#
+# --watch is a doorbell, not a poller: it blocks and prints one line when
+# something changes, so a caller pays for one wake-up rather than one per tick.
+# Exit 0 on a change, 2 on --timeout, so `if claude-peer --watch …` reads right.
 #
 # How it works (see docs/inter-claude-protocol.md — none of this is a supported
 # API, and bin/claude-contract.bats is what tells you when it stops being true):
@@ -41,7 +48,7 @@ PROBE_TIMEOUT="${CLAUDE_PEER_PROBE_TIMEOUT:-1}"
 die() { echo "claude-peer: $*" >&2; exit 1; }
 
 usage() {
-  sed -n '3,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '3,26p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
 }
 
@@ -81,19 +88,58 @@ def clean(v):
     return str(v if v is not None else "").replace("\t", " ").replace("\n", " ")
 print("\t".join(clean(x) for x in (
     d.get("pid", ""), d.get("name", ""), d.get("kind", ""),
-    d.get("status", ""), sock, d.get("cwd", ""))))
+    d.get("status", ""), sock, d.get("cwd", ""),
+    d.get("statusUpdatedAt", ""))))
 ' "$f"
   done
 }
 
+# Milliseconds-since-epoch to a short age. Only `status` and `statusUpdatedAt`
+# are actually written by live sessions — `tempo`, `waitingFor`, `needs`,
+# `state` and `detail` are parsed by Claude's own reader but populated in none
+# of the registry files observed, so nothing here is built on them.
+fmt_age() {
+  local ms="$1"
+  [[ "$ms" =~ ^[0-9]+$ ]] || { printf '%s' "-"; return; }
+  local now delta
+  now=$(date +%s)
+  delta=$(( now - ms / 1000 ))
+  (( delta < 0 )) && delta=0
+  if   (( delta < 60 ));    then printf '%ds' "$delta"
+  elif (( delta < 3600 ));  then printf '%dm' "$(( delta / 60 ))"
+  elif (( delta < 86400 )); then printf '%dh' "$(( delta / 3600 ))"
+  else                           printf '%dd' "$(( delta / 86400 ))"
+  fi
+}
+
+# "pid<TAB>name<TAB>status", one line per peer, self excluded. The unit --watch
+# diffs. Deliberately does NOT probe: a probe per peer per tick would make the
+# doorbell cost scale with roster size, and a dead session's status is frozen
+# anyway, so it can never produce a spurious wake-up.
+status_snapshot() {
+  local pid name kind status sock cwd supd
+  while IFS=$'\t' read -r pid name kind status sock cwd supd; do
+    [[ -n "$sock" ]] || continue
+    [[ -n "$SELF_SOCK" && "$sock" == "$SELF_SOCK" ]] && continue
+    printf '%s\t%s\t%s\n' "$pid" "$name" "$status"
+  done <<< "$(collect_rows)"
+}
+
+status_of() {
+  local want_pid="$1" snap="$2" pid name status
+  while IFS=$'\t' read -r pid name status; do
+    [[ "$pid" == "$want_pid" ]] && { printf '%s' "$status"; return; }
+  done <<< "$snap"
+}
+
 cmd_list() {
   local show_all="$1"
-  local rows pid name kind status sock cwd ref reach
+  local rows pid name kind status sock cwd supd ref reach age
   rows=$(collect_rows)
   [[ -n "$rows" ]] || return 0
 
   local out=""
-  while IFS=$'\t' read -r pid name kind status sock cwd; do
+  while IFS=$'\t' read -r pid name kind status sock cwd supd; do
     [[ -n "$sock" ]] || continue
     # Never list yourself; Claude excludes self the same way, by socket path.
     [[ -n "$SELF_SOCK" && "$sock" == "$SELF_SOCK" ]] && continue
@@ -106,17 +152,60 @@ cmd_list() {
     fi
 
     ref=$(ref_for "$sock")
-    out+=$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s' \
-      "${name:-(unnamed)}" "$pid" "$ref" "$kind" "$status" "$cwd" "$reach")
+    age=$(fmt_age "$supd")
+    out+=$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
+      "${name:-(unnamed)}" "$pid" "$ref" "$kind" "$status" "$age" "$cwd" "$reach")
     out+=$'\n'
   done <<< "$rows"
 
   [[ -n "$out" ]] || return 0
 
   {
-    printf 'NAME\tPID\tREF\tKIND\tSTATUS\tCWD\t\n'
+    printf 'NAME\tPID\tREF\tKIND\tSTATUS\tFOR\tCWD\t\n'
     printf '%s' "$out"
   } | column -t -s $'\t'
+}
+
+cmd_watch() {
+  local interval=1 timeout=0 want=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --interval) interval="${2:-1}"; shift 2 ;;
+      --timeout)  timeout="${2:-0}"; shift 2 ;;
+      --for)      want="${2:-}"; shift 2 ;;
+      *)          die "unknown --watch option '$1'" ;;
+    esac
+  done
+
+  local prev started now pid name status was
+  prev=$(status_snapshot)
+  started=$(date +%s)
+
+  while true; do
+    sleep "$interval"
+
+    if [[ "$timeout" != "0" ]]; then
+      now=$(date +%s)
+      (( now - started >= timeout )) && exit 2
+    fi
+
+    local cur
+    cur=$(status_snapshot)
+    [[ "$cur" == "$prev" ]] && continue
+
+    while IFS=$'\t' read -r pid name status; do
+      [[ -n "$pid" ]] || continue
+      was=$(status_of "$pid" "$prev")
+      [[ "$was" == "$status" ]] && continue
+      # A change we were not asked about still advances the baseline, so the
+      # one we ARE waiting for is seen as a change when it lands.
+      [[ -n "$want" && "$status" != "$want" ]] && continue
+      printf '%s\t%s\t%s -> %s\n' "${name:-(unnamed)}" "$pid" "${was:-(new)}" "$status"
+      exit 0
+    done <<< "$cur"
+
+    prev="$cur"
+  done
 }
 
 # Resolve a target to "sock<TAB>name<TAB>pid". Matches a name exactly, a pid
@@ -127,7 +216,7 @@ resolve_target() {
   [[ -n "$rows" ]] || return 1
 
   local match="" count=0
-  while IFS=$'\t' read -r pid name kind status sock cwd; do
+  while IFS=$'\t' read -r pid name kind status sock cwd supd; do
     [[ -n "$sock" ]] || continue
     ref=$(ref_for "$sock")
     if [[ "$name" == "$want" || "$pid" == "$want" || "$ref" == "$want"* ]]; then
@@ -180,6 +269,7 @@ main() {
   case "${1:---list}" in
     --list)        cmd_list "no" ;;
     --all)         cmd_list "yes" ;;
+    --watch)       shift; cmd_watch "$@" ;;
     --send)        shift; cmd_send "$@" ;;
     -h|--help)     usage 0 ;;
     *)             die "unknown option '$1' (try --help)" ;;
