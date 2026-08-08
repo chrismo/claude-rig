@@ -12,6 +12,7 @@
 #   claude-peer --send <target> -     # read the message body from stdin
 #   claude-peer --watch               # block until any peer's status changes
 #   claude-peer --watch --for idle    # block until a peer reaches that status
+#   claude-peer --ask <target> <q>    # ask, block for the reply, print it
 #
 #   claude-peer --send builder "deploy finished, tests green"
 #   ./run-tests.sh || claude-peer --send builder "suite went red"
@@ -44,11 +45,12 @@ set -uo pipefail
 SESSIONS_DIR="${CLAUDE_SESSIONS_META_DIR:-$HOME/.claude/sessions}"
 SELF_SOCK="${CLAUDE_CODE_MESSAGING_SOCKET:-}"
 PROBE_TIMEOUT="${CLAUDE_PEER_PROBE_TIMEOUT:-1}"
+SOCKET_DIR="${CLAUDE_PEER_SOCKET_DIR:-/tmp/cc-socks}"
 
 die() { echo "claude-peer: $*" >&2; exit 1; }
 
 usage() {
-  sed -n '3,26p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '3,27p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
 }
 
@@ -264,12 +266,135 @@ print(json.dumps({"type": "user",
     || die "failed to write to $sock"
 }
 
+# Ask a peer a question and block for the answer.
+#
+# A reply cannot come back via the `from` field: attribution is text that the
+# SendMessage tool embeds inside message.content, so a raw write reaches the
+# peer with no sender the model can see, and it has nothing to reply to. What
+# works is being *addressable* — the roster lists any registry entry whose pid
+# is alive and whose socket answers. So we register for exactly as long as the
+# question is outstanding, then remove ourselves.
+cmd_ask() {
+  local want="${1:-}" question="${2:-}"
+  [[ -n "$want" ]] || usage 1
+  [[ $# -ge 2 ]] || die "no question (use - to read stdin)"
+  shift 2
+
+  local timeout=60 ask_name="claude-peer-ask"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --timeout) timeout="${2:-60}"; shift 2 ;;
+      --name)    ask_name="${2:-claude-peer-ask}"; shift 2 ;;
+      *)         die "unknown --ask option '$1'" ;;
+    esac
+  done
+
+  [[ "$question" == "-" ]] && question=$(cat)
+
+  # Resolve BEFORE registering, so a bad target never leaves an entry behind.
+  local resolved rc sock name pid
+  resolved=$(resolve_target "$want"); rc=$?
+  [[ $rc -eq 2 ]] && exit 1
+  [[ $rc -ne 0 ]] && die "no session matching '$want' (try: claude-peer --all)"
+  IFS=$'\t' read -r sock name pid <<< "$resolved"
+
+  [[ -n "$SELF_SOCK" && "$sock" == "$SELF_SOCK" ]] && die "'$want' is this session"
+
+  socket_answers "$sock" || die "'$name' (pid $pid) does not answer"
+
+  mkdir -p "$SOCKET_DIR" 2>/dev/null
+  chmod 700 "$SOCKET_DIR" 2>/dev/null
+
+  python3 -c '
+import socket, os, sys, json, re, time, signal
+
+target, question, ask_name = sys.argv[1], sys.argv[2], sys.argv[3]
+timeout, sockdir, regdir = float(sys.argv[4]), sys.argv[5], sys.argv[6]
+
+pid = os.getpid()
+# NOT "<pid>.sock" — that is the shape a real session uses, and this is not a
+# session. The registry entry is keyed by pid regardless.
+sock_path = os.path.join(sockdir, "peer-ask-%d.sock" % pid)
+reg_path = os.path.join(regdir, "%d.json" % pid)
+
+def cleanup(*_):
+    for p in (sock_path, reg_path):
+        try: os.unlink(p)
+        except FileNotFoundError: pass
+
+# A leaked entry is exactly the stale row the roster garbage-collects, so clean
+# up on every exit path including signals.
+signal.signal(signal.SIGINT, lambda *a: (cleanup(), sys.exit(130)))
+signal.signal(signal.SIGTERM, lambda *a: (cleanup(), sys.exit(143)))
+
+try:
+    try: os.unlink(sock_path)
+    except FileNotFoundError: pass
+    srv = socket.socket(socket.AF_UNIX)
+    srv.bind(sock_path)
+    os.chmod(sock_path, 0o600)
+    srv.listen(4)
+    srv.settimeout(timeout)
+
+    now = int(time.time() * 1000)
+    os.makedirs(regdir, exist_ok=True)
+    with open(reg_path, "w") as f:
+        json.dump({"pid": pid, "sessionId": "00000000-0000-4000-8000-%012d" % (pid % 10**12),
+                   "cwd": os.getcwd(), "name": ask_name, "kind": "interactive",
+                   "status": "waiting", "startedAt": now, "statusUpdatedAt": now,
+                   "peerProtocol": 1, "messagingSocketPath": sock_path}, f)
+
+    body = (question + "\n\n[Asked by " + ask_name + ", a shell process waiting on your "
+            "reply. Reply with SendMessage to \"" + ask_name + "\" — it is on your roster "
+            "for as long as this question is open. Your reply is printed to a terminal, "
+            "so keep it short.]")
+    out = socket.socket(socket.AF_UNIX)
+    out.connect(target)
+    out.sendall((json.dumps({"type": "user",
+                             "message": {"role": "user", "content": body}}) + "\n").encode())
+    out.close()
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        srv.settimeout(max(0.1, deadline - time.time()))
+        try:
+            conn, _ = srv.accept()
+        except socket.timeout:
+            break
+        data = conn.recv(1 << 20)
+        conn.close()
+        if not data:
+            continue
+        for line in data.decode("utf-8", "replace").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try: rec = json.loads(line)
+            except Exception: continue
+            if rec.get("type") != "user":
+                continue
+            content = rec.get("message", {}).get("content", "")
+            if not isinstance(content, str):
+                continue
+            # Attribution is a text wrapper inside content, not a field. Strip it
+            # so callers get the answer rather than protocol furniture.
+            m = re.search(r"<cross-session-message[^>]*>\s*(.*?)\s*</cross-session-message>",
+                          content, re.S)
+            print((m.group(1) if m else content).strip())
+            sys.exit(0)
+    sys.exit(2)
+finally:
+    cleanup()
+' "$sock" "$question" "$ask_name" "$timeout" "$SOCKET_DIR" "$SESSIONS_DIR"
+}
+
 main() {
   local show_all="no"
   case "${1:---list}" in
     --list)        cmd_list "no" ;;
     --all)         cmd_list "yes" ;;
     --watch)       shift; cmd_watch "$@" ;;
+    --ask)         shift; cmd_ask "$@" ;;
     --send)        shift; cmd_send "$@" ;;
     -h|--help)     usage 0 ;;
     *)             die "unknown option '$1' (try --help)" ;;

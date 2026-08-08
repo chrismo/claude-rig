@@ -340,3 +340,123 @@ json.dump(d, open(f,'w'))
   run "$PEER" --watch --interval 0.2 --timeout 2
   [ "$status" -eq 2 ]
 }
+
+# --- the reply channel ---------------------------------------------------
+#
+# Replies do NOT route to a raw `from` address: a message written straight to a
+# socket reaches the peer with no sender the model can see, because attribution
+# is text embedded in message.content by the SendMessage tool. What DOES work is
+# being addressable: rfa() lists any registry entry whose pid is alive and whose
+# socket answers, so --ask registers itself for the life of the question.
+
+ASK_SOCK_DIR() { echo "$BATS_TEST_TMPDIR/socks"; }
+
+# A peer that answers: on receiving anything, finds the ask entry in the
+# registry and writes a reply to its socket — what a real Claude does when it
+# addresses a name from its roster.
+start_answering_peer() {
+  local sock="$1" reply="$2"
+  python3 -c "
+import socket, os, sys, json, glob, threading, time
+sock, reply, regdir = sys.argv[1], sys.argv[2], sys.argv[3]
+try: os.unlink(sock)
+except FileNotFoundError: pass
+s = socket.socket(socket.AF_UNIX); s.bind(sock); s.listen(4)
+def serve():
+    while True:
+        c,_ = s.accept()
+        if c.recv(65536):
+            for f in glob.glob(os.path.join(regdir, '*.json')):
+                try: d = json.load(open(f))
+                except Exception: continue
+                if 'peer-ask' not in (d.get('messagingSocketPath') or ''): continue
+                out = socket.socket(socket.AF_UNIX)
+                try:
+                    out.connect(d['messagingSocketPath'])
+                    out.sendall((json.dumps({'type':'user','message':{'role':'user',
+                        'content':'<cross-session-message from=\"uds:/x.sock\" from-name=\"peer\">\n'
+                                   + reply + '\n</cross-session-message>'}})+'\n').encode())
+                finally: out.close()
+        c.close()
+threading.Thread(target=serve, daemon=True).start()
+time.sleep(30)
+" "$sock" "$reply" "$CLAUDE_SESSIONS_META_DIR" &
+  LISTENERS+=($!)
+  local i=0
+  while [ ! -S "$sock" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
+}
+
+@test "--ask prints the peer's reply, envelope stripped" {
+  local sock="$BATS_TEST_TMPDIR/peer.sock"
+  start_answering_peer "$sock" "migration landed, 8 tables verified"
+  write_session $$ "builder" "$sock"
+
+  CLAUDE_PEER_SOCKET_DIR="$(ASK_SOCK_DIR)" run "$PEER" --ask builder "did it land?" --timeout 15
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"migration landed, 8 tables verified"* ]]
+  [[ "$output" != *"cross-session-message"* ]]
+}
+
+@test "--ask registers itself so the peer can address it" {
+  local sock="$BATS_TEST_TMPDIR/peer.sock"
+  start_answering_peer "$sock" "seen"
+  write_session $$ "builder" "$sock"
+
+  CLAUDE_PEER_SOCKET_DIR="$(ASK_SOCK_DIR)" run "$PEER" --ask builder "hello" --timeout 15
+  [ "$status" -eq 0 ]
+  # The reply could only arrive if the peer found our registry entry.
+  [[ "$output" == *"seen"* ]]
+}
+
+@test "--ask removes its registry entry and socket afterwards" {
+  local sock="$BATS_TEST_TMPDIR/peer.sock"
+  start_answering_peer "$sock" "done"
+  write_session $$ "builder" "$sock"
+
+  local before after
+  before=$(ls "$CLAUDE_SESSIONS_META_DIR" | wc -l | tr -d ' ')
+  CLAUDE_PEER_SOCKET_DIR="$(ASK_SOCK_DIR)" run "$PEER" --ask builder "hi" --timeout 15
+  [ "$status" -eq 0 ]
+  after=$(ls "$CLAUDE_SESSIONS_META_DIR" | wc -l | tr -d ' ')
+  [ "$before" -eq "$after" ]
+  [ -z "$(ls -A "$(ASK_SOCK_DIR)" 2>/dev/null)" ]
+}
+
+@test "--ask exits 2 and cleans up when no reply comes" {
+  local sock="$BATS_TEST_TMPDIR/peer.sock"
+  start_listener "$sock" "$BATS_TEST_TMPDIR/got"    # receives, never answers
+  write_session $$ "mute" "$sock"
+
+  local before after
+  before=$(ls "$CLAUDE_SESSIONS_META_DIR" | wc -l | tr -d ' ')
+  CLAUDE_PEER_SOCKET_DIR="$(ASK_SOCK_DIR)" run "$PEER" --ask mute "anyone?" --timeout 2
+  [ "$status" -eq 2 ]
+  after=$(ls "$CLAUDE_SESSIONS_META_DIR" | wc -l | tr -d ' ')
+  [ "$before" -eq "$after" ]
+  [ -z "$(ls -A "$(ASK_SOCK_DIR)" 2>/dev/null)" ]
+}
+
+@test "--ask names its socket so it cannot be mistaken for a session socket" {
+  local sock="$BATS_TEST_TMPDIR/peer.sock"
+  start_listener "$sock" "$BATS_TEST_TMPDIR/got"
+  write_session $$ "mute" "$sock"
+
+  # Capture the socket name mid-flight, before cleanup removes it.
+  ( sleep 1; ls "$(ASK_SOCK_DIR)" > "$BATS_TEST_TMPDIR/names" 2>/dev/null ) &
+  CLAUDE_PEER_SOCKET_DIR="$(ASK_SOCK_DIR)" run "$PEER" --ask mute "q" --timeout 4
+
+  run cat "$BATS_TEST_TMPDIR/names"
+  [[ "$output" == *"peer-ask-"* ]]
+  # A session socket is <pid>.sock; ours must never match that shape.
+  [[ ! "$output" =~ ^[0-9]+\.sock$ ]]
+}
+
+@test "--ask fails for an unknown target without registering anything" {
+  local before after
+  before=$(ls "$CLAUDE_SESSIONS_META_DIR" | wc -l | tr -d ' ')
+  CLAUDE_PEER_SOCKET_DIR="$(ASK_SOCK_DIR)" run "$PEER" --ask nobody "q" --timeout 3
+  [ "$status" -ne 0 ]
+  [ "$status" -ne 2 ]
+  after=$(ls "$CLAUDE_SESSIONS_META_DIR" | wc -l | tr -d ' ')
+  [ "$before" -eq "$after" ]
+}
