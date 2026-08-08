@@ -114,13 +114,20 @@ new_settings=$(
         type: 'command',
         command: '${DEDICATED_TOOLS_HOOK}'
       }]
+    }],
+    SessionStart: [{
+      matcher: '',
+      hooks: [{
+        type: 'command',
+        command: '${INTERNALS_DRIFT_HOOK}'
+      }]
     }]
-  }} | drop hooks.SessionStart" "$SETTINGS_FILE"
+  }}" "$SETTINGS_FILE"
 )
 
 echo "$new_settings" > "$SETTINGS_FILE"
 
-echo "✓ Installed hooks (UserPromptSubmit, PostToolUse, PermissionRequest, Stop, PreToolUse)"
+echo "✓ Installed hooks (UserPromptSubmit, PostToolUse, PermissionRequest, Stop, PreToolUse, SessionStart)"
 echo ""
 
 # Set CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=16 for Opus 4.7 on the 1M tier.
