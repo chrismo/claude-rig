@@ -258,3 +258,11 @@ finally:
 @test "E3: attribution is a text wrapper inside message.content" {
   assert_anchor 'cross-session-message'
 }
+
+@test "E4: a uds: socket path is still a valid SendMessage target" {
+  # What claude-peer --ask stands on: it hands the peer a uds: path to answer.
+  # The tool's own prompt is the authority — "To reply to an incoming message,
+  # copy its `from` attribute as your `to`." If that guidance is gone, a shell
+  # process has no way to receive a reply.
+  assert_anchor 'reply to an incoming message'
+}

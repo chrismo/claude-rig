@@ -250,6 +250,51 @@ The harness's own framing — the "this came from another Claude session" preamb
 and the permission-laundering warning — is attached on ingest regardless of how
 the bytes arrived, including for a raw write.
 
+## Three things only visible from the receiving end
+
+These came from a peer session watching messages arrive while this document's
+author was sending them. A sender cannot observe any of them.
+
+### A failed send discloses more than it should
+
+Addressing a peer by a name that does not resolve returns an error naming the
+correct ref, plus the session's type, locality and idle time:
+
+```
+'claude-rig-one' is not an agent in this conversation. Re-send with the ref to confirm you mean:
+  claude-rig-one [2ee790] — Claude session, on this machine, active 17m ago
+```
+
+That is a **disclosure oracle**: guessing names yields valid refs and liveness
+information for sessions that were never listed to you. A peer used it to
+harvest three refs it had no other way to learn. Nothing here exploits it; it is
+recorded because it is the kind of thing that changes quietly, and because
+anyone reasoning about the trust boundary should know the roster is not the only
+way to enumerate.
+
+### The receiver-added preamble is the one part a forger cannot touch
+
+Attribution is forgeable (above). The harness's own framing — the "this came
+from another Claude session" preamble and the permission-laundering warning — is
+**not**: it is attached on ingest and appeared identically on raw socket writes
+that carried no wrapper at all.
+
+So if anything ever builds trust logic on peer messages, that framing is the
+only part with integrity. The `<cross-session-message>` wrapper, including
+`from-name`, is attacker-controlled. `from-mode` rides along inside the wrapper
+too, so it leaks sender *state*, not just identity, and is equally forgeable.
+
+### Reachable and listed are not the same snapshot
+
+A registered process is reachable the moment its socket answers, but a roster is
+built on demand. A short-lived registration — `--ask` holds one for seconds —
+is typically gone before anyone runs `ListAgents`, while a longer-lived one is
+visible: a 120-second probe appeared as `ask-probe [f17ed5]`, and the
+`--ask`-duration entries never showed up on a peer's roster at all.
+
+Do not treat absence from a roster as evidence a peer cannot be reached, or
+presence as evidence it still can. Both are snapshots of a probe that ran once.
+
 ## Making a non-Claude process addressable
 
 Since `from` is not a reply path, a shell process that wants an *answer* has to

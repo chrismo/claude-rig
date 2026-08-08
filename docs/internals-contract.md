@@ -58,20 +58,24 @@ asserting on one would fail for a rename that broke nothing.
 
 ### E — addressability (what `claude-peer --ask` stands on)
 
-`--ask` is a shipped feature that depends on being able to *join* the roster,
-not just read it. That is a deeper dependency than anything else here: it writes
-into Claude's own registry directory.
+`--ask` gets a reply by telling the peer to answer a `uds:` socket path. That is
+the load-bearing assumption. Registration is a *separate*, opt-in capability
+(`--register`) that makes the asking process visible on the roster; `--ask`
+works without it.
 
 | ID | Assumption | Relied on by | If it fails |
 |---|---|---|---|
-| E1 | The registry directory is writable by us | `claude-peer --ask` | `--ask` cannot register and must fail loudly rather than hang. Check whether Claude started policing the directory. |
-| E2 | A roster entry needs only a live pid + an answering socket — no proof of being a real Claude | `claude-peer --ask` | Registration is being validated somehow (signature, cookie, process identity). `--ask` is dead; fall back to reading the peer's transcript for its reply. |
-| E3 | Attribution is a text wrapper inside `message.content`, not a verified field | `--ask` reply parsing | The envelope moved. `--ask` will print protocol furniture, or nothing, instead of the answer. |
+| E4 | A `uds:` socket path is a valid `SendMessage` target — the tool prompt says to copy a `from` attribute as your `to` | **`claude-peer --ask`** | `--ask` is dead: the peer has no way to answer a shell. Fall back to reading the peer's transcript for its reply. |
+| E3 | Attribution is a text wrapper inside `message.content`, not a verified field | `--ask` reply parsing | The envelope moved. `--ask` prints protocol furniture, or nothing, instead of the answer. |
+| E1 | The registry directory is writable by us | `--ask --register` only | `--register` must fail loudly rather than hang. Plain `--ask` is unaffected. |
+| E2 | A roster entry needs only a live pid + an answering socket — no proof of being a real Claude | `--ask --register` only | Registration is being validated (signature, cookie, process identity). Drop `--register`; plain `--ask` keeps working. |
 
-E2 is the one to watch. It is the assumption most likely to be deliberately
-closed off, precisely because it is what lets a non-Claude process pose as a
-peer — and if it is closed off, that is a *reasonable* change to make, not a
-bug. Do not work around it; switch `--ask` to transcript-tailing instead.
+**E4 is the one that matters now.** It is what a reply rides on.
+
+E2 is the one most likely to be *deliberately* closed off, since it is what lets
+a non-Claude process pose as a peer — and closing it would be a reasonable
+change, not a bug. It used to be load-bearing for `--ask`; it no longer is, so
+losing it costs visibility, not function. Do not work around it.
 
 ### C — transcripts
 
