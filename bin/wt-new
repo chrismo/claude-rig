@@ -1,0 +1,177 @@
+#!/usr/bin/env bash
+#
+# wt-new - Create a git worktree beside the current one, then run the repo's
+# per-clone setup hook.
+#
+# Usage: wt-new <branch>
+#
+# The point of the hook is expensive-to-rebuild, uncommitted state. A fresh
+# worktree of a large compiled project is useless for minutes while it does a
+# cold build; on APFS, cloning the previous worktree's build directory is
+# instant and costs no disk until the files diverge. That trick is per-repo and
+# per-machine, so wt-new ships the mechanism and the repo supplies the command.
+#
+# The hook is looked up in two places, first match wins:
+#
+#   1. $(git rev-parse --git-common-dir)/worktree-setup   — an executable script
+#   2. git config --get wt.setup                          — a command string
+#
+# Both live outside the working tree, so nothing is ever added to a repo you
+# don't own, and neither can be committed by accident. Both live in the COMMON
+# git dir, so every worktree of a clone inherits them. `git config --global
+# wt.setup ...` gives a cross-repo default for free.
+#
+# Both forms are run with cwd set to the new worktree and these exported:
+#
+#   WT_SRC     absolute path of the worktree you ran wt-new from
+#   WT_DST     absolute path of the new worktree
+#   WT_BRANCH  the branch it is on
+#
+# A failing hook does NOT roll back the worktree — a half-set-up worktree is
+# still worth more than no worktree. wt-new keeps it, prints its path, reports
+# the failure loudly, and exits nonzero.
+#
+# stdout is EXACTLY the new worktree path and nothing else, so a shell wrapper
+# can `cd "$(wt-new "$@")"`. wt-new cannot cd its caller's shell, hence the
+# split; see shell/rig.zsh for the new_wt() half. Everything else — git's own
+# output and the hook's stdout AND stderr — is relayed to stderr.
+
+set -euo pipefail
+
+# Absolute path of the worktree the new one should sit beside.
+wt_dst_path() {
+  local src="$1" branch="$2"
+  printf '%s/%s\n' "$(dirname "$src")" "$branch"
+}
+
+# Default branch of the current repo: origin/HEAD if set, else main/master.
+# Lifted from the old .zshrc _git_default_branch.
+wt_default_branch() {
+  local head
+  head=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null) \
+    && { printf '%s\n' "${head#origin/}"; return 0; }
+  local br
+  for br in main master; do
+    if git show-ref --verify --quiet "refs/remotes/origin/$br" \
+       || git show-ref --verify --quiet "refs/heads/$br"; then
+      printf '%s\n' "$br"
+      return 0
+    fi
+  done
+  return 1
+}
+
+wt_local_branch_exists() {
+  git show-ref --verify --quiet "refs/heads/$1"
+}
+
+wt_origin_branch_exists() {
+  git show-ref --verify --quiet "refs/remotes/origin/$1"
+}
+
+# The git common dir, absolute. --git-common-dir answers relative to cwd (often
+# just ".git"), and the hook has to be found from any subdirectory, so resolve
+# it before use. --path-format=absolute would do this in one step but is git
+# 2.31+; this works everywhere.
+wt_common_dir() {
+  local d
+  d=$(git rev-parse --git-common-dir) || return 1
+  case "$d" in
+    /*) printf '%s\n' "$d" ;;
+    *)  printf '%s\n' "$(cd "$d" && pwd)" ;;
+  esac
+}
+
+# Run the setup hook for a freshly created worktree, if there is one.
+# Returns the hook's exit status; 0 when no hook is configured.
+wt_run_setup() {
+  local src="$1" dst="$2" branch="$3"
+  local common script cmd rc=0
+
+  common=$(wt_common_dir)
+  script="$common/worktree-setup"
+
+  # The hook's stdout is redirected to stderr, not discarded: wt-new's stdout
+  # is reserved for the path. Its stderr passes through untouched — a hook that
+  # fails should say why, loudly.
+  if [[ -x "$script" ]]; then
+    printf 'wt-new: running %s\n' "$script" >&2
+    ( cd "$dst" && WT_SRC="$src" WT_DST="$dst" WT_BRANCH="$branch" "$script" ) >&2 \
+      || rc=$?
+    if (( rc != 0 )); then
+      printf 'wt-new: worktree-setup failed (exit %d) — worktree kept at %s\n' \
+        "$rc" "$dst" >&2
+    fi
+    return "$rc"
+  fi
+
+  cmd=$(git config --get wt.setup) || cmd=''
+  if [[ -n "$cmd" ]]; then
+    printf 'wt-new: running wt.setup: %s\n' "$cmd" >&2
+    ( cd "$dst" && WT_SRC="$src" WT_DST="$dst" WT_BRANCH="$branch" sh -c "$cmd" ) >&2 \
+      || rc=$?
+    if (( rc != 0 )); then
+      printf 'wt-new: wt.setup failed (exit %d) — worktree kept at %s\n' \
+        "$rc" "$dst" >&2
+    fi
+    return "$rc"
+  fi
+
+  return 0
+}
+
+wt_new_main() {
+  local branch="${1:-}"
+  if [[ -z "$branch" ]]; then
+    printf 'usage: wt-new <branch>\n' >&2
+    return 1
+  fi
+
+  local src
+  src=$(git rev-parse --show-toplevel 2>/dev/null) || {
+    printf 'wt-new: not inside a git worktree\n' >&2
+    return 1
+  }
+
+  local dst
+  dst=$(wt_dst_path "$src" "$branch")
+  if [[ -e "$dst" ]]; then
+    printf 'wt-new: %s already exists\n' "$dst" >&2
+    return 1
+  fi
+
+  # >&2 on both: git worktree add narrates to stdout on some versions, and
+  # stdout belongs to the path.
+  if wt_local_branch_exists "$branch"; then
+    git worktree add "$dst" "$branch" >&2
+  elif wt_origin_branch_exists "$branch"; then
+    # `git worktree add <path> <branch>` needs a LOCAL branch — pointing it at a
+    # remote-only name dies with "fatal: invalid reference". The old .zshrc
+    # new_wt collapsed both cases into that one call, so pulling down a
+    # colleague's branch never worked. Create the local branch and set it
+    # tracking, which is what checking out a remote branch is supposed to mean.
+    printf 'wt-new: tracking origin/%s\n' "$branch" >&2
+    git worktree add --track -b "$branch" "$dst" "origin/$branch" >&2
+  else
+    local base
+    base=$(wt_default_branch) || {
+      printf 'wt-new: cannot determine the default branch (no origin/HEAD, main, or master)\n' >&2
+      return 1
+    }
+    printf 'wt-new: branching %s off %s\n' "$branch" "$base" >&2
+    git worktree add -b "$branch" "$dst" "$base" >&2
+  fi
+
+  # From here the worktree exists. Whatever the hook does, print the path so
+  # the caller still lands in it.
+  local rc=0
+  wt_run_setup "$src" "$dst" "$branch" || rc=$?
+
+  printf '%s\n' "$dst"
+  return "$rc"
+}
+
+# Sourced (by bats) → expose functions only. Executed → run main.
+if [[ "${BASH_SOURCE[0]:-}" == "${0}" ]]; then
+  wt_new_main "$@"
+fi

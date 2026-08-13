@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+#
+# wt - Fuzzy-select a git worktree and print its path.
+#
+# The sibling of `gt` (Ghostty tab selector), but for worktrees of the current
+# repo. Migrated from brain/git/worktrees.sh, where it was `source`d so its cd
+# would stick. Here it prints the chosen path instead and shell/rig.zsh does
+# the cd — same split as wt-new, and for the same reason: a subprocess cannot
+# cd its caller's shell.
+#
+# Usage: wt
+#
+# Requires: fzf, super (SuperDB).
+#
+# stdout is EXACTLY the selected path, or nothing when the selection is
+# cancelled. Errors go to stderr.
+
+set -euo pipefail
+
+# The porcelain parse below is written against this version's grok/aggregate
+# behavior; pin it rather than inherit whatever asdf resolves today.
+export ASDF_SUPERDB_VERSION=0.51231
+
+# Seam for tests: the raw `git worktree list --porcelain` output.
+wt_worktree_porcelain() {
+  git worktree list --porcelain
+}
+
+# porcelain (stdin) -> one JSON record per worktree: {dir, branch, leaf}
+#
+# Blocks are pinned back together by line count — the Nth "worktree" line pairs
+# with the Nth "branch" line — so every block MUST contribute exactly one of
+# each. Detached and bare worktrees emit "detached"/"bare" instead of a branch
+# line, which would shift every later block by one and emit records with a null
+# dir (making those worktrees unreachable from the selector). Rewriting those
+# two markers into synthetic branch lines keeps the pairing aligned and gives
+# them a readable label. The match is on the whole line, so a branch actually
+# named "detached" (refs/heads/detached) is untouched.
+#
+# `sort id` because `aggregate ... by id` does not promise input order, and the
+# list should read the way `git worktree list` does.
+wt_parse_worktrees() {
+  super -i line -j -c "
+    grep('^worktree|^branch|^detached|^bare', this)
+    | values case
+        when this == 'detached' then 'branch refs/heads/(detached)'
+        when this == 'bare' then 'branch refs/heads/(bare)'
+        else this end
+    | grok('^worktree %{GREEDYDATA:dir}|^branch %{GREEDYDATA:branch}', this)
+    | count
+    | put id:=((count - 1) / 2)::int64
+    | aggregate dir:=max(that.dir), branch:=max(that.branch) by id
+    | sort id
+    | drop id
+    | branch:=replace(this.branch,'refs/heads/','')
+    | leaf:=split(dir, '/')[-1]
+  " -
+}
+
+# JSON records (stdin) -> "<dir>\t<leaf> [<branch>]"
+#
+# fzf is told to display from field 2 on, so the full path rides along hidden
+# in field 1. Selecting by the visible leaf name instead would pick the wrong
+# worktree whenever two of them share a leaf (/a/dup and /b/dup).
+wt_display_lines() {
+  super -f line -c "values f'{dir}\t{leaf} [{branch}]'" -
+}
+
+# Seam for tests: the interactive picker. Reads display lines, writes the
+# chosen one. fzf draws on /dev/tty, so this stays usable with stdout captured.
+wt_select() {
+  fzf --height=40% --reverse --delimiter=$'\t' --with-nth='2..'
+}
+
+wt_main() {
+  local porcelain json lines selected rc=0
+
+  porcelain=$(wt_worktree_porcelain) || {
+    printf 'wt: not inside a git repository\n' >&2
+    return 1
+  }
+
+  json=$(printf '%s\n' "$porcelain" | wt_parse_worktrees)
+  if [[ -z "$json" ]]; then
+    printf 'wt: no worktrees found\n' >&2
+    return 1
+  fi
+
+  lines=$(printf '%s\n' "$json" | wt_display_lines)
+
+  # fzf exits 130 on ESC/Ctrl-C and 1 when nothing matched. Neither is an
+  # error: the user chose not to go anywhere. Anything else is a real failure.
+  selected=$(printf '%s\n' "$lines" | wt_select) || rc=$?
+  if (( rc != 0 )); then
+    (( rc == 130 || rc == 1 )) && return 0
+    return "$rc"
+  fi
+  [[ -z "$selected" ]] && return 0
+
+  local dir="${selected%%$'\t'*}"
+  if [[ ! -d "$dir" ]]; then
+    printf 'wt: directory not found: %s\n' "$dir" >&2
+    return 1
+  fi
+
+  printf '%s\n' "$dir"
+}
+
+# Sourced (by bats) → expose functions only. Executed → run main.
+if [[ "${BASH_SOURCE[0]:-}" == "${0}" ]]; then
+  wt_main "$@"
+fi

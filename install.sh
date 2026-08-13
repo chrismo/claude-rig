@@ -437,7 +437,7 @@ fi
 # When adding a new user-facing command to bin/, add it here.
 LOCAL_BIN="${LOCAL_BIN:-$HOME/.local/bin}"
 mkdir -p "$LOCAL_BIN"
-for cmd in claude-slot claude-tabs claude-search claude-pod claude-peer claude-src work-context gt ticket-sort kaomoji; do
+for cmd in claude-slot claude-tabs claude-search claude-pod claude-peer claude-src work-context gt wt wt-new ticket-sort kaomoji; do
   src="$REPO_DIR/bin/$cmd"
   dest="$LOCAL_BIN/$cmd"
   if [[ -f "$src" ]]; then
@@ -461,6 +461,26 @@ if [[ -f "$ts_src" ]]; then
   fi
   ln -s "$ts_src" "$ts_dest"
   echo "✓ Linked tab-status -> $LOCAL_BIN/"
+fi
+echo ""
+
+# shell/rig.zsh holds the shell-side halves of `wt` and `new_wt`. Those can't
+# live in bin/: a subprocess cannot cd its caller's shell, so bin/wt-new and
+# bin/wt print a path and a sourced shell function does the cd.
+#
+# That file only takes effect if .zshrc sources it — and .zshrc is not ours.
+# The installer owns its symlink set and nothing else, the same reason it
+# doesn't write to ~/.zshrc for anything else. So: verify and instruct.
+ZSHRC="${ZSHRC:-$HOME/.zshrc}"
+RIG_ZSH_LINE="source $REPO_DIR/shell/rig.zsh"
+# Comment lines don't count — a commented-out source line is not sourcing.
+if [[ -f "$ZSHRC" ]] && grep -v '^[[:space:]]*#' "$ZSHRC" | grep -qF "$RIG_ZSH_LINE"; then
+  echo "✓ .zshrc sources shell/rig.zsh"
+else
+  echo "⚠ .zshrc does not source shell/rig.zsh — wt and new_wt will not be defined."
+  echo "  Add this to $ZSHRC (the installer will not edit it for you):"
+  echo ""
+  echo "      $RIG_ZSH_LINE"
 fi
 echo ""
 

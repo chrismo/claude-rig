@@ -342,6 +342,25 @@ EOF
   [ "$status" -eq 0 ]
   [ ! -e "$LOCAL_BIN/harvest.sh" ]
   [ ! -e "$LOCAL_BIN/ticket-sort.bats" ]
+  [ ! -e "$LOCAL_BIN/wt-new.bats" ]
+}
+
+@test "bin: wt-new is symlinked from bin/" {
+  run_installer
+  [ "$status" -eq 0 ]
+  [ -L "$LOCAL_BIN/wt-new" ]
+  local target
+  target=$(readlink "$LOCAL_BIN/wt-new")
+  [[ "$target" == "$BATS_TEST_DIRNAME/bin/wt-new" ]]
+}
+
+@test "bin: wt is symlinked from bin/" {
+  run_installer
+  [ "$status" -eq 0 ]
+  [ -L "$LOCAL_BIN/wt" ]
+  local target
+  target=$(readlink "$LOCAL_BIN/wt")
+  [[ "$target" == "$BATS_TEST_DIRNAME/bin/wt" ]]
 }
 
 @test "bin: tab-status is symlinked from tab-status/" {
@@ -363,6 +382,57 @@ EOF
   local target
   target=$(readlink "$LOCAL_BIN/tab-status")
   [[ "$target" == "$BATS_TEST_DIRNAME/tab-status/tab-status" ]]
+}
+
+# ── shell/rig.zsh entrypoint ────────────────────────────────────────────────
+# shell/rig.zsh holds the cd-wrappers for wt-new and wt (a subprocess cannot cd
+# its caller's shell, so those halves have to live in a sourced file). It only
+# takes effect if .zshrc sources it — but .zshrc is not in the installer's
+# symlink set and the installer does not own files outside that set. So it
+# VERIFIES and instructs; it must never edit .zshrc itself.
+
+@test "zshrc: instructs the user when the rig.zsh source line is missing" {
+  export ZSHRC="$TEST_DIR/zshrc"
+  printf 'export PATH=/usr/bin\n' > "$ZSHRC"
+  run_installer
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"shell/rig.zsh"* ]]
+  [[ "$output" == *"source"* ]]
+}
+
+@test "zshrc: does not modify .zshrc when the source line is missing" {
+  export ZSHRC="$TEST_DIR/zshrc"
+  printf 'export PATH=/usr/bin\n' > "$ZSHRC"
+  local before
+  before=$(cat "$ZSHRC")
+  run_installer
+  [ "$status" -eq 0 ]
+  [ "$(cat "$ZSHRC")" = "$before" ]
+}
+
+@test "zshrc: does not create .zshrc when it does not exist" {
+  export ZSHRC="$TEST_DIR/no-such-zshrc"
+  run_installer
+  [ "$status" -eq 0 ]
+  [ ! -e "$ZSHRC" ]
+  [[ "$output" == *"shell/rig.zsh"* ]]
+}
+
+@test "zshrc: confirms when the source line is already present" {
+  export ZSHRC="$TEST_DIR/zshrc"
+  printf 'source %s/shell/rig.zsh\n' "$BATS_TEST_DIRNAME" > "$ZSHRC"
+  run_installer
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"rig.zsh"* ]]
+  [[ "$output" != *"Add this to"* ]]
+}
+
+@test "zshrc: a commented-out source line does not count as present" {
+  export ZSHRC="$TEST_DIR/zshrc"
+  printf '# source %s/shell/rig.zsh\n' "$BATS_TEST_DIRNAME" > "$ZSHRC"
+  run_installer
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Add this to"* ]]
 }
 
 # ── Backup ─────────────────────────────────────────────────────────────────────

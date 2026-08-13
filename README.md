@@ -30,6 +30,20 @@ CLI tools symlinked into `~/.local/bin/`:
 
 - **permissions-audit** — consolidate allow/deny permission rules across git worktrees and global settings. Run from a repo root to discover `.claude/settings.local.json` in all worktrees plus `~/.claude/settings.json`. Flags: `--local-only` (skip global), `--sup` (structured output for piping into `super`).
 - **claude-src** — search Claude Code's own source, extracted from the installed binary. `claude-src '[uds-messaging]'`. See [docs/reading-the-claude-binary.md](docs/reading-the-claude-binary.md).
+- **wt-new** — `wt-new <branch>` creates a git worktree beside the current one and runs the repo's setup hook. Prints the new path on stdout. See [docs/worktree-setup-hook.md](docs/worktree-setup-hook.md).
+- **wt** — fuzzy-select a worktree of the current repo and print its path.
+
+Both `wt` commands print a path rather than changing directory, because a subprocess cannot `cd` its caller's shell. The `cd` half lives in `shell/rig.zsh`.
+
+### `shell/`
+
+Sourced shell code — not symlinked, because it has to run *in* your shell. Add to `~/.zshrc`:
+
+```sh
+source ~/modev/claude-rig/shell/rig.zsh
+```
+
+`install.sh` checks for this line and prints the instruction if it's missing; it will not edit `.zshrc` for you. Defines `new_wt` and `wt` as thin `cd "$(...)"` wrappers over the `bin/` commands.
 
 ### `skills/`
 
