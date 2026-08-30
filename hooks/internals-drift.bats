@@ -151,3 +151,96 @@ setup() {
   [ "$status" -eq 0 ]
   [ -z "$output" ]
 }
+
+# --- the results file ----------------------------------------------------
+#
+# bin/contract-record leaves a row per test per run. The hook reads it to say
+# what the suite actually established about the RUNNING build, which the
+# verified-against stamp cannot express: it is one version string, written by
+# hand, identical whether every assumption was confirmed or every one skipped.
+
+@test "summarises confirmed assumptions for the running build" {
+  export CLAUDE_SRC_BINARY="$BATS_TEST_TMPDIR/versions/2.1.231"
+  touch "$CLAUDE_SRC_BINARY"
+  export CLAUDE_RIG_CONTRACT_RESULTS="$BATS_TEST_TMPDIR/results.tsv"
+  printf 'A1\tpass\t2.1.231\t100\nA2\tpass\t2.1.231\t100\n' > "$CLAUDE_RIG_CONTRACT_RESULTS"
+
+  run "$HOOK"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"2 confirmed"* ]]
+}
+
+@test "counts a skip separately from a pass" {
+  export CLAUDE_SRC_BINARY="$BATS_TEST_TMPDIR/versions/2.1.231"
+  touch "$CLAUDE_SRC_BINARY"
+  export CLAUDE_RIG_CONTRACT_RESULTS="$BATS_TEST_TMPDIR/results.tsv"
+  printf 'A1\tpass\t2.1.231\t100\nR1\tskip\t2.1.231\t100\n' > "$CLAUDE_RIG_CONTRACT_RESULTS"
+
+  run "$HOOK"
+  [[ "$output" == *"1 confirmed"* ]]
+  [[ "$output" == *"1 skipped"* ]]
+}
+
+@test "reports a failing assumption by ID" {
+  export CLAUDE_SRC_BINARY="$BATS_TEST_TMPDIR/versions/2.1.231"
+  touch "$CLAUDE_SRC_BINARY"
+  export CLAUDE_RIG_CONTRACT_RESULTS="$BATS_TEST_TMPDIR/results.tsv"
+  printf 'A1\tpass\t2.1.231\t100\nB3\tfail\t2.1.231\t100\n' > "$CLAUDE_RIG_CONTRACT_RESULTS"
+
+  run "$HOOK"
+  [[ "$output" == *"B3"* ]]
+  [[ "$output" == *"failing"* ]]
+}
+
+@test "counts assumptions seen on an older build but never on this one" {
+  export CLAUDE_SRC_BINARY="$BATS_TEST_TMPDIR/versions/2.1.231"
+  touch "$CLAUDE_SRC_BINARY"
+  export CLAUDE_RIG_CONTRACT_RESULTS="$BATS_TEST_TMPDIR/results.tsv"
+  printf 'A1\tpass\t2.1.231\t100\nC1\tpass\t2.1.224\t50\nC2\tpass\t2.1.224\t50\n' \
+    > "$CLAUDE_RIG_CONTRACT_RESULTS"
+
+  run "$HOOK"
+  [[ "$output" == *"2 never run"* ]]
+}
+
+@test "the latest row for an assumption wins over an earlier one" {
+  export CLAUDE_SRC_BINARY="$BATS_TEST_TMPDIR/versions/2.1.231"
+  touch "$CLAUDE_SRC_BINARY"
+  export CLAUDE_RIG_CONTRACT_RESULTS="$BATS_TEST_TMPDIR/results.tsv"
+  # A1 failed, then was fixed and re-run on the same build.
+  printf 'A1\tfail\t2.1.231\t100\nA1\tpass\t2.1.231\t200\n' > "$CLAUDE_RIG_CONTRACT_RESULTS"
+
+  run "$HOOK"
+  [[ "$output" == *"1 confirmed"* ]]
+  [[ "$output" != *"failing"* ]]
+}
+
+@test "keeps the old behaviour when no results file exists yet" {
+  export CLAUDE_SRC_BINARY="$BATS_TEST_TMPDIR/versions/2.1.231"
+  touch "$CLAUDE_SRC_BINARY"
+  export CLAUDE_RIG_CONTRACT_RESULTS="$BATS_TEST_TMPDIR/absent.tsv"
+
+  run "$HOOK"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"2.1.231"* ]]
+  [[ "$output" != *"confirmed"* ]]
+}
+
+@test "a malformed results file never breaks session startup" {
+  export CLAUDE_SRC_BINARY="$BATS_TEST_TMPDIR/versions/2.1.231"
+  touch "$CLAUDE_SRC_BINARY"
+  export CLAUDE_RIG_CONTRACT_RESULTS="$BATS_TEST_TMPDIR/results.tsv"
+  printf 'this is not a tsv row\n\n\t\t\t\n' > "$CLAUDE_RIG_CONTRACT_RESULTS"
+
+  run "$HOOK"
+  [ "$status" -eq 0 ]
+}
+
+@test "stays silent on a matching version even with a results file present" {
+  export CLAUDE_RIG_CONTRACT_RESULTS="$BATS_TEST_TMPDIR/results.tsv"
+  printf 'A1\tpass\t2.1.224\t100\n' > "$CLAUDE_RIG_CONTRACT_RESULTS"
+
+  run "$HOOK"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}

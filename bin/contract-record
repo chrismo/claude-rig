@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+#
+# contract-record - turn one internals-contract test result into a durable row
+#
+# Usage:
+#   contract-record <test-description> <pass|fail|skip> <version>
+#
+# Called from teardown() in bin/claude-contract.bats, once per test.
+#
+# Why this exists: docs/verified-against records a single version string, which
+# cannot distinguish "we confirmed twenty assumptions against this build" from
+# "twenty-one tests skipped for want of a live session and the rest passed".
+# The contract doc says the quiet part out loud — "green suite plus a stale
+# stamp means UNVERIFIED, not fine" — but nothing enforced it, because a skip
+# and a pass wrote the same thing: nothing.
+#
+# A row per test per run makes that difference representable, and the append-only
+# file is a history rather than a stamp: which assumptions were confirmed, on
+# which build, when. hooks/internals-drift.sh reads it directly;
+# experiments/lemmalog/build.sh turns the same rows into asserted facts.
+#
+# Output format is TSV, four columns:
+#
+#   A1  pass  2.1.251  1788123456
+#   R2  skip  2.1.251  1788123456
+#
+# Two rules, both about never breaking the caller:
+#
+#   - It always exits 0. This runs inside a bats teardown, where a non-zero
+#     status marks the TEST failed. A bug in recording must never manufacture
+#     a contract failure — that would be worse than not recording at all.
+#   - Anything unparseable is dropped in silence. The suite carries helper
+#     tests with no assumption ID; they are not contract rows and must not
+#     become them.
+
+set -uo pipefail
+
+REPO_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+RESULTS="${CLAUDE_RIG_CONTRACT_RESULTS:-$REPO_DIR/docs/contract-results.tsv}"
+
+main() {
+  # Under-application is not an error: a teardown firing in a context we
+  # didn't anticipate should be a no-op, not a failure.
+  [[ $# -ge 2 ]] || exit 0
+
+  local description="$1" status="$2" version="${3:-}"
+
+  case "$status" in
+    pass | fail | skip) ;;
+    *) exit 0 ;;
+  esac
+
+  # The ID is the description's prefix, up to the first colon. Assumption IDs
+  # are one or more uppercase letters followed by digits (A1, B3, C12, R2).
+  # Anything else is a helper test, not a contract row.
+  local id="${description%%:*}"
+  [[ "$id" =~ ^[A-Z]+[0-9]+$ ]] || exit 0
+
+  # An unresolvable version is still worth recording — it says the test ran,
+  # just not which build it ran against. Silently dropping it would leave a
+  # gap that reads as "never run".
+  [[ -n "$version" ]] || version="unknown"
+
+  mkdir -p -- "$(dirname -- "$RESULTS")" 2>/dev/null || exit 0
+  printf '%s\t%s\t%s\t%s\n' "$id" "$status" "$version" "$(date +%s)" \
+    >> "$RESULTS" 2>/dev/null || exit 0
+
+  exit 0
+}
+
+main "$@"

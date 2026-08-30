@@ -25,6 +25,65 @@ set -uo pipefail
 
 REPO_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 VERIFIED_FILE="${CLAUDE_RIG_VERIFIED_FILE:-$REPO_DIR/docs/verified-against}"
+RESULTS_FILE="${CLAUDE_RIG_CONTRACT_RESULTS:-$REPO_DIR/docs/contract-results.tsv}"
+
+# Summarise what the contract suite actually established about a given build.
+#
+# The stamp file is one hand-written version string: identical whether every
+# assumption was confirmed against that build or every one of them skipped for
+# want of a live session. bin/contract-record leaves a row per test per run, so
+# that difference is finally representable — and the difference between "we
+# checked and it holds" and "we never checked on this build" is exactly what
+# the contract doc means by "green suite plus a stale stamp means UNVERIFIED".
+#
+# Prints nothing at all if the file is missing or says nothing about this
+# build. Every parse failure is a silent no-op: this runs at SessionStart.
+summarise_results() {
+  local running="$1"
+  [[ -r "$RESULTS_FILE" ]] || return 0
+
+  awk -F'\t' -v running="$running" '
+    # Ignore anything that is not a well-formed row. A hand-edited or
+    # truncated file must degrade to silence, never to a wrong count.
+    NF >= 4 && $1 ~ /^[A-Z]+[0-9]+$/ {
+      seen[$1] = 1
+      if ($3 == running) {
+        ts = $4 + 0
+        # Last write wins: an assumption fixed and re-run on the same build
+        # is confirmed, not still failing.
+        if (!($1 in best) || ts >= best[$1]) { best[$1] = ts; state[$1] = $2 }
+      }
+    }
+    END {
+      n = 0
+      for (id in seen) {
+        if (!(id in state))          { never++ }
+        else if (state[id] == "pass") { conf++ }
+        else if (state[id] == "skip") { skipped++ }
+        else                          { failing[++n] = id }
+      }
+      if (conf + skipped + never + n == 0) exit 0
+
+      printf "  Suite results for %s: %d confirmed", running, conf + 0
+      if (skipped) printf ", %d skipped", skipped
+      if (never)   printf ", %d never run on this build", never
+      printf ".\n"
+
+      if (n) {
+        # Insertion sort: the list is a handful of IDs, and a stable order
+        # keeps the message identical between runs.
+        for (i = 2; i <= n; i++) {
+          v = failing[i]
+          for (j = i - 1; j >= 1 && failing[j] > v; j--) failing[j + 1] = failing[j]
+          failing[j + 1] = v
+        }
+        out = failing[1]
+        for (i = 2; i <= n; i++) out = out ", " failing[i]
+        printf "  %d failing: %s\n", n, out
+      }
+    }
+  ' "$RESULTS_FILE" 2>/dev/null || return 0
+}
 
 # Resolve the build this session is RUNNING.
 #
@@ -72,8 +131,13 @@ main() {
 
   [[ "$running" == "$verified" ]] && exit 0
 
+  local summary
+  summary=$(summarise_results "$running")
+
   cat <<EOF
 ⚠ claude-rig: internals verified against Claude Code $verified, running $running.
+${summary:+
+$summary}
 
   claude-rig reads Claude Code internals that are not a supported API (session
   registry, transcript schema, peer messaging). A version change is the cue to

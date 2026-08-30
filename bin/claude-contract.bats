@@ -31,6 +31,29 @@ SRC="$BATS_TEST_DIRNAME/claude-src"
 SESSIONS_DIR="${CLAUDE_SESSIONS_META_DIR:-$HOME/.claude/sessions}"
 PROJECTS_DIR="${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
 
+# Record every result, so a run leaves behind what it actually established
+# rather than a single version string that cannot tell a pass from a skip.
+# See bin/contract-record for the format and the reasoning.
+#
+# The version comes from `claude-src --which`, not from a second copy of the
+# hook's resolution logic — the binary's filename IS its version, and this way
+# the row names the same build the anchors were read from.
+teardown() {
+  local status version
+  if [[ -n "${BATS_TEST_SKIPPED:-}" ]]; then
+    status=skip
+  elif [[ -n "${BATS_TEST_COMPLETED:-}" ]]; then
+    status=pass
+  else
+    status=fail
+  fi
+
+  version=$(basename -- "$("$SRC" --which 2>/dev/null)" 2>/dev/null) || version=""
+
+  "$BATS_TEST_DIRNAME/contract-record" \
+    "$BATS_TEST_DESCRIPTION" "$status" "$version" 2>/dev/null || true
+}
+
 # Assert a literal appears in the installed bundle. claude-src exits 0 on a
 # miss (by design), so presence is judged from the output, not the status.
 assert_anchor() {
