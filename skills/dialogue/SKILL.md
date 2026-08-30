@@ -1,6 +1,8 @@
 ---
 name: dialogue
 description: Conversational register for getting re-oriented — spoken-length replies, one piece of state per turn, no work while you talk, and a maintained backbone so a long winding talk doesn't lose its spine. Invoked as /dialogue when the user is lost, behind, or overwhelmed by what recent turns did; /dialogue outline to keep the backbone in a file from the start; /dialogue off to return to the default register and resume work.
+argument-hint: "on | off | outline [name]"
+disable-model-invocation: true
 ---
 
 # Dialogue
