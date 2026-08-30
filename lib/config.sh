@@ -20,6 +20,8 @@ CC_AUDIT_RULES_DEST="${CC_AUDIT_DIR:-$HOME/.cc-audit}/rules"
 STATUSLINE_SCRIPT="$REPO_DIR/statusline/statusline-command.sh"
 DEDICATED_TOOLS_HOOK="$REPO_DIR/hooks/use-dedicated-tools.sh"
 INTERNALS_DRIFT_HOOK="$REPO_DIR/hooks/internals-drift.sh"
+LEMMA_COMMIT_HOOK="$REPO_DIR/hooks/lemma-commit.sh"
+LEMMA_BRIEF_HOOK="$REPO_DIR/hooks/lemma-brief.sh"
 
 SKILLS_SRC="$REPO_DIR/skills"
 AGENTS_SRC="$REPO_DIR/agents"

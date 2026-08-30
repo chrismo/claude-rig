@@ -93,6 +93,13 @@ new_settings=$(
         type: 'command',
         command: '${HOOK_CMD_PREFIX} active > /dev/null; ${TITLE_CMD}'
       }]
+    }, {
+      matcher: 'Bash',
+      hooks: [{
+        type: 'command',
+        command: '${LEMMA_COMMIT_HOOK}',
+        timeout: 10
+      }]
     }],
     Stop: [{
       matcher: '',
@@ -120,6 +127,13 @@ new_settings=$(
       hooks: [{
         type: 'command',
         command: '${INTERNALS_DRIFT_HOOK}'
+      }]
+    }, {
+      matcher: '',
+      hooks: [{
+        type: 'command',
+        command: '${LEMMA_BRIEF_HOOK}',
+        timeout: 10
       }]
     }]
   }}" "$SETTINGS_FILE"

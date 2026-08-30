@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+#
+# lemma-queue - record a commit as a candidate for assertion into lemmalog
+#
+# Usage:
+#   lemma-queue <repo> <sha> <subject>
+#
+# Called from hooks/lemma-commit.sh, once per commit.
+#
+# Why this exists: lemmalog is only as good as what gets asserted into it, and
+# asserting is a step you have to REMEMBER. That is the whole adoption risk — a
+# half-populated deductive store is worse than a prose note, because it looks
+# authoritative. So assertion gets attached to a boundary that already recurs:
+# the commit.
+#
+# But a hook cannot assert. It is a script, the lemmalog MCP tools are reachable
+# only from Claude, and the MCP server rewrites its snapshot after every mutating
+# call — a script writing that file would simply be clobbered. So this records a
+# CANDIDATE and stops. What the commit MEANT needs the reasoning that only Claude
+# has in context, and that arrives later, via /lemma-drain.
+#
+# Same division as bin/contract-record feeding experiments/lemmalog: exact rows
+# in, judgement applied afterwards. Most commits establish nothing worth keeping,
+# and deciding which ones did is not a job for grep.
+#
+# Output format is TSV, four columns:
+#
+#   claude-rig  03d41dc  1788130000  contract: record what each test established
+#
+# Two rules, both about never breaking the caller:
+#
+#   - It always exits 0. This runs inside a PostToolUse hook, where a non-zero
+#     status becomes model-visible noise attached to an unrelated tool call.
+#   - Anything unparseable is dropped in silence.
+
+set -uo pipefail
+
+QUEUE="${CLAUDE_RIG_LEMMA_QUEUE:-$HOME/.claude/lemmalog/pending.tsv}"
+
+main() {
+  # A repo with no sha is not a commit. Under-application is a no-op, not an
+  # error: a hook firing in a context we didn't anticipate should stay quiet.
+  [[ $# -ge 2 ]] || exit 0
+
+  local repo="$1" sha="$2" subject="${3:-}"
+  [[ -n "$repo" && -n "$sha" ]] || exit 0
+
+  # Subjects are free text and tabs would shift every later column. Newlines
+  # can't reach us (git subjects are one line) but fold them for the same
+  # reason, so one commit is always one row.
+  subject=$(printf '%s' "$subject" | tr '\t\n' '  ')
+
+  # Dedupe against the most recent row FOR THIS REPO. A `git commit` with
+  # nothing staged fails and leaves HEAD unmoved, but the hook still reads
+  # `git log -1` and would otherwise re-queue the previous commit; a re-run
+  # --amend has the same shape. Only an immediate repeat is that signature —
+  # a sha returning after other commits is a real revert, and is kept.
+  #
+  # Scoped per repo because short shas collide across repos far more often
+  # than full ones.
+  if [[ -r "$QUEUE" ]]; then
+    local last
+    last=$(awk -F'\t' -v r="$repo" '$1 == r { s = $2 } END { print s }' \
+      "$QUEUE" 2>/dev/null) || last=""
+    [[ "$last" == "$sha" ]] && exit 0
+  fi
+
+  mkdir -p -- "$(dirname -- "$QUEUE")" 2>/dev/null || exit 0
+  printf '%s\t%s\t%s\t%s\n' "$repo" "$sha" "$(date +%s)" "$subject" \
+    >> "$QUEUE" 2>/dev/null || exit 0
+
+  exit 0
+}
+
+main "$@"

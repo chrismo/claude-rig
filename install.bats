@@ -54,12 +54,19 @@ settings_get() {
   [ "$matcher" = "Bash" ]
 }
 
-@test "fresh install: SessionStart hook is NOT configured (retired)" {
+@test "fresh install: SessionStart carries the drift and lemmalog hooks" {
+  # SessionStart was retired once, then brought back by d220e69 for
+  # internals-drift.sh. This suite asserted the retirement long after it
+  # stopped being true; it now asserts what the installer actually writes.
   run_installer
   [ "$status" -eq 0 ]
-  # SessionStart was deprecated; installer should leave the key absent
-  run settings_get 'this.hooks.SessionStart'
-  [ "$status" -ne 0 ] || [ "$output" = "error(\"missing\")" ]
+  local count drift brief
+  count=$(settings_get 'len(this.hooks.SessionStart)')
+  [ "$count" -eq 2 ]
+  drift=$(settings_get 'this.hooks.SessionStart[0].hooks[0].command')
+  [[ "$drift" == *"internals-drift.sh"* ]]
+  brief=$(settings_get 'this.hooks.SessionStart[1].hooks[0].command')
+  [[ "$brief" == *"lemma-brief.sh"* ]]
 }
 
 @test "fresh install: all four event hooks are configured" {
@@ -72,7 +79,7 @@ settings_get() {
   done
 }
 
-@test "hooks: pre-existing deprecated SessionStart is dropped on re-install" {
+@test "hooks: a user's own SessionStart entry is replaced by ours on re-install" {
   cat > "$CLAUDE_DIR/settings.json" <<'EOF'
 {
   "hooks": {
@@ -84,13 +91,15 @@ settings_get() {
 EOF
   run_installer
   [ "$status" -eq 0 ]
-  run settings_get 'this.hooks.SessionStart'
-  [ "$status" -ne 0 ] || [ "$output" = "error(\"missing\")" ]
-  # SessionStart was the only hook, so dropping it empties the nested record.
-  # super emits NO record when a nested record loses its last field, which would
-  # write an empty settings.json - and "SessionStart is absent" is true of an
-  # empty file too. Assert the rest of the settings survived.
-  local matcher
+  # A named key after the ...this.hooks spread replaces that event's array
+  # wholesale, so claude-rig owns SessionStart outright: the stale entry is
+  # gone and both of ours are present.
+  local count cmd matcher
+  count=$(settings_get 'len(this.hooks.SessionStart)')
+  [ "$count" -eq 2 ]
+  cmd=$(settings_get 'this.hooks.SessionStart[0].hooks[0].command')
+  [[ "$cmd" != *"/old/ensure-sandbox.sh"* ]]
+  # And the rest of the settings survived the replacement.
   matcher=$(settings_get 'this.hooks.PreToolUse[0].matcher')
   [ "$matcher" = "Bash" ]
 }
@@ -114,6 +123,31 @@ EOF
   local matcher
   matcher=$(settings_get 'this.hooks.PreToolUse[0].matcher')
   [ "$matcher" = "Bash" ]
+}
+
+@test "fresh install: PostToolUse carries the lemmalog commit hook" {
+  # Appended alongside the tab-status entry rather than replacing it: the
+  # hook queues commits for later assertion into lemmalog.
+  run_installer
+  [ "$status" -eq 0 ]
+  local count cmd matcher
+  count=$(settings_get 'len(this.hooks.PostToolUse)')
+  [ "$count" -eq 2 ]
+  matcher=$(settings_get 'this.hooks.PostToolUse[1].matcher')
+  [ "$matcher" = "Bash" ]
+  cmd=$(settings_get 'this.hooks.PostToolUse[1].hooks[0].command')
+  [[ "$cmd" == *"lemma-commit.sh"* ]]
+}
+
+@test "fresh install: the lemmalog commit hook has no if: prefilter" {
+  # `if: "Bash(git commit *)"` would stop the hook spawning for non-matching
+  # commands, but it is a prefix STRING match with no shell parsing, so it
+  # misses `cd <repo> && git commit ...` -- the common shape here. The script
+  # filters on tool_input.command instead.
+  run_installer
+  [ "$status" -eq 0 ]
+  run settings_get 'this.hooks.PostToolUse[1].hooks[0].if'
+  [ "$status" -ne 0 ] || [ "$output" = "error(\"missing\")" ]
 }
 
 @test "fresh install: Stop hook includes claude-tabs save" {
