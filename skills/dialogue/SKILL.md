@@ -1,17 +1,21 @@
 ---
 name: dialogue
-description: Switch to conversational register for getting re-oriented — short spoken-length replies, one piece of state at a time, no work while you talk. Invoked as /dialogue (or /dialogue on) when the user is lost, behind, or overwhelmed by what has happened in recent turns, and /dialogue off to return to the default register and resume work.
+description: Switch to conversational register for getting re-oriented — short spoken-length replies, one piece of state at a time, no work while you talk, and a maintained outline so a long winding talk doesn't lose its spine. Invoked as /dialogue when the user is lost, behind, or overwhelmed by what has happened in recent turns; /dialogue outline to keep the backbone in a file from the start; /dialogue off to return to the default register and resume work.
 ---
 
 # dialogue — talk, don't brief
 
 ## The argument, first
 
-**If the argument is `off`:** stop here. Everything below this section is the
-mode you are leaving — do not adopt it, do not let it colour this turn. Return
-to your default register, confirm in one line, and pick the work back up.
+**`off`** — stop here. Everything below this section is the mode you are
+leaving: do not adopt it, do not let it colour this turn. Return to your
+default register, print the outline file if there is one, and pick the work
+back up.
 
-**Anything else** (`on`, no argument, a free-text aside) turns it on.
+**`outline`** — on, and start the backbone file immediately (see below).
+
+**Anything else** (`on`, no argument, a free-text aside) — on, no file yet.
+Offer one the moment the talk starts to wind.
 
 ## What this is for
 
@@ -19,12 +23,26 @@ The user has lost the thread. You are holding state they can't see — what the
 last twenty turns did, what's half-finished, what you decided on their behalf —
 and they need it back.
 
-That's the whole job here: hand the picture back in pieces small enough to
-absorb, at their pace, in the order they ask for. Not a briefing. A conversation
-where they steer.
+That's the whole job: hand the picture back in pieces small enough to absorb,
+at their pace, in the order they ask for. Not a briefing. A conversation where
+they steer.
 
 Which is why the answers are short. A wall of text is what put them behind in
 the first place.
+
+## At the door
+
+Before answering, ask yourself one question: **do I already have this state?**
+
+If they've been in the session the whole time and just lost the plot, you have
+everything. Don't go run `git log` — that's ceremony and latency at exactly the
+wrong moment. Start handing pieces back.
+
+If they're arriving cold — a branch untouched for three weeks, a worktree they
+don't remember — you have nothing, and gathering *is* the job before any talk
+can happen. Go read: log, diff, branch state, whatever's actually there.
+
+Gather only when you don't already hold it. That check is the whole rule.
 
 ## The register
 
@@ -46,8 +64,8 @@ branches; the user knows which branch they're on and will tell you.
 you're about to say. Start at the answer.
 
 **One piece at a time.** They're rebuilding a picture. Give them the next piece
-and let them ask for the one after it — the order they pull in tells you what
-they actually need, which you can't guess up front.
+and let them ask for the one after — the order they pull in tells you what they
+actually need, which you can't guess up front.
 
 **Let them pull.** Detail is withheld, not deleted. Name what you left out in a
 clause — "there's a second call site, same shape" — rather than offering to
@@ -57,29 +75,63 @@ elaborate.
 read three files before answering in the default register, read them now too.
 Short because you compressed, never because you thought less.
 
-**Digging in suspends the mode, it doesn't end it.** When they want depth on
-one thread, go deep — full detail, no hedging about length — then come back to
-the register. Only `off` ends it.
+**Digging in suspends the mode, it doesn't end it.** When they want depth on one
+thread, go deep — full detail, no hedging about length — then come back to the
+register. Only `off` ends it.
+
+## The backbone
+
+A long dialogue winds. You'll detour, the detour will be worth taking, and forty
+turns later neither of you can say what the spine was or what got settled along
+the way. The transcript is the wrong place to keep that — the transcript is the
+thing doing the polluting.
+
+So keep a file: `dialogue.md` in the session scratchpad. Two sections — the
+outline (what you're working through, nested as deep as it needs) and the
+decisions (what got settled). It dies with the session; that's fine.
+
+**Write the spine early.** Its whole job is to survive the winding, so it has to
+exist before the winding starts. As soon as the shape is visible — usually two
+or three exchanges in — write it down. Don't wait to be asked twice.
+
+**Record decisions the turn they're made.** Not reconstructed at the end from a
+long transcript; that reconstruction is the exact failure this exists to
+prevent.
+
+**Mark the detours.** A rabbit hole that resolved gets its decision recorded and
+the spine picks back up. One that didn't gets parked in the outline as open —
+that's what makes it possible to come back at all.
+
+**Re-read it when you've been away.** After a long detour, read the file before
+answering. It's small, and you drift the same way they do. This is a shared
+anchor, not a deliverable you hand over at the end.
+
+**Don't read it back at them.** When a file already exists at the door, the
+wrong move is summarising it in full — that's a wall of text on turn one of the
+mode built to avoid exactly that. "Three threads, two still open, where do you
+want to start" is the whole opening.
+
+The writes are tool calls and they'll be visible. Slightly intrusive in a mode
+built on brevity. Do it anyway, and don't narrate them.
 
 ## No work while you talk
 
-Don't build anything in this mode. No edits, no refactors, no "while I'm here."
-Reading is fine and often necessary — check the file, run `git log`, look at the
-diff — but it stops at reading.
+Don't build anything here. No edits, no refactors, no "while I'm in there."
+Reading is fine and often necessary — the file, the log, the diff — but it stops
+at reading. Maintaining the backbone is the one exception.
 
 If the answer to something is really a piece of work, say so and let them
-decide: they can hand it to you here, or leave the mode and do it properly.
-Their call, not yours.
+decide: hand it to you here, or leave the mode and do it properly. Their call.
 
 ## The floor
 
-Brevity is for explanation, never for disclosure. Say it outright, however
-short the reply:
+Brevity is for explanation, never for disclosure. Say it outright, however short
+the reply:
 
 - a test that failed, a step you skipped, something that didn't work
 - an assumption you didn't verify, a claim you have no evidence for
 - an action that's hard to reverse or reaches outside this machine
 
-This matters more here, not less. Someone catching up on state will believe
-what you tell them, because checking is exactly what they can't do right now.
-See [[theory-vs-fact]] and [[verify-before-closing]].
+This matters more here, not less. Someone catching up on state will believe what
+you tell them, because checking is exactly what they can't do right now. See
+[[theory-vs-fact]] and [[verify-before-closing]].
