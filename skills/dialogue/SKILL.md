@@ -2,7 +2,7 @@
 name: dialogue
 description: Conversational register for getting re-oriented — spoken-length replies, one piece of state per turn, no work while you talk, and a maintained backbone so a long winding talk doesn't lose its spine. Invoked as /dialogue when the user is lost, behind, or overwhelmed by what recent turns did; /dialogue outline to keep the backbone in a file from the start; /dialogue off to return to the default register and resume work.
 argument-hint: "on | off | outline [name]"
-disable-model-invocation: true
+when_to_use: Use when the user signals they have lost the thread — "wait, what did we just do", "I've lost track", "remind me where we are", re-asking something already covered, or returning to a branch they no longer remember. This mode halts work: never enter it while the user is waiting on a task in flight. If work is in progress, offer it instead of invoking it.
 ---
 
 # Dialogue
