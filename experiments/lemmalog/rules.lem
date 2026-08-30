@@ -1,0 +1,53 @@
+# The internals contract as a deductive model.
+#
+# Base facts come from two places, and the split is the whole point:
+#
+#   - contract.tsv   structure: which group an assumption is in, and which
+#                    consumers stand on it. Read off docs/internals-contract.md,
+#                    hand-maintained, as stale as that doc ever is.
+#   - the results    observation: what bin/claude-contract.bats actually
+#                    established, per assumption, per build, per run. Written
+#                    by bin/contract-record. Nobody transcribes these.
+#
+# Everything below is derived.
+
+# What is true NOW (bi-temporal projection over edge/6).
+current(E,R,O) :- edge(E,R,O,VF,VT,_), now(T), VF =< T, T < VT.
+
+assumption(A) :- current(A,"group",_).
+running(V)    :- current("claude_code","running",V).
+
+# Confirmed means a test passed against THIS build. Not "passed once", not
+# "skipped on this build", not "the stamp file says so".
+confirmed(A)  :- current(A,"confirmed_on",V), running(V).
+
+# Negation-as-absence, which collapses three different holes into one honest
+# answer: skipped, failed, and never-run-on-this-build are all "not confirmed".
+# docs/verified-against cannot express any of the three.
+unverified(A) :- assumption(A), !confirmed(A).
+
+# Blast radius: who stands on what, and how wide.
+at_risk(C,A)      :- current(C,"relies_on",A), unverified(A).
+exposed(C)        :- at_risk(C,_).
+blast(A,count(C)) :- current(C,"relies_on",A).
+wide(A)           :- blast(A,N), N >= 4.
+
+# Re-verify these first.
+urgent(A)     :- unverified(A), wide(A).
+
+# --- what the suite cannot check itself ----------------------------------
+#
+# A test suite asserts one thing at a time. It cannot assert a RELATIONSHIP
+# between two results, and docs/internals-contract.md is full of those,
+# written in English and enforced by nobody.
+#
+# This is the 2026-08-08 case, from the doc's own R-series preamble: cross-
+# session messaging was off for newly started sessions all morning while
+# "every A-series anchor stayed green the whole time — the code was all in the
+# bundle, it just wasn't activating". No single test can see that. As a rule
+# it is two lines, and it fires the moment both halves are recorded.
+
+runtime_red(A)          :- current(A,"group","runtime_activation"),
+                           current(A,"failed_on",V), running(V).
+present_not_running(A,R) :- current(A,"group","peer_messaging"), confirmed(A),
+                            runtime_red(R).
