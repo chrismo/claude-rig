@@ -71,14 +71,23 @@ message is fully explained by its own diff, there is no fact in it.
 ## If the tools are missing
 
 If `lemmalog_*` is not available, say so, name the fix, and stop — do not
-half-drain into a file nobody reads:
+half-drain into a file nobody reads. The fix is one command:
 
-    claude mcp add lemmalog --env LEMMALOG_MCP_PATH=~/.claude/lemmalog/claude-rig-contract.snapshot \
-      -- ~/modev/lemmalog/target/release/lemmalog-mcp
+    ~/modev/claude-rig/bin/lemma-install
 
-Note the engine lives outside this repo and is built per machine
-(`cargo build --release --features mcp`). A clone of claude-rig on another
-machine has the hooks but no engine.
+It clones and builds the engine (a Rust binary, `--features mcp`) and registers
+the MCP server at **user scope**, so the tools are there in every repo — which
+matters, because `hooks/lemma-commit.sh` queues commits from every repo, and a
+registration scoped to one project leaves the rest permanently undrainable.
+
+The engine lives outside this repo and is built per machine, so a clone of
+claude-rig on another machine has the hooks but no engine. That is the expected
+state on a new machine, not a fault: the queue fills correctly and the
+SessionStart brief keeps reporting it until the engine exists.
+
+`bin/lemma-install` is deliberately not run by `install.sh` — it needs a Rust
+toolchain and a network clone, which every other install would pay for and
+almost none would use.
 
 MCP servers connect at session start, so a server registered mid-session is not
 available until the next one. That is not a failure — say which it is.

@@ -46,12 +46,16 @@ Observations now come only from tests that ran.
 #   why urgent("C1")         proof tree, down to the asserted rows
 ```
 
-Claude reaches the same engine through the MCP tools:
+Claude reaches the same engine through the MCP tools. `bin/lemma-install` builds
+it and registers the server at user scope:
 
 ```sh
-claude mcp add lemmalog --env LEMMALOG_MCP_PATH=~/.claude/lemmalog/claude-rig-contract.snapshot \
-  -- ~/modev/lemmalog/target/release/lemmalog-mcp
+~/modev/claude-rig/bin/lemma-install
 ```
+
+That points the server at `~/.claude/lemmalog/store.snapshot` — one global store
+keyed by repo, shared with the commit/drain loop in `hooks/lemma-*.sh`, not a
+store private to this experiment.
 
 ## Status: experiment, and honestly sized
 

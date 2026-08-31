@@ -24,7 +24,11 @@
 set -uo pipefail
 
 QUEUE="${CLAUDE_RIG_LEMMA_QUEUE:-$HOME/.claude/lemmalog/pending.tsv}"
-SNAPSHOT="${CLAUDE_RIG_LEMMA_SNAPSHOT:-$HOME/.claude/lemmalog/claude-rig-contract.snapshot}"
+# One global store, keyed by repo — see skills/lemma-drain/SKILL.md. Must match
+# the default in bin/lemma-install, which is what tells the MCP server where to
+# write; a disagreement fails silently, with the store filling up correctly
+# while this brief reports it empty forever. bin/lemma-install.bats pins them.
+SNAPSHOT="${CLAUDE_RIG_LEMMA_SNAPSHOT:-$HOME/.claude/lemmalog/store.snapshot}"
 
 # Which repo is this session in? SessionStart delivers a JSON payload on stdin
 # carrying `cwd`, but reading it is best-effort: if stdin is closed or the

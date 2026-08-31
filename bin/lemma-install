@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+#
+# lemma-install - build the lemmalog engine and register it for Claude Code
+#
+# Usage:
+#   bin/lemma-install
+#
+# Why this is a separate script and NOT part of install.sh:
+#
+# The lemmalog engine lives outside this repo (github.com/JordyZomer/lemmalog)
+# and is a Rust binary built per machine. install.sh is a fast, offline,
+# settings-merging script that must keep working on a machine that will never
+# touch lemmalog; folding a network clone and a cargo build into it would make
+# every install pay for a feature most of them do not want. So the coupling runs
+# one way: install.sh puts the hooks in place, and this script — run when you
+# actually want the engine — makes them useful.
+#
+# What goes wrong without it, traced on a simulated fresh machine:
+#
+#   - hooks/lemma-commit.sh queues commits normally. It has no dependency on
+#     lemmalog whatsoever, so the write half of the loop runs standalone.
+#   - hooks/lemma-brief.sh nags at every SessionStart: "N commits pending".
+#   - /lemma-drain, the ONLY thing that can clear that queue, cannot run —
+#     the lemmalog_* MCP tools do not exist. Its own SKILL.md tells it to name
+#     the fix and stop rather than half-drain.
+#
+# Net: a permanent warning with no in-band way to resolve it, which is exactly
+# how a SessionStart hook earns itself a place on the disabled list. This script
+# is the in-band fix.
+#
+# NOTE the inverted convention. hooks/lemma-*.sh must fail SILENTLY and always
+# exit 0, because a failing hook becomes model-visible noise attached to an
+# unrelated tool call. This is human-invoked, so the opposite holds: it fails
+# loudly and exits non-zero. An installer that quietly did nothing is worse than
+# one that says why it could not.
+
+set -uo pipefail
+
+# Test seams. Every one of these is a real default on a real machine; the suite
+# overrides them to keep off the network and out of the user's config.
+SRC="${LEMMALOG_SRC:-$HOME/modev/lemmalog}"
+REPO_URL="${LEMMALOG_REPO_URL:-https://github.com/JordyZomer/lemmalog.git}"
+SNAPSHOT="${CLAUDE_RIG_LEMMA_SNAPSHOT:-$HOME/.claude/lemmalog/store.snapshot}"
+CLAUDE_JSON="${CLAUDE_RIG_CLAUDE_JSON:-$HOME/.claude.json}"
+
+BIN="$SRC/target/release/lemmalog-mcp"
+
+die() { echo "Error: $*" >&2; exit 1; }
+step() { echo "==> $*"; }
+
+# --- preflight -----------------------------------------------------------
+#
+# Both checks up front, before anything is written or cloned. A half-installed
+# engine is harder to reason about than one that never started.
+
+check_prereqs() {
+  command -v cargo &>/dev/null || die \
+"cargo not found. The lemmalog engine is a Rust binary built per machine.
+  Install a toolchain first:
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+  or:
+    brew install rustup && rustup-init"
+
+  command -v claude &>/dev/null || die \
+"claude CLI not found. It is needed to register the MCP server.
+  See https://docs.claude.com/en/docs/claude-code"
+}
+
+# --- source --------------------------------------------------------------
+
+fetch_source() {
+  if [[ -d "$SRC" ]]; then
+    step "Source already present at $SRC"
+    return 0
+  fi
+
+  step "Cloning lemmalog into $SRC"
+  mkdir -p -- "$(dirname -- "$SRC")" || die "cannot create $(dirname -- "$SRC")"
+  git clone "$REPO_URL" "$SRC" || die "clone failed from $REPO_URL"
+}
+
+# --- build ---------------------------------------------------------------
+#
+# `mcp` is a non-default feature and the lemmalog-mcp binary declares
+# required-features = ["mcp"], so a plain `cargo build --release` produces
+# nothing and fails not loudly enough to notice. Cargo is incremental, so
+# re-running this is cheap.
+
+build() {
+  step "Building lemmalog-mcp (release, --features mcp)"
+  ( cd "$SRC" && cargo build --release --features mcp ) \
+    || die "cargo build failed in $SRC"
+
+  [[ -x "$BIN" ]] || die \
+"build finished but $BIN is missing.
+  Check that the lemmalog checkout still declares the mcp feature."
+}
+
+# --- register ------------------------------------------------------------
+#
+# User scope, deliberately. `claude mcp add` defaults to LOCAL scope, which is
+# what produced the project-scoped entry this repo shipped with — lemmalog
+# reachable only inside claude-rig, while hooks/lemma-commit.sh queues commits
+# from every repo. That left rows for other repos permanently undrainable.
+# skills/lemma-drain/SKILL.md is explicit that this is one global store with the
+# repo as a fact dimension, so the registration should match.
+#
+# Remove-then-add because `mcp add` rejects a name that already exists, and this
+# script has to be safe to re-run. The remove is allowed to fail: on a first
+# install there is nothing to remove.
+
+register() {
+  step "Registering the lemmalog MCP server at user scope"
+  mkdir -p -- "$(dirname -- "$SNAPSHOT")" || die "cannot create $(dirname -- "$SNAPSHOT")"
+
+  claude mcp remove lemmalog --scope user &>/dev/null || true
+  claude mcp add lemmalog --scope user --env "LEMMALOG_MCP_PATH=$SNAPSHOT" -- "$BIN" \
+    || die "claude mcp add failed"
+}
+
+# --- the shadowing registration ------------------------------------------
+#
+# A project-scoped entry wins over a user-scoped one inside that project, so an
+# old local registration would silently stay in charge — and the one on the
+# machine this was written on pointed at a snapshot that did not exist. Report
+# it rather than deleting it: another project's MCP config is the user's to
+# remove, and a wrong guess here is silent breakage somewhere else.
+#
+# Best-effort throughout. A missing or malformed claude.json means "nothing to
+# warn about", never a failed install.
+
+warn_about_shadowing() {
+  [[ -r "$CLAUDE_JSON" ]] || return 0
+  command -v super &>/dev/null || return 0
+
+  local shadowed
+  shadowed=$(super -f line -c '
+    unnest flatten(this.projects)
+    | where key[1] == "mcpServers" and key[2] == "lemmalog"
+    | values key[0]
+  ' "$CLAUDE_JSON" 2>/dev/null | sort -u) || return 0
+  [[ -n "$shadowed" ]] || return 0
+
+  echo
+  echo "Note: a project-scoped lemmalog registration already exists and will"
+  echo "take precedence over the user-scoped one inside these projects:"
+  while IFS= read -r project; do
+    [[ -n "$project" ]] && echo "  $project"
+  done <<< "$shadowed"
+  echo
+  echo "To let the global registration apply everywhere, remove it from that"
+  echo "project's directory:"
+  echo "  claude mcp remove lemmalog"
+}
+
+main() {
+  check_prereqs
+  fetch_source
+  build
+  register
+
+  echo
+  step "lemmalog installed"
+  echo "  engine:   $BIN"
+  echo "  store:    $SNAPSHOT"
+
+  warn_about_shadowing
+
+  echo
+  echo "MCP servers connect at session start, so restart Claude Code before the"
+  echo "lemmalog_* tools appear. Then /lemma-drain to work through the queue."
+}
+
+main "$@"
