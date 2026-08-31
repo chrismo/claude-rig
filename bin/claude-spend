@@ -14,6 +14,20 @@ export ASDF_SUPERDB_VERSION=0.3.0
 
 FIXTURE="${CLAUDE_RIG_SPEND_JSON:-}"
 ENDPOINT="${CLAUDE_RIG_SPEND_ENDPOINT:-https://api.anthropic.com/api/oauth/usage}"
+CACHE="${CLAUDE_RIG_SPEND_CACHE:-$HOME/.claude/cache/claude-spend.json}"
+TTL="${CLAUDE_RIG_SPEND_TTL:-300}"
+
+RAW=0
+BRIEF=0
+FRESH=0
+for arg in "$@"; do
+  case "$arg" in
+    --raw)   RAW=1 ;;
+    --brief) BRIEF=1 ;;
+    --fresh) FRESH=1 ;;
+    *) echo "claude-spend: unknown option $arg" >&2; exit 2 ;;
+  esac
+done
 
 command -v super >/dev/null || {
   echo "claude-spend: super (SuperDB) is not on PATH" >&2
@@ -49,9 +63,9 @@ values {spend: {enabled: false, percent: 0, used: NO_MONEY, limit: null}, ...thi
     used: coalesce(spend.used, NO_MONEY)
   }
 | where enabled == true and lim.amount_minor >= 0
-| values f"{percent}% used · "
+| values f"{percent}|"
     || money(used.amount_minor, used.exponent, used.currency)
-    || " / "
+    || "|"
     || money(lim.amount_minor, lim.exponent, lim.currency)
 SQL
 )
@@ -73,6 +87,27 @@ fetch() {
     --url "$ENDPOINT"
 }
 
+# The cache is global and shared: every pod renders a status line, and they
+# should make one request between them rather than one each. Written through a
+# temp file so a concurrent reader never sees a half-written payload.
+cached_json() {
+  local age json
+  if (( ! FRESH )) && [[ -s "$CACHE" ]]; then
+    age=$(( $(date +%s) - $(stat -f %m "$CACHE" 2>/dev/null || stat -c %Y "$CACHE") ))
+    if (( age < TTL )); then
+      cat "$CACHE"
+      return 0
+    fi
+  fi
+
+  json="$(fetch)" || return 1
+  [[ -n "$json" ]] || return 1
+
+  mkdir -p "$(dirname "$CACHE")" 2>/dev/null
+  printf '%s' "$json" > "$CACHE.$$" && mv -f "$CACHE.$$" "$CACHE"
+  printf '%s' "$json"
+}
+
 not_for_this_account() {
   cat <<'MSG'
 Nothing to report: usage credits are not enabled on this account.
@@ -86,16 +121,23 @@ MSG
 
 main() {
   local json line
-  json="$(fetch)" || { echo "claude-spend: could not read usage" >&2; exit 1; }
-  [[ -n "$json" ]] || { echo "claude-spend: empty response" >&2; exit 1; }
+  json="$(cached_json)" || { echo "claude-spend: could not read usage" >&2; exit 1; }
+
+  (( RAW )) && { printf '%s\n' "$json"; return 0; }
 
   line="$(printf '%s' "$json" | super -f line -i json -c "$REPORT_QUERY" -)" || {
     echo "claude-spend: could not read the response" >&2
     exit 1
   }
 
+  # --brief is the statusline's form: the raw row, or nothing at all.
+  (( BRIEF )) && { [[ -n "$line" ]] && printf '%s\n' "$line"; return 0; }
+
   [[ -n "$line" ]] || { not_for_this_account; exit 0; }
-  printf '%s\n' "$line"
+
+  local percent used limit
+  IFS='|' read -r percent used limit <<<"$line"
+  printf '%s%% used · %s / %s\n' "$percent" "$used" "$limit"
 }
 
 main "$@"

@@ -1,0 +1,64 @@
+#!/bin/bash
+# Segment: usage-credit spend, on the accounts that have any.
+#
+# 2.76 renders 5h/7d from the statusline payload, which costs nothing. Accounts
+# with usage credits are the ones the payload says nothing useful about, so this
+# asks the API — through bin/claude-spend, which caches globally for 5 minutes
+# so a machine full of pods makes one request between them rather than one each.
+#
+# Silent on any failure. A status line that breaks the prompt is worse than a
+# status line missing a segment.
+
+input="${CLAUDE_STATUS_INPUT:-/tmp/claude-status-input.json}"
+
+muted_green="\033[2;32m"
+muted_yellow="\033[2;33m"
+muted_red="\033[2;31m"
+color_reset="\033[2;37m"
+
+spend_bin="${CLAUDE_RIG_SPEND_BIN:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../bin" 2>/dev/null && pwd)/claude-spend}"
+[[ -x "$spend_bin" ]] || spend_bin=$(command -v claude-spend)
+[[ -n "$spend_bin" && -x "$spend_bin" ]] || exit 0
+
+row=$("$spend_bin" --brief 2>/dev/null) || exit 0
+
+if [[ -n "$row" ]]; then
+  IFS='|' read -r percent used limit <<<"$row"
+  [[ -n "$limit" ]] || exit 0
+
+  if   (( percent >= 90 )); then color="$muted_red"
+  elif (( percent >= 70 )); then color="$muted_yellow"
+  else                          color="$muted_green"
+  fi
+
+  echo -e "${color}credits ${percent}% ${used}/${limit}${color_reset}"
+  exit 0
+fi
+
+# No credits. If the payload also carries no rate_limits — the shape where 2.76
+# renders nothing — show the windows the API returned, so the line is not blank.
+have_limits=$(super -f line -c 'values {rate_limits: null, ...this} | where kind(rate_limits) == "record" | values "y"' "$input" 2>/dev/null)
+[[ -z "$have_limits" ]] || exit 0
+
+windows=$("$spend_bin" --raw 2>/dev/null | super -f line -i json -c '
+  values {five_hour: null, seven_day: null, ...this}
+  | values {
+      five: coalesce(cast(five_hour.utilization, <int64>), -1),
+      seven: coalesce(cast(seven_day.utilization, <int64>), -1)
+    }
+  | where five >= 0 or seven >= 0
+  | values f"{five}|{seven}"
+' - 2>/dev/null) || exit 0
+[[ -n "$windows" ]] || exit 0
+
+IFS='|' read -r five seven <<<"$windows"
+
+segments=""
+(( five  >= 0 )) && segments="5h ${five}%"
+if (( seven >= 0 )); then
+  [[ -n "$segments" ]] && segments+=" | "
+  segments+="7d ${seven}%"
+fi
+[[ -n "$segments" ]] || exit 0
+
+echo -e "${muted_green}${segments}${color_reset}"

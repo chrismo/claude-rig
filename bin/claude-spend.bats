@@ -14,7 +14,11 @@ S="$BATS_TEST_DIRNAME/claude-spend"
 
 setup() {
   export CLAUDE_RIG_SPEND_JSON="$BATS_TEST_TMPDIR/usage.json"
+  export CLAUDE_RIG_SPEND_CACHE="$BATS_TEST_TMPDIR/cache.json"
 }
+
+# Age a file past any plausible TTL.
+stale() { touch -t 200001010000 "$1"; }
 
 # The real payload from an individual Max plan, trimmed to the keys that matter.
 individual_plan() {
@@ -152,4 +156,57 @@ JSON
   run "$S"
   [ "$status" -ne 0 ]
   [[ "$output" == *"could not read"* ]]
+}
+
+
+# --- cache -------------------------------------------------------------------
+#
+# A lot of pods run at once, and every one of them renders a status line. The
+# cache is global and shared so they make one request between them, not one
+# each.
+
+@test "raw mode emits the payload for the statusline plugin to query" {
+  with_spend_limit 1234 5000 25
+  run "$S" --raw
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"amount_minor"'* ]]
+}
+
+@test "a fetch populates the cache" {
+  with_spend_limit 1234 5000 25
+  run "$S"
+  [ -s "$CLAUDE_RIG_SPEND_CACHE" ]
+}
+
+@test "a fresh cache is used instead of fetching again" {
+  echo '{"spend":{"used":{"amount_minor":9900,"currency":"USD","exponent":2},"limit":{"amount_minor":9900,"currency":"USD","exponent":2},"percent":99,"enabled":true}}' > "$CLAUDE_RIG_SPEND_CACHE"
+  with_spend_limit 1234 5000 25
+  run "$S"
+  [[ "$output" == *'$99.00'* ]]
+  [[ "$output" != *'$12.34'* ]]
+}
+
+@test "a stale cache is refetched" {
+  echo '{"spend":{"used":{"amount_minor":9900,"currency":"USD","exponent":2},"limit":{"amount_minor":9900,"currency":"USD","exponent":2},"percent":99,"enabled":true}}' > "$CLAUDE_RIG_SPEND_CACHE"
+  stale "$CLAUDE_RIG_SPEND_CACHE"
+  with_spend_limit 1234 5000 25
+  run "$S"
+  [[ "$output" == *'$12.34'* ]]
+}
+
+@test "--fresh ignores a fresh cache" {
+  echo '{"spend":{"used":{"amount_minor":9900,"currency":"USD","exponent":2},"limit":{"amount_minor":9900,"currency":"USD","exponent":2},"percent":99,"enabled":true}}' > "$CLAUDE_RIG_SPEND_CACHE"
+  with_spend_limit 1234 5000 25
+  run "$S" --fresh
+  [[ "$output" == *'$12.34'* ]]
+}
+
+@test "a failed fetch does not clobber a good cache" {
+  with_spend_limit 1234 5000 25
+  run "$S"
+  stale "$CLAUDE_RIG_SPEND_CACHE"
+  export CLAUDE_RIG_SPEND_JSON="$BATS_TEST_TMPDIR/gone.json"
+  run "$S"
+  [ "$status" -ne 0 ]
+  [ -s "$CLAUDE_RIG_SPEND_CACHE" ]
 }
