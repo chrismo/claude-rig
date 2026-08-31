@@ -92,7 +92,11 @@ assert_anchor() {
   assert_anchor 'digest("hex").slice(0,12)'
 }
 
-@test "A6: bare-name sends are still gated by pins" {
+# Anchor only. This asserts the pin mechanism exists — NOT that bare names are
+# gated by it. A6 stayed green across 2.1.226 → 2.1.251 while the addressing
+# rule itself changed underneath it, which is why the behavioural half is the
+# manual check in docs/internals-contract.md and not this test.
+@test "A6: the sendMessagePins mechanism still exists" {
   assert_anchor 'sendMessagePins'
 }
 

@@ -213,16 +213,19 @@ works in *their* environment rather than in a tool-call subshell.
 
 ```
 ListAgents                                   # name [ref] · kind · status · age
-SendMessage to: "api-worker [3ca88e]"        # ref needed the first time — see below
+SendMessage to: "api-worker"                 # bare name is enough when it is unique
 ```
 
-**The first message to a peer needs its ` [ref]`.** A bare name resolves on its
-own only for an agent in your own process — a subagent you spawned. For a
-separate session, the first bare-name send comes back as an ambiguity error
-listing the candidates *with their refs*: recoverable, but a wasted round trip.
-Send it once as `name [ref]` and that resolution is pinned for the rest of your
-session, after which the bare name reaches the same peer. So: `ListAgents`
-before the first message to a peer, not before every message.
+**A bare name is enough when it names exactly one live row.** Send `api-worker`
+and it delivers — no `ListAgents` first, no ref, no pin needed. The ` [ref]` is
+for when the bare name is *not* enough, and the error tells you when that is.
+
+What still comes back as a rejection: a name or prefix matching two or more live
+rows (the error lists the candidates with their refs), a prefix match that wants
+one confirmation before it commits, and a roster that could not be fully listed
+just now — the local, cloud or Remote Control halves each fail independently, so
+a send can be refused because the peer *might* exist somewhere unchecked. All of
+those name the ref to re-send with, so the recovery is always in the error.
 
 Two things still send you back to the roster. A ref you did not read from a
 listing or an error will not resolve. And if a name matches both a peer and

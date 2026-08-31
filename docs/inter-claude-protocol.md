@@ -341,19 +341,46 @@ reset to `{}` when the session's state is cleared. They are **in-memory and per
 session**: a pin one session holds does nothing for another, and a restart drops
 them.
 
-The resolver's tail:
+**This section was rewritten for 2.1.251. The rule changed.** What it said
+before — bare names never resolve for a peer, so the first send to any peer must
+carry its ref — was true and verified on 2.1.226. It is no longer true, and the
+[internals contract](internals-contract.md) caught it on the version bump.
+
+The resolver SendMessage goes through now returns a richer ambiguity:
+
+```js
+function D(e, s) { return {kind:"ambiguous", candidates: e.slice(0, be), total: e.length, matchedBy: s} }
+```
+
+`total` and `matchedBy` (`"name"` or `"prefix"`) are the new part, and they are
+what the rule now turns on. A target that names exactly one live row resolves to
+that row and sends. Ambiguity is reserved for cases that are actually ambiguous.
+
+The older resolver the previous version of this section quoted:
 
 ```js
 let o = r === void 0 ? [] : n.filter((a) => a.name === r), s = (o.length > 0 ? o : n)[0]
 if (s.where === "in-process") return {kind:"one", candidate:s}
-return {kind:"ambiguous"}
+return {kind:"ambiguous"}                       // ← everything not in-process
 ```
 
-Read plainly: a bare name resolves on its own **only** for an in-process agent —
-one you spawned. For a peer session on this machine, a bare name returns
-`ambiguous` even when exactly one candidate matches. That matches observation:
-sending to a bare peer name failed with an error that named the ref, and the
-same bare name worked afterwards.
+is **still in the binary** (around line 128496 of the extracted bundle) but is no
+longer on SendMessage's path. Grepping for it and reading it as current is the
+trap this section walked into; match on the tool's own error strings instead.
+
+A send is now refused when:
+
+- the name or prefix matches **two or more** live rows — the error lists the
+  candidates with their refs;
+- a **prefix** matches exactly one row and wants one confirmation before
+  committing (`degradedClass: "confirm_required"`);
+- part of the roster **could not be listed** — local, cloud and Remote Control
+  fail independently, so a unique local match can still be refused on the
+  grounds that the name might also exist in an unchecked half;
+- a pinned identity is now **claimed by a local session**, which the tool treats
+  as suspicious and surfaces rather than resolving.
+
+Every one of those names the ref to re-send with, so recovery is in the error.
 
 The pin is consulted in two places. On the **send** path it guards against a
 name that has quietly re-pointed at a different session:
@@ -381,16 +408,29 @@ That second guard is the interesting one: if the session you pinned has been
 renamed *and* some other agent has since taken the old name, the pin refuses to
 resolve rather than silently delivering to the wrong session.
 
-**VERIFIED.** Three sends to one peer, in order:
+**VERIFIED on 2.1.251.** Four sends, in order:
 
 | # | `to` | result |
 |---|---|---|
-| 1 | `claude-rig-one` (no pin yet) | rejected — ambiguity error naming the ref |
-| 2 | `claude-rig-one [2ee790]` | delivered, pin written |
-| 3 | `claude-rig-one` (bare again) | delivered |
+| 1 | `claude-rig-e1` — bare, no pin held | **delivered** |
+| 2 | `claude-rig-e` — prefix, pin now held | delivered |
+| 3 | `questor-` — prefix, two live rows | rejected, error named both refs |
+| 4 | `claude-rig-e1 [47e788]` — ref | delivered |
 
-So the rule is **ref once per peer per session, bare name thereafter** — and the
-rejection in step 1 costs nothing, since it never reaches the peer.
+So the rule is now **bare name whenever it is unique; the ref is for when the
+error asks for it**. Row 1 is the one that changed: on 2.1.226 the identical
+send was rejected.
+
+Two limits on that table, recorded rather than smoothed over. Row 2 is
+**confounded** — row 1 wrote a pin, so it does not establish that a unique
+prefix resolves on its own; row 3 is the clean evidence that the ambiguity gate
+still exists at all. And nothing here re-establishes what 2.1.226 did; that
+build's rejection in row 1 is taken from this document's own prior observation,
+which cannot be re-run.
+
+Row 1 was confirmed **from the receiving end** as well: a `success` tool result
+only proves the socket accepted the bytes, so the peer was asked, and reported
+both probes arriving in its model context in full.
 
 Worth knowing from the receiving end: the peer cannot tell which of these it
 got. Addressing is resolved entirely sender-side, so a bare-name send and a ref
