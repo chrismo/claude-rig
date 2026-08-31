@@ -55,16 +55,40 @@ resolve_repo() {
   basename -- "$root"
 }
 
-# How many facts does the store already hold that mention this repo? A count is
-# all a hook should offer: the point is to prove the store is not empty, not to
-# dump it. Reading it properly is Claude's job, through the MCP tools.
+# How many facts does the store already hold for this repo? A count is all a
+# hook should offer: the point is to prove the store is not empty, not to dump
+# it. Reading it properly is Claude's job, through the MCP tools.
+#
+# Attribution follows `in_repo`, not a literal name match. /lemma-backfill puts
+# the TOPIC on the left of a fact (`heredocs --because--> cascading-tool-denials`)
+# and ties it to a repo with a separate edge, so matching the repo name counted
+# 5 of 45 facts on a real run — which reads as "barely used" when the store is
+# fine. Must stay in step with bin/lemma-info, which reports the same number.
+#
+# Only OPEN facts count. A superseded fact is interval-closed rather than
+# deleted, and "on record" should mean what still holds — otherwise every
+# reversal inflates the count it was meant to correct.
 count_facts() {
   local repo="$1"
   [[ -r "$SNAPSHOT" ]] || { echo 0; return 0; }
 
   awk -F'\t' -v repo="$repo" '
-    $1 == "FACT" && $5 ~ ("(^| )s:" repo "( |$)") { n++ }
-    END { print n + 0 }
+    function argn(f, i,   a) { split(f, a, " "); return a[i] }
+    function sym(v) { sub(/^s:/, "", v); return v }
+    $1 == "FACT" && $2 == "edge" {
+      vt = argn($5, 5)
+      if (vt != "" && vt != "i:9223372036854775807") next   # superseded
+      subj = sym(argn($5, 1)); rel = sym(argn($5, 2)); obj = sym(argn($5, 3))
+      rows[++n] = subj SUBSEP obj
+      if (rel == "in_repo") repo_of[subj] = obj
+    }
+    END {
+      for (i = 1; i <= n; i++) {
+        split(rows[i], p, SUBSEP)
+        if (repo_of[p[1]] == repo || p[1] == repo || p[2] == repo) c++
+      }
+      print c + 0
+    }
   ' "$SNAPSHOT" 2>/dev/null || echo 0
 }
 

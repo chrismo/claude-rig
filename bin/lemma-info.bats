@@ -162,9 +162,12 @@ EOF
 @test "breaks facts down by repo, since one global store spans many" {
   engine_present
   registered
-  store_with "s:claude-rig s:ruled_out s:per-repo-stores" \
-             "s:claude-rig s:uses s:datalog" \
-             "s:questor s:uses s:ruby"
+  # in_repo is what makes a name a repo. Without it there is no way to tell
+  # `claude-rig` (a repo) from `heredocs` (a topic) — they are both just symbols.
+  new_store
+  edge lemmalog-store in_repo claude-rig
+  edge lemmalog-store ruled_out per-repo-stores
+  edge sharding in_repo questor
 
   run "$I"
   [[ "$output" == *"claude-rig"* ]]
@@ -225,4 +228,63 @@ EOF
 
   run "$I"
   [[ "$output" == *"restart"* || "$output" == *"session"* ]]
+}
+
+# --- repo attribution ----------------------------------------------------
+#
+# The store is global and keyed by repo, but /lemma-backfill puts the TOPIC on
+# the left of a fact (`heredocs --because--> cascading-tool-denials`) and ties it
+# to a repo with a separate `in_repo` edge. Counting only facts that literally
+# spell the repo name therefore misses almost everything: a real run asserted 45
+# facts and the brief reported 5.
+#
+# So attribution follows in_repo, and the label has to mean what it says.
+
+edge() { # subj rel obj [valid_to]
+  local vt="${4:-9223372036854775807}"
+  printf 'FACT\tedge\t0.9\tep1\ts:%s s:%s s:%s i:100 i:%s i:100\n' "$1" "$2" "$3" "$vt" \
+    >> "$CLAUDE_RIG_LEMMA_SNAPSHOT"
+}
+
+new_store() { printf 'LEMMALOG1\nNOW\t100\nRULES\t\n' > "$CLAUDE_RIG_LEMMA_SNAPSHOT"; }
+
+@test "attributes a fact to a repo through its in_repo edge, not the literal name" {
+  engine_present; registered; new_store
+  edge heredocs in_repo claude-rig
+  edge heredocs because cascading-tool-denials
+
+  run "$I"
+  # both facts belong to claude-rig: one names it, one is a topic tied to it
+  [[ "$output" == *"2"*"claude-rig"* ]]
+}
+
+@test "keeps repos separate when the store spans several" {
+  engine_present; registered; new_store
+  edge heredocs in_repo claude-rig
+  edge heredocs because cascading-tool-denials
+  edge sharding in_repo questor
+
+  run "$I"
+  [[ "$output" == *"claude-rig"* ]]
+  [[ "$output" == *"questor"* ]]
+}
+
+@test "reports facts belonging to no repo rather than silently dropping them" {
+  engine_present; registered; new_store
+  edge orphan uses something
+
+  run "$I"
+  [[ "$output" == *"no repo"* || "$output" == *"unattributed"* ]]
+}
+
+@test "excludes superseded facts — on record means still true" {
+  engine_present; registered; new_store
+  edge commit-message-file in_repo claude-rig
+  edge commit-message-file location repo-level-tmp 200   # interval closed
+  edge commit-message-file location dot-claude-tmp       # open
+
+  run "$I"
+  # in_repo + the open location = 2, not 3
+  [[ "$output" == *"2"*"claude-rig"* ]]
+  [[ "$output" != *"3  claude-rig"* ]]
 }

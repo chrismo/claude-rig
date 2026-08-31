@@ -116,8 +116,16 @@ report_store() {
     return 0
   fi
 
+  # Open facts only — a superseded fact is interval-closed, not deleted, and
+  # "on record" should mean what still holds.
   local total
-  total=$(awk -F'\t' '$1 == "FACT" { n++ } END { print n + 0 }' "$SNAPSHOT" 2>/dev/null) || total=0
+  total=$(awk -F'\t' '
+    $1 == "FACT" && $2 == "edge" {
+      split($5, a, " ")
+      if (a[5] == "" || a[5] == "i:9223372036854775807") n++
+    }
+    END { print n + 0 }
+  ' "$SNAPSHOT" 2>/dev/null) || total=0
   [[ -n "$total" ]] || total=0
 
   if [[ "$total" -eq 0 ]] 2>/dev/null; then
@@ -129,15 +137,39 @@ report_store() {
 
   # One global store spans every repo, so an undifferentiated total hides the
   # thing you usually want: how much of it is about where you are standing.
-  # The repo is the first typed arg of the edge, per skills/lemma-drain.
+  #
+  # Attribution follows `in_repo`, NOT the literal repo name. /lemma-backfill
+  # puts the topic on the left of a fact (`heredocs --because--> ...`) and ties
+  # it to a repo with a separate edge, so counting name matches misses nearly
+  # everything — a real run asserted 45 facts and this reported 5.
+  #
+  # Only OPEN facts count. A superseded fact is interval-closed rather than
+  # deleted (valid_to stops being i:MAX), and "on record" should mean what still
+  # holds, or every reversal inflates the number it was supposed to correct.
   awk -F'\t' '
-    $1 == "FACT" {
-      split($5, a, " ")
-      s = a[1]
-      sub(/^s:/, "", s)
-      if (s != "") n[s]++
+    function argn(f, i,   a) { split(f, a, " "); return a[i] }
+    function sym(v) { sub(/^s:/, "", v); return v }
+    function is_open(f,   vt) {
+      vt = argn(f, 5)
+      # rows written without an interval (older/hand-made) count as open
+      return (vt == "" || vt == "i:9223372036854775807")
     }
-    END { for (r in n) printf "              %6d  %s\n", n[r], r }
+    $1 == "FACT" && $2 == "edge" && is_open($5) {
+      subj = sym(argn($5, 1)); rel = sym(argn($5, 2)); obj = sym(argn($5, 3))
+      rows[++n] = subj SUBSEP rel SUBSEP obj
+      if (rel == "in_repo") { repo_of[subj] = obj; is_repo[obj] = 1 }
+    }
+    END {
+      for (i = 1; i <= n; i++) {
+        split(rows[i], p, SUBSEP)
+        r = repo_of[p[1]]                       # topic tied to a repo
+        if (r == "" && p[1] in is_repo) r = p[1] # the repo itself on the left
+        if (r == "" && p[3] in is_repo) r = p[3] # ...or on the right
+        if (r == "") { unattributed++ } else { cnt[r]++ }
+      }
+      for (r in cnt) printf "              %6d  %s\n", cnt[r], r
+      if (unattributed > 0) printf "              %6d  (no repo)\n", unattributed
+    }
   ' "$SNAPSHOT" 2>/dev/null | sort -rn | head -10
 }
 

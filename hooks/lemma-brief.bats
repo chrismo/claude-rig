@@ -143,3 +143,50 @@ EOF
   run "$HOOK"
   [ "$status" -eq 0 ]
 }
+
+# --- repo attribution ----------------------------------------------------
+#
+# The count must agree with bin/lemma-info, and for the same reason it exists at
+# all: /lemma-backfill puts the TOPIC on the left of a fact and ties it to a repo
+# with a separate in_repo edge. Matching the repo name literally counted 5 of 45
+# facts on a real run — a number that reads as "the store is barely used" when
+# the store is fine.
+
+b_edge() { # subj rel obj [valid_to]
+  local vt="${4:-9223372036854775807}"
+  printf 'FACT\tedge\t0.9\tep1\ts:%s s:%s s:%s i:100 i:%s i:100\n' "$1" "$2" "$3" "$vt" \
+    >> "$CLAUDE_RIG_LEMMA_SNAPSHOT"
+}
+b_new_store() { printf 'LEMMALOG1\nNOW\t100\nRULES\t\n' > "$CLAUDE_RIG_LEMMA_SNAPSHOT"; }
+
+@test "counts topic facts tied to the repo by in_repo, not just literal names" {
+  queue claude-rig abc1234 "first"
+  b_new_store
+  b_edge heredocs in_repo claude-rig
+  b_edge heredocs because cascading-tool-denials
+
+  run "$HOOK"
+  [[ "$output" == *"Facts on record for claude-rig: 2."* ]]
+}
+
+@test "does not count another repo's facts" {
+  queue claude-rig abc1234 "first"
+  b_new_store
+  b_edge heredocs in_repo claude-rig
+  b_edge sharding in_repo questor
+  b_edge sharding uses captain
+
+  run "$HOOK"
+  [[ "$output" == *"Facts on record for claude-rig: 1."* ]]
+}
+
+@test "excludes superseded facts from the count" {
+  queue claude-rig abc1234 "first"
+  b_new_store
+  b_edge commit-message-file in_repo claude-rig
+  b_edge commit-message-file location repo-level-tmp 200
+  b_edge commit-message-file location dot-claude-tmp
+
+  run "$HOOK"
+  [[ "$output" == *"Facts on record for claude-rig: 2."* ]]
+}
