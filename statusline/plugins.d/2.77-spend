@@ -31,7 +31,7 @@ if [[ -n "$row" ]]; then
   else                          color="$muted_green"
   fi
 
-  echo -e "${color}credits ${percent}% ${used}/${limit}${color_reset}"
+  echo -e "${color}${percent}% ${used}/${limit}${color_reset}"
   exit 0
 fi
 

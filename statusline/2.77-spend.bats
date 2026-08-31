@@ -2,7 +2,7 @@
 
 # Test suite for the 2.77-spend plugin.
 #
-# Layout:  credits <pct>% <used>/<limit>
+# Layout:  <pct>% <used>/<limit>
 #
 # Only accounts with usage credits have anything here, so on an individual plan
 # this segment is absent entirely and 2.76 keeps showing 5h/7d from the payload.
@@ -47,8 +47,9 @@ JSON
   credits 1234 5000 25
   run "$PLUGIN"
   [ "$status" -eq 0 ]
-  [[ "$output" == *'$12.34'* ]]
-  [[ "$output" == *'$50.00'* ]]
+  [[ "$output" == *'$12'* ]]
+  [[ "$output" == *'$50'* ]]
+  [[ "$output" != *"credits"* ]]
   [[ "$output" == *"25%"* ]]
 }
 
@@ -86,9 +87,11 @@ JSON
   [[ "$output" == *"7d 34%"* ]]
 }
 
+# PATH is stripped too: the plugin deliberately falls back to a claude-spend on
+# PATH (install.sh symlinks it there), so overriding the path alone finds it.
 @test "a missing claude-spend is silent, not a broken prompt" {
   credits 1234 5000 25
-  CLAUDE_RIG_SPEND_BIN="$BATS_TEST_TMPDIR/nope" run "$PLUGIN"
+  CLAUDE_RIG_SPEND_BIN="$BATS_TEST_TMPDIR/nope" PATH="/usr/bin:/bin" run "$PLUGIN"
   [ "$status" -eq 0 ]
   [ -z "$output" ]
 }

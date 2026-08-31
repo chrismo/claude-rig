@@ -42,15 +42,14 @@ TOKEN_QUERY='values {t: claudeAiOauth.accessToken} | where not is_error(t) | val
 # No rows out means no credit spend to report. The nulls are coalesced to
 # NO_MONEY before anything reaches into them, because spend.limit.amount_minor
 # will not compile when limit is null; the -1 is so a real limit of 0 still
-# counts. Cents are integer modulo padded by slicing, not floats — SuperDB has
-# no printf verb.
+# counts. Rounding is integer arithmetic, not floats — SuperDB has
+# no printf verb. Rounded to whole units — pennies do not matter at this
+# scale, and the status line has no room for them.
 REPORT_QUERY=$(cat <<'SQL'
 fn unit(e): (cast(pow(10, e), <int64>))
 fn money(m, e, c): (
   (c == "USD" ? "$" : "")
-  || f"{cast(m / unit(e), <int64>)}"
-  || "."
-  || f"{unit(e) + m % unit(e)}"[-e:]
+  || f"{cast((m + unit(e) / 2) / unit(e), <int64>)}"
   || (c == "USD" ? "" : f" {c}")
 )
 const NO_MONEY = {amount_minor: -1, exponent: 2, currency: "USD"}

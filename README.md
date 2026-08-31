@@ -72,7 +72,6 @@ Both lines are plugin-driven — assembled from executable scripts in `statuslin
 | `2.50-cost` | session cost + wall/API duration |
 | `2.60-lines` | lines added/removed |
 | `2.70-context` | context window usage % |
-| `2.72-autocompact` | current `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` threshold |
 | `2.75-rate-limits` | 5h / 7d rate-limit usage + reset |
 
 Drop any executable into `plugins.d/` to add a segment. The script receives `CLAUDE_STATUS_INPUT` env var pointing to the session JSON. Output a string on stdout; empty output = segment skipped.
@@ -165,13 +164,12 @@ The installer:
 2. Installs Claude hooks for tab-status (Ghostty tab colors)
 3. Installs the `PreToolUse` hook to enforce dedicated tools and block compound Bash commands
 4. Installs `SessionStart` hooks to auto-enable sandbox on startup, resume, and clear
-5. Sets `env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=16` (preserves any existing override)
-6. Merges `permissions/{allow,deny}.sup` into `~/.claude/settings.json`
-7. Merges `sandbox/allow-write.sup` into the sandbox allowWrite list
-8. Symlinks skills into `~/.claude/skills/`
-9. Symlinks agents into `~/.claude/agents/`
-10. Symlinks rules into `~/.claude/rules/`
-11. Symlinks `cc-audit-rules/` into `~/.cc-audit/rules` when any `*.json` rules are present
+5. Merges `permissions/{allow,deny}.sup` into `~/.claude/settings.json`
+6. Merges `sandbox/allow-write.sup` into the sandbox allowWrite list
+7. Symlinks skills into `~/.claude/skills/`
+8. Symlinks agents into `~/.claude/agents/`
+9. Symlinks rules into `~/.claude/rules/`
+10. Symlinks `cc-audit-rules/` into `~/.cc-audit/rules` when any `*.json` rules are present
 
 For tab-status to update your Ghostty tab titles, source `tab-status/set-title.sh` from your `.zshrc` and ensure `tab-status` is on your PATH (the installer links it to `~/.local/bin/`).
 

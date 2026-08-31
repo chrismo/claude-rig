@@ -88,15 +88,22 @@ JSON
   run "$S"
   [ "$status" -eq 0 ]
   [[ "$output" == *"25%"* ]]
-  [[ "$output" == *'$12.34'* ]]
-  [[ "$output" == *'$50.00'* ]]
+  [[ "$output" == *'$12'* ]]
+  [[ "$output" == *'$50'* ]]
 }
 
-@test "credits enabled: whole dollars keep both decimal places" {
-  with_spend_limit 500 10000 5
+@test "cents round to the nearest dollar, half up" {
+  with_spend_limit 1250 10000 5
   run "$S"
-  [[ "$output" == *'$5.00'* ]]
-  [[ "$output" == *'$100.00'* ]]
+  [[ "$output" == *'$13'* ]]
+  [[ "$output" == *'$100'* ]]
+  [[ "$output" != *"."* ]]
+}
+
+@test "cents round down below the half" {
+  with_spend_limit 1249 10000 5
+  run "$S"
+  [[ "$output" == *'$12'* ]]
 }
 
 @test "non-USD currency keeps its code instead of a dollar sign" {
@@ -112,7 +119,7 @@ JSON
 JSON
   run "$S"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"12.34 EUR"* ]]
+  [[ "$output" == *"12 EUR"* ]]
   [[ "$output" != *'$'* ]]
 }
 
@@ -120,7 +127,7 @@ JSON
   with_spend_limit 0 0 0
   run "$S"
   [ "$status" -eq 0 ]
-  [[ "$output" == *'$0.00 / $0.00'* ]]
+  [[ "$output" == *'$0 / $0'* ]]
 }
 
 @test "fetch failure is an error, and names the file" {
@@ -148,7 +155,7 @@ JSON
   with_spend_limit 1234 5000 25
   ASDF_SUPERDB_VERSION="0.0.0-nonexistent" run "$S"
   [ "$status" -eq 0 ]
-  [[ "$output" == *'$12.34'* ]]
+  [[ "$output" == *'$12'* ]]
 }
 
 @test "malformed response is an error, not a parser spew" {
@@ -182,8 +189,8 @@ JSON
   echo '{"spend":{"used":{"amount_minor":9900,"currency":"USD","exponent":2},"limit":{"amount_minor":9900,"currency":"USD","exponent":2},"percent":99,"enabled":true}}' > "$CLAUDE_RIG_SPEND_CACHE"
   with_spend_limit 1234 5000 25
   run "$S"
-  [[ "$output" == *'$99.00'* ]]
-  [[ "$output" != *'$12.34'* ]]
+  [[ "$output" == *'$99'* ]]
+  [[ "$output" != *'$12'* ]]
 }
 
 @test "a stale cache is refetched" {
@@ -191,14 +198,14 @@ JSON
   stale "$CLAUDE_RIG_SPEND_CACHE"
   with_spend_limit 1234 5000 25
   run "$S"
-  [[ "$output" == *'$12.34'* ]]
+  [[ "$output" == *'$12'* ]]
 }
 
 @test "--fresh ignores a fresh cache" {
   echo '{"spend":{"used":{"amount_minor":9900,"currency":"USD","exponent":2},"limit":{"amount_minor":9900,"currency":"USD","exponent":2},"percent":99,"enabled":true}}' > "$CLAUDE_RIG_SPEND_CACHE"
   with_spend_limit 1234 5000 25
   run "$S" --fresh
-  [[ "$output" == *'$12.34'* ]]
+  [[ "$output" == *'$12'* ]]
 }
 
 @test "a failed fetch does not clobber a good cache" {

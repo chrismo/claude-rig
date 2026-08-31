@@ -589,34 +589,34 @@ EOF
 
 # ── Env vars ──────────────────────────────────────────────────────────────────
 
-@test "env: fresh install sets CLAUDE_AUTOCOMPACT_PCT_OVERRIDE to 16" {
+@test "env: fresh install does not set CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" {
   run_installer
   [ "$status" -eq 0 ]
-  local val
-  val=$(settings_get 'this.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE')
-  [ "$val" = "16" ]
+  ! grep -q 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE' "$CLAUDE_DIR/settings.json"
 }
 
-@test "env: existing CLAUDE_AUTOCOMPACT_PCT_OVERRIDE is preserved" {
+# Removed, not merely left unmanaged: the var still changes when Claude Code
+# auto-compacts, so a value left behind in settings.json would go on acting on
+# every machine that ever ran the old installer.
+@test "env: an existing CLAUDE_AUTOCOMPACT_PCT_OVERRIDE is removed" {
   cat > "$CLAUDE_DIR/settings.json" <<'EOF'
 {
   "env": {
-    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "25"
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "64"
   }
 }
 EOF
   run_installer
   [ "$status" -eq 0 ]
-  local val
-  val=$(settings_get 'this.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE')
-  [ "$val" = "25" ]
+  ! grep -q 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE' "$CLAUDE_DIR/settings.json"
 }
 
 @test "env: unrelated env keys are preserved" {
   cat > "$CLAUDE_DIR/settings.json" <<'EOF'
 {
   "env": {
-    "CLAUDE_CODE_DISABLE_TERMINAL_TITLE": "1"
+    "CLAUDE_CODE_DISABLE_TERMINAL_TITLE": "1",
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "64"
   }
 }
 EOF
@@ -625,10 +625,8 @@ EOF
   local val
   val=$(settings_get 'this.env.CLAUDE_CODE_DISABLE_TERMINAL_TITLE')
   [ "$val" = "1" ]
-  local ac
-  ac=$(settings_get 'this.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE')
-  [ "$ac" = "16" ]
 }
+
 
 # ── Existing user settings ────────────────────────────────────────────────────
 
