@@ -27,3 +27,22 @@ PATH="/opt/homebrew/opt/bash/bin:$PATH" bats bin/ticket-sort.bats
 ```
 
 `bats` is `#!/usr/bin/env bash` and the suite sources the script, so a plain `bats` run picks up macOS 3.2 and every test fails at `source`. The script itself re-execs under a newer bash when *run*, so `ticket-sort` works normally from the shell — it's only the sourcing test suite that needs this.
+
+## The lemmalog loop is opt-in
+
+`hooks/lemma-commit.sh` (queues commits) and `hooks/lemma-brief.sh` (SessionStart
+report) are installed by `install.sh` but **do nothing unless a marker exists**:
+
+```bash
+touch ~/.claude/lemmalog/enabled    # on
+rm    ~/.claude/lemmalog/enabled    # off
+```
+
+`CLAUDE_RIG_LEMMA_ENABLED=0` or `=1` overrides the marker for one session.
+`bin/lemma-info` reports which state you are in, plus engine, MCP registration,
+store size and queue depth — it works with nothing installed at all.
+
+Off is the default because this repo is deployed to several machines and not all
+of them want a hook queueing every commit. The engine (`bin/lemma-install`) is a
+separate opt-in again: it needs a Rust toolchain and a network clone, so
+`install.sh` never touches it.

@@ -24,11 +24,29 @@
 set -uo pipefail
 
 QUEUE="${CLAUDE_RIG_LEMMA_QUEUE:-$HOME/.claude/lemmalog/pending.tsv}"
+MARKER="${CLAUDE_RIG_LEMMA_MARKER:-$HOME/.claude/lemmalog/enabled}"
+
 # One global store, keyed by repo — see skills/lemma-drain/SKILL.md. Must match
 # the default in bin/lemma-install, which is what tells the MCP server where to
 # write; a disagreement fails silently, with the store filling up correctly
 # while this brief reports it empty forever. bin/lemma-install.bats pins them.
 SNAPSHOT="${CLAUDE_RIG_LEMMA_SNAPSHOT:-$HOME/.claude/lemmalog/store.snapshot}"
+
+# The loop ships OFF; opting in is `touch ~/.claude/lemmalog/enabled`. See the
+# long note in hooks/lemma-commit.sh for why this is a gate and not an early
+# exit in the body — in short, a disabled hook whose suite still "passes" is
+# worse than no suite.
+#
+# It matters more here than there, because this is the half that SPEAKS. On a
+# machine that never opted in, a SessionStart nag about a queue nobody is
+# draining is exactly how a hook gets disabled for good.
+lemma_enabled() {
+  case "${CLAUDE_RIG_LEMMA_ENABLED:-}" in
+    1) return 0 ;;
+    0) return 1 ;;
+  esac
+  [[ -e "$MARKER" ]]
+}
 
 # Which repo is this session in? SessionStart delivers a JSON payload on stdin
 # carrying `cwd`, but reading it is best-effort: if stdin is closed or the
@@ -93,6 +111,8 @@ count_facts() {
 }
 
 main() {
+  lemma_enabled || exit 0
+
   local repo
   repo=$(resolve_repo) || exit 0
   [[ -n "$repo" ]] || exit 0

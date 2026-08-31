@@ -19,6 +19,9 @@ HOOK="$BATS_TEST_DIRNAME/lemma-brief.sh"
 
 setup() {
   export CLAUDE_RIG_LEMMA_QUEUE="$BATS_TEST_TMPDIR/pending.tsv"
+  # The loop ships OFF (see "the enable gate" below). On for the suite, so every
+  # test here goes on exercising the real hook rather than the gate.
+  export CLAUDE_RIG_LEMMA_ENABLED=1
   export CLAUDE_RIG_LEMMA_SNAPSHOT="$BATS_TEST_TMPDIR/store.snapshot"
   # A real repo: the hook names the repo from `git rev-parse --show-toplevel`,
   # matching how lemma-commit.sh names it. A bare directory would resolve to
@@ -189,4 +192,30 @@ b_new_store() { printf 'LEMMALOG1\nNOW\t100\nRULES\t\n' > "$CLAUDE_RIG_LEMMA_SNA
 
   run "$HOOK"
   [[ "$output" == *"Facts on record for claude-rig: 2."* ]]
+}
+
+# --- the enable gate -----------------------------------------------------
+#
+# Same gate as hooks/lemma-commit.sh, and it matters more here: the brief is the
+# half that SPEAKS. On a machine that never opted in, a SessionStart nag about a
+# queue nobody is draining is exactly how a hook gets disabled for good.
+
+@test "silent when the enable marker is absent, even with a full queue" {
+  export CLAUDE_RIG_LEMMA_ENABLED=""
+  export CLAUDE_RIG_LEMMA_MARKER="$BATS_TEST_TMPDIR/absent"
+  queue claude-rig abc1234 "first"
+
+  run "$HOOK"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "speaks when the marker file exists" {
+  export CLAUDE_RIG_LEMMA_ENABLED=""
+  export CLAUDE_RIG_LEMMA_MARKER="$BATS_TEST_TMPDIR/on"
+  : > "$CLAUDE_RIG_LEMMA_MARKER"
+  queue claude-rig abc1234 "first"
+
+  run "$HOOK"
+  [[ "$output" == *"1 commit pending"* ]]
 }

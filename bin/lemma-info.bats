@@ -288,3 +288,46 @@ new_store() { printf 'LEMMALOG1\nNOW\t100\nRULES\t\n' > "$CLAUDE_RIG_LEMMA_SNAPS
   [[ "$output" == *"2"*"claude-rig"* ]]
   [[ "$output" != *"3  claude-rig"* ]]
 }
+
+# --- the enable gate -----------------------------------------------------
+#
+# The hooks ship OFF, gated on ~/.claude/lemmalog/enabled. That state has to be
+# visible here or the rest of this report misleads: "8 commits pending" reads as
+# a live loop when in fact nothing more will ever be queued.
+
+@test "reports the hooks as off when the marker is absent" {
+  engine_present; registered
+  export CLAUDE_RIG_LEMMA_MARKER="$BATS_TEST_TMPDIR/absent"
+
+  run "$I"
+  [[ "$output" == *"hooks"* ]]
+  [[ "$output" == *"off"* || "$output" == *"disabled"* ]]
+}
+
+@test "names the one-liner that turns them on" {
+  engine_present; registered
+  export CLAUDE_RIG_LEMMA_MARKER="$BATS_TEST_TMPDIR/absent"
+
+  run "$I"
+  [[ "$output" == *"touch"* ]]
+}
+
+@test "reports the hooks as on when the marker exists" {
+  engine_present; registered
+  export CLAUDE_RIG_LEMMA_MARKER="$BATS_TEST_TMPDIR/on"
+  : > "$CLAUDE_RIG_LEMMA_MARKER"
+
+  run "$I"
+  [[ "$output" == *"hooks"* ]]
+  [[ "$output" != *"touch"* ]]
+}
+
+@test "says a pending queue is frozen while the hooks are off" {
+  engine_present; registered
+  export CLAUDE_RIG_LEMMA_MARKER="$BATS_TEST_TMPDIR/absent"
+  queue claude-rig aaa1111 "first"
+
+  run "$I"
+  # the queue is real and drainable; it just will not grow
+  [[ "$output" == *"1 commits pending"* || "$output" == *"1 commit"* ]]
+}

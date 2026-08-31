@@ -35,8 +35,31 @@ set -uo pipefail
 
 REPO_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 QUEUE_CMD="${CLAUDE_RIG_LEMMA_QUEUE_CMD:-$REPO_DIR/bin/lemma-queue}"
+MARKER="${CLAUDE_RIG_LEMMA_MARKER:-$HOME/.claude/lemmalog/enabled}"
+
+# The loop ships OFF. claude-rig is deployed to several machines and not all of
+# them want a hook queueing every commit, so opting in is a per-machine `touch`
+# rather than a config edit — a clone gets the hooks and they do nothing.
+#
+# A gate, NOT an early exit inside the body. abd6962 disabled a hook that way
+# and left 67 tests exercising unreachable code, 22 of them passing vacuously;
+# ee9ffa8 had to replace the suite, recording that "a suite that cannot fail for
+# the right reason is worse than none". Gating at the top keeps every existing
+# test live — the suite sets CLAUDE_RIG_LEMMA_ENABLED=1 and tests real behaviour.
+#
+#   enable:  touch ~/.claude/lemmalog/enabled
+#   disable: rm   ~/.claude/lemmalog/enabled
+lemma_enabled() {
+  case "${CLAUDE_RIG_LEMMA_ENABLED:-}" in
+    1) return 0 ;;
+    0) return 1 ;;
+  esac
+  [[ -e "$MARKER" ]]
+}
 
 main() {
+  lemma_enabled || exit 0
+
   local input
   input=$(cat) || exit 0
   [[ -n "$input" ]] || exit 0

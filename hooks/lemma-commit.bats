@@ -25,6 +25,9 @@ HOOK="$BATS_TEST_DIRNAME/lemma-commit.sh"
 
 setup() {
   export CLAUDE_RIG_LEMMA_QUEUE="$BATS_TEST_TMPDIR/pending.tsv"
+  # The loop ships OFF (see "the enable gate" below). Turn it on for the suite
+  # so every test here goes on exercising the real hook rather than the gate.
+  export CLAUDE_RIG_LEMMA_ENABLED=1
 
   # A real repo with one real commit, so `git log -1` has something to read.
   REPO="$BATS_TEST_TMPDIR/demo-repo"
@@ -134,4 +137,44 @@ fire() {
 @test "exits 0 when the cwd does not exist" {
   fire 'git commit -m wip' "$BATS_TEST_TMPDIR/gone"
   [ "$status" -eq 0 ]
+}
+
+# --- the enable gate -----------------------------------------------------
+#
+# The loop is OFF unless ~/.claude/lemmalog/enabled exists. A clone of
+# claude-rig on another machine gets the hooks and does nothing with them until
+# someone opts in — the right default for a repo deployed to several machines
+# with different appetites for automation.
+#
+# Gated rather than short-circuited with an early exit, deliberately. The last
+# hook here disabled that way (abd6962) left 67 tests exercising unreachable
+# code, 22 of which passed vacuously — "a suite that cannot fail for the right
+# reason is worse than none" (ee9ffa8). A gate keeps every test above live: the
+# suite turns it on explicitly and goes on testing the real behaviour.
+
+@test "queues nothing when the enable marker is absent" {
+  export CLAUDE_RIG_LEMMA_ENABLED=""
+  export CLAUDE_RIG_LEMMA_MARKER="$BATS_TEST_TMPDIR/absent"
+
+  fire "git commit -m x"
+  [ "$status" -eq 0 ]
+  [ ! -s "$CLAUDE_RIG_LEMMA_QUEUE" ]
+}
+
+@test "queues when the marker file exists" {
+  export CLAUDE_RIG_LEMMA_ENABLED=""
+  export CLAUDE_RIG_LEMMA_MARKER="$BATS_TEST_TMPDIR/on"
+  : > "$CLAUDE_RIG_LEMMA_MARKER"
+
+  fire "git commit -m x"
+  [ -s "$CLAUDE_RIG_LEMMA_QUEUE" ]
+}
+
+@test "an explicit env 0 beats the marker, so one session can opt out" {
+  export CLAUDE_RIG_LEMMA_ENABLED=0
+  export CLAUDE_RIG_LEMMA_MARKER="$BATS_TEST_TMPDIR/on"
+  : > "$CLAUDE_RIG_LEMMA_MARKER"
+
+  fire "git commit -m x"
+  [ ! -s "$CLAUDE_RIG_LEMMA_QUEUE" ]
 }

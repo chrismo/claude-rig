@@ -30,6 +30,7 @@ QUEUE="${CLAUDE_RIG_LEMMA_QUEUE:-$HOME/.claude/lemmalog/pending.tsv}"
 SNAPSHOT="${CLAUDE_RIG_LEMMA_SNAPSHOT:-$HOME/.claude/lemmalog/store.snapshot}"
 CLAUDE_JSON="${CLAUDE_RIG_CLAUDE_JSON:-$HOME/.claude.json}"
 SRC="${LEMMALOG_SRC:-$HOME/modev/lemmalog}"
+MARKER="${CLAUDE_RIG_LEMMA_MARKER:-$HOME/.claude/lemmalog/enabled}"
 
 BIN="$SRC/target/release/lemmalog-mcp"
 
@@ -101,6 +102,22 @@ report_registration() {
       echo "              ! project-scoped entry shadows it in $project"
     done <<< "$shadowed"
     echo "                (cd there and: claude mcp remove lemmalog)"
+  fi
+}
+
+# --- the enable gate -----------------------------------------------------
+#
+# The hooks ship OFF, gated on a marker file. That state has to be visible here
+# or the rest of this report misleads: "8 commits pending" reads as a live loop
+# when nothing more will ever be queued. The queue and store stay perfectly
+# usable while off — the hooks are what stop, not the tools.
+
+report_hooks() {
+  if [[ -e "$MARKER" ]]; then
+    echo "  hooks       $OK on — queueing commits ($MARKER)"
+  else
+    echo "  hooks       $NO off — no commits will be queued"
+    echo "              turn on:  touch $MARKER"
   fi
 }
 
@@ -200,6 +217,7 @@ main() {
   echo
   report_engine
   report_registration
+  report_hooks
   report_store
   report_queue
   echo
