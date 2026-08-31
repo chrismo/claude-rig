@@ -74,9 +74,9 @@ message is fully explained by its own diff, there is no fact in it.
   repo, queue depth. The logic lives in `bin/lemma-info`, a script, so it still
   answers when the `lemmalog_*` tools are not connected — which is when you most
   need it; the skill is a thin wrapper so it is reachable as a slash command too.
-- `/lemma-init` — reaches backwards into git history to seed a cold store, once
-  per repo. This skill only ever sees commits made after the hook was installed;
-  a store seeded by neither is empty for months, which is how stores die.
+- `/lemma-backfill` — reaches backwards into git history, scoped to a path or
+  subsystem. This skill only ever sees commits made after the hook was installed;
+  without a backfill the store is empty for months, which is how stores die.
 
 ## If the tools are missing
 

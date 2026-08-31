@@ -25,7 +25,7 @@ A skill cannot help you there, and neither can the tools. The script works with
 nothing installed at all and always exits 0.
 
 This wrapper exists so the answer is also reachable as `/lemma-info`, next to
-`/lemma-drain` and `/lemma-init`.
+`/lemma-drain` and `/lemma-backfill`.
 
 ## After showing it
 
@@ -38,8 +38,9 @@ narrate every line — chrismo can see the output.
 - **a project-scoped entry shadows the global one** → it wins inside that
   project and points wherever it was set, likely at a store nothing writes to.
   `cd` there and `claude mcp remove lemmalog`.
-- **store empty, repo has history** → `/lemma-init`, once per repo. An empty
-  store is one with no reason to query it, and therefore none to write to.
+- **store empty, repo has history** → `/lemma-backfill`. An empty store is one
+  with no reason to query it, and therefore none to write to. Suggest scoping it
+  to whatever chrismo is about to work on rather than sweeping the whole repo.
 - **commits pending** → `/lemma-drain`. Most will establish nothing; that is
   expected, and the count dropped is the useful half of the report.
 - **everything healthy and the store has facts** → say so in one line and stop.
