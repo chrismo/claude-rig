@@ -53,11 +53,22 @@ message is fully explained by its own diff, there is no fact in it.
    per line. **The repo is a first-class dimension** — this is one global store,
    so a fact that does not name its repo is unreachable later:
 
-       claude-rig --ruled_out--> per-repo-lemmalog-stores
-       per-repo-lemmalog-stores --because--> "LEMMALOG_MCP_PATH is read once at startup"
+       lemmalog-store --ruled_out--> per-repo-stores
+       per-repo-stores --because--> mcp-path-read-once-at-startup
+       lemmalog-store --in_repo--> claude-rig
+       lemmalog-store --located--> claude-rig-61fd789
 
-   Anchor provenance to the commit with `located(Entity, "repo@sha")` so the
-   proof tree leads back to something readable. Tag inferences `[0.4]`–`[0.7]`;
+   Note the subject is the *topic*, not the repo. Putting the repo on the left of
+   every fact collides: `ruled_out` is not exclusive, so a second
+   `claude-rig --ruled_out--> ...` escalates against the first.
+
+   Anchor provenance with `<entity> --located--> <repo>-<sha>` so the proof tree
+   leads back to something readable. **Not `repo@sha`** — `observe` validates
+   entity tokens (max 60 chars, max 8 words, only letters, digits, `_`, `-`, `'`
+   and spaces) and silently drops what fails, so an `@` means the provenance you
+   think you wrote does not exist. Reasons are short kebab-case entities too, not
+   sentences; the sentence is in the commit that `located` points at. Read the
+   `dropped N line(s)` report after every observe. Tag inferences `[0.4]`–`[0.7]`;
    leave read-and-verified facts untagged.
 
    **Pass `ts` = the commit's `%at`**, not the default clock. The engine's update

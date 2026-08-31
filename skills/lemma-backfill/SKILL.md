@@ -79,8 +79,10 @@ That is a false positive; claude-rig depends on both. The fact is still added �
 escalation is advisory, never a rejection.
 
 **Expected-multi predicates** — `ruled_out`, `because`, `requires`, `constrains`,
-`depends_on`. Escalations naming these are noise. **Filter them and do not show
-chrismo.**
+`depends_on`, `located`, `in_repo`. Escalations naming these are noise. **Filter
+them and do not show chrismo.** (`located` earns its place the hard way: a
+backfill run escalated on it immediately, because an entity is naturally located
+in many commits over its life.)
 
 Surface an escalation only when it names a predicate you expected to be
 single-valued and did not declare exclusive. That is a genuine modelling
@@ -115,6 +117,29 @@ scopes — a path, a subsystem, the last N months. A full sweep is chrismo's cal
 to make knowingly, not your default. Reading is cheap (all 220 questor
 candidates are ~85K tokens); it is chrismo's attention that is not.
 
+## Entity names are tokens, not prose — the engine drops the rest
+
+`observe` validates every entity token and **silently drops the lines that
+fail**, reporting them but asserting nothing. From `src/agent.rs`: at most 60
+characters, at most 8 words, and only letters, digits, `_`, `-`, `'` and spaces.
+
+So this is rejected:
+
+    heredocs --because--> "cascading denial: heredoc, then /tmp, then echo redirect, each blocked by a different rule"
+      -> looks like prose (more than 8 words)
+    commit-message-mechanism --located--> "claude-rig@bc0e867"
+      -> contains punctuation ('@')
+
+and this is the same content, asserted:
+
+    heredocs --because--> cascading-tool-denials
+    commit-message-mechanism --located--> claude-rig-bc0e867
+
+**Provenance is `repo-sha`, never `repo@sha`.** Reasons are short kebab-case
+entities, not sentences — the sentence lives in the commit, which `located`
+points at. Read the `dropped N line(s)` report after every observe; a dropped
+line is a fact you think you asserted and did not.
+
 ## Mine commit bodies, not docs
 
 Not `docs/`, not `CLAUDE.md`, not READMEs, however much richer they look. A
@@ -147,10 +172,16 @@ activity is one nobody reads.
    fact closes a current one.
 4. **Read the bodies in one pass.** `git show -s --format=%B <sha>`.
 5. **Assert per commit**, one `lemmalog_observe` per sha with `ts=%at`, so
-   provenance maps to a commit. Anchor with `located(Entity, "repo@sha")`.
-   **The repo is a first-class dimension** — one global store, so a fact that
-   does not name its repo is unreachable later.
+   provenance maps to a commit. Anchor with `<entity> --located--> <repo>-<sha>`
+   and `<entity> --in_repo--> <repo>`. **The repo is a first-class dimension** —
+   one global store, so a fact that does not name its repo is unreachable later.
    If a scope would exceed ~40 commits, narrow it rather than issuing 40 calls.
+
+   **Every topic entity needs its own `in_repo`, not just the first.** This is
+   operational, not cosmetic: `hooks/lemma-brief.sh` counts facts by matching the
+   repo name as a literal token, so a topic with no `in_repo` edge is invisible
+   to the SessionStart brief. A run that skipped them reported 5 facts on record
+   out of 45 actually asserted.
 6. **Collect the engine's counts**, and filter escalations against the
    expected-multi list.
 7. **Report one line**: asserted, superseded, read, dropped. Then the genuine
