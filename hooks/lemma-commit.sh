@@ -11,10 +11,13 @@
 # many times a session — the commit.
 #
 # Other boundaries were measured and rejected. PreCompact is elegant (the
-# harness announcing it is about to forget) but fires roughly never here: the
-# last manual /compact was 2026-07-25, and CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=64
-# puts the automatic threshold near 640K, which 1 of 101 recent sessions
-# reached. SubagentStop covered 4 sessions out of 108.
+# harness announcing it is about to forget) but fired roughly never when this
+# was measured: the last manual /compact was 2026-07-25, and 1 of 101 recent
+# sessions reached the automatic threshold. That threshold then sat near 640K,
+# because this rig set CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=64 — removed 2026-08-31,
+# so it is now Claude Code's default and lower. PreCompact may therefore fire
+# more often than that measurement implies; the count is worth redoing before
+# anyone leans on it. SubagentStop covered 4 sessions out of 108.
 #
 # This hook does NOT assert. It cannot: the lemmalog MCP tools are reachable
 # only from Claude, and the MCP server rewrites its snapshot after every
