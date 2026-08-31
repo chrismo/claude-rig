@@ -1,0 +1,206 @@
+#!/usr/bin/env bash
+#
+# lemma-info - report the state of the lemmalog loop, and how to query it
+#
+# Usage:
+#   bin/lemma-info
+#
+# The loop spans four things that break independently: the engine binary (built
+# per machine, outside this repo), the MCP registration, the store, and the
+# pending queue. Nothing surfaces all four. hooks/lemma-brief.sh reports only
+# the queue and only when it is non-empty — deliberately, because a SessionStart
+# hook that speaks every time is one people disable. So "what state is this in?"
+# otherwise means reading four files by hand.
+#
+# A SCRIPT, not a skill, for one reason: the moment you most need this is when
+# the lemmalog_* MCP tools are NOT connected — a fresh machine, a session that
+# started before bin/lemma-install ran, a registration shadowed by an older
+# project-scoped one. A skill cannot help you there. This must work with nothing
+# installed at all, and it does.
+#
+# It always exits 0. "Nothing is installed" is a successful report. This
+# diagnoses; it never gates.
+
+set -uo pipefail
+
+# Same defaults as bin/lemma-install and hooks/lemma-brief.sh. They are pinned
+# to each other by bin/lemma-install.bats — a disagreement here would report a
+# store that is filling up correctly as permanently empty.
+QUEUE="${CLAUDE_RIG_LEMMA_QUEUE:-$HOME/.claude/lemmalog/pending.tsv}"
+SNAPSHOT="${CLAUDE_RIG_LEMMA_SNAPSHOT:-$HOME/.claude/lemmalog/store.snapshot}"
+CLAUDE_JSON="${CLAUDE_RIG_CLAUDE_JSON:-$HOME/.claude.json}"
+SRC="${LEMMALOG_SRC:-$HOME/modev/lemmalog}"
+
+BIN="$SRC/target/release/lemmalog-mcp"
+
+OK="✓"
+NO="✗"
+
+# Set when something is missing that bin/lemma-install would fix, so the closing
+# advice can be printed once rather than after every line that noticed.
+needs_install=0
+
+current_repo() {
+  local cwd="${CLAUDE_RIG_LEMMA_CWD:-$PWD}"
+  [[ -d "$cwd" ]] || return 0
+  git -C "$cwd" rev-parse --show-toplevel 2>/dev/null | xargs -I{} basename {} 2>/dev/null
+}
+
+# --- engine --------------------------------------------------------------
+
+report_engine() {
+  if [[ -x "$BIN" ]]; then
+    echo "  engine      $OK $BIN"
+  else
+    echo "  engine      $NO not built ($BIN)"
+    needs_install=1
+  fi
+}
+
+# --- registration --------------------------------------------------------
+#
+# Read claude.json directly rather than shelling out to `claude mcp list`: this
+# has to work when the CLI is absent, and a list call is slow enough to be felt
+# in something meant to be run casually.
+
+report_registration() {
+  if [[ ! -r "$CLAUDE_JSON" ]] || ! command -v super &>/dev/null; then
+    echo "  registered  ? cannot read $CLAUDE_JSON"
+    return 0
+  fi
+
+  local user_path
+  user_path=$(super -f line -c 'values this.mcpServers.lemmalog.env.LEMMALOG_MCP_PATH' \
+    "$CLAUDE_JSON" 2>/dev/null | grep -v '^error' | head -1) || user_path=""
+
+  if [[ -n "$user_path" && "$user_path" != "null" ]]; then
+    echo "  registered  $OK user scope (global) → $user_path"
+    # A registration pointing somewhere else means every number below is about
+    # a file the engine does not use.
+    if [[ "$user_path" != "$SNAPSHOT" ]]; then
+      echo "              ! that is not $SNAPSHOT — the counts below are for the wrong file"
+    fi
+  else
+    echo "  registered  $NO not registered at user scope"
+    needs_install=1
+  fi
+
+  # A project-scoped entry beats the user-scoped one inside that project, so a
+  # stale one silently takes over. bin/lemma-install reports this at install
+  # time; it is worth repeating here because it can be added later by anything.
+  local shadowed
+  shadowed=$(super -f line -c '
+    unnest flatten(this.projects)
+    | where key[1] == "mcpServers" and key[2] == "lemmalog"
+    | values key[0]
+  ' "$CLAUDE_JSON" 2>/dev/null | sort -u) || shadowed=""
+
+  if [[ -n "$shadowed" ]]; then
+    while IFS= read -r project; do
+      [[ -n "$project" ]] || continue
+      echo "              ! project-scoped entry shadows it in $project"
+    done <<< "$shadowed"
+    echo "                (cd there and: claude mcp remove lemmalog)"
+  fi
+}
+
+# --- store ---------------------------------------------------------------
+#
+# "0 facts" reads like a working empty store. "nothing asserted yet" says the
+# store has never been written, which is a different state with a different
+# answer — and it is the state a new machine is always in.
+
+report_store() {
+  if [[ ! -r "$SNAPSHOT" ]]; then
+    echo "  store       $NO nothing asserted yet ($SNAPSHOT)"
+    return 0
+  fi
+
+  local total
+  total=$(awk -F'\t' '$1 == "FACT" { n++ } END { print n + 0 }' "$SNAPSHOT" 2>/dev/null) || total=0
+  [[ -n "$total" ]] || total=0
+
+  if [[ "$total" -eq 0 ]] 2>/dev/null; then
+    echo "  store       $NO nothing asserted yet ($SNAPSHOT)"
+    return 0
+  fi
+
+  echo "  store       $OK $total facts — $SNAPSHOT"
+
+  # One global store spans every repo, so an undifferentiated total hides the
+  # thing you usually want: how much of it is about where you are standing.
+  # The repo is the first typed arg of the edge, per skills/lemma-drain.
+  awk -F'\t' '
+    $1 == "FACT" {
+      split($5, a, " ")
+      s = a[1]
+      sub(/^s:/, "", s)
+      if (s != "") n[s]++
+    }
+    END { for (r in n) printf "              %6d  %s\n", n[r], r }
+  ' "$SNAPSHOT" 2>/dev/null | sort -rn | head -10
+}
+
+# --- queue ---------------------------------------------------------------
+
+report_queue() {
+  local total=0
+  if [[ -r "$QUEUE" ]]; then
+    total=$(awk 'END { print NR + 0 }' "$QUEUE" 2>/dev/null) || total=0
+  fi
+  [[ -n "$total" ]] || total=0
+
+  if [[ "$total" -eq 0 ]] 2>/dev/null; then
+    echo "  queue       $OK nothing pending"
+    return 0
+  fi
+
+  echo "  queue       $total commits pending assertion"
+  awk -F'\t' '$1 != "" { n[$1]++ } END { for (r in n) printf "              %6d  %s\n", n[r], r }' \
+    "$QUEUE" 2>/dev/null | sort -rn | head -10
+}
+
+main() {
+  local repo
+  repo=$(current_repo)
+
+  echo "lemmalog${repo:+ — in $repo}"
+  echo
+  report_engine
+  report_registration
+  report_store
+  report_queue
+  echo
+
+  local pending=0
+  if [[ -r "$QUEUE" ]]; then
+    pending=$(awk 'END { print NR + 0 }' "$QUEUE" 2>/dev/null) || pending=0
+  fi
+  [[ -n "$pending" ]] || pending=0
+
+  if [[ "$needs_install" -eq 1 ]]; then
+    echo "To set it up:  $(dirname -- "${BASH_SOURCE[0]}")/lemma-install"
+    echo "MCP servers connect at session start, so restart Claude Code after."
+    # The queue keeps filling whether or not the engine exists — the commit hook
+    # has no dependency on it. Saying so turns a dead-end report into a plan:
+    # nothing already captured is lost by installing late.
+    if [[ "$pending" -gt 0 ]] 2>/dev/null; then
+      echo "The $pending queued commits are not lost — /lemma-drain reaches them once the tools connect."
+    fi
+    return 0
+  fi
+
+  # Knowing the store holds N facts is useless without the next move, and the
+  # next move is not a shell command — the engine is reachable only from Claude.
+  echo "Ask it something (from Claude, once the session has the tools):"
+  echo "  lemmalog_query      what is on record"
+  echo "  lemmalog_why        the proof tree behind a derived fact"
+  echo "  lemmalog_what_if    consequences of a hypothetical"
+  echo
+  if [[ "$pending" -gt 0 ]] 2>/dev/null; then
+    echo "/lemma-drain works through the pending commits above."
+  fi
+  echo "Tools appear only in a session started after registration — restart if absent."
+}
+
+main "$@"

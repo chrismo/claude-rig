@@ -68,6 +68,16 @@ message is fully explained by its own diff, there is no fact in it.
    what you dropped is the useful half — it tells the user whether the bar is
    set right.
 
+## The neighbours
+
+- `/lemma-info` — what state the loop is in: engine, registration, store size by
+  repo, queue depth. The logic lives in `bin/lemma-info`, a script, so it still
+  answers when the `lemmalog_*` tools are not connected — which is when you most
+  need it; the skill is a thin wrapper so it is reachable as a slash command too.
+- `/lemma-init` — reaches backwards into git history to seed a cold store, once
+  per repo. This skill only ever sees commits made after the hook was installed;
+  a store seeded by neither is empty for months, which is how stores die.
+
 ## If the tools are missing
 
 If `lemmalog_*` is not available, say so, name the fix, and stop — do not

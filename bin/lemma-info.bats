@@ -1,0 +1,228 @@
+#!/usr/bin/env bats
+
+bats_require_minimum_version 1.5.0
+
+# Test suite for bin/lemma-info.
+#
+# The lemmalog loop spans four places that can each be independently broken or
+# absent: the engine binary (built per machine, outside this repo), the MCP
+# registration (user scope, written by bin/lemma-install), the store itself, and
+# the pending queue. Nothing surfaces all four at once — hooks/lemma-brief.sh
+# deliberately reports only the queue, and only when non-empty, because a
+# SessionStart hook that speaks every time gets disabled.
+#
+# So there is no way to ask "what state is this in?" without reading four files
+# by hand. That is what this answers.
+#
+# It is a SCRIPT and not a skill on purpose: the moment you most need to know
+# the state is when the lemmalog_* MCP tools are NOT connected, which is exactly
+# when a skill cannot help. It must work with nothing installed at all.
+#
+# It always exits 0. "Nothing is installed" is a successful report, not a
+# failure — this diagnoses, it does not gate.
+
+I="$BATS_TEST_DIRNAME/lemma-info"
+
+setup() {
+  export CLAUDE_RIG_LEMMA_QUEUE="$BATS_TEST_TMPDIR/pending.tsv"
+  export CLAUDE_RIG_LEMMA_SNAPSHOT="$BATS_TEST_TMPDIR/store.snapshot"
+  export CLAUDE_RIG_CLAUDE_JSON="$BATS_TEST_TMPDIR/claude.json"
+  export LEMMALOG_SRC="$BATS_TEST_TMPDIR/lemmalog"
+
+  # The repo the session is in, named the way lemma-commit.sh names it, so the
+  # queue breakdown can put the current repo first.
+  export CLAUDE_RIG_LEMMA_CWD="$BATS_TEST_TMPDIR/claude-rig"
+  mkdir -p "$CLAUDE_RIG_LEMMA_CWD"
+  git -C "$CLAUDE_RIG_LEMMA_CWD" init -q
+}
+
+queue() { printf '%s\t%s\t%s\t%s\n' "$1" "$2" 100 "$3" >> "$CLAUDE_RIG_LEMMA_QUEUE"; }
+
+engine_present() {
+  mkdir -p "$LEMMALOG_SRC/target/release"
+  : > "$LEMMALOG_SRC/target/release/lemmalog-mcp"
+  chmod +x "$LEMMALOG_SRC/target/release/lemmalog-mcp"
+}
+
+registered() {
+  cat > "$CLAUDE_RIG_CLAUDE_JSON" <<EOF
+{"mcpServers":{"lemmalog":{"type":"stdio","env":{"LEMMALOG_MCP_PATH":"$CLAUDE_RIG_LEMMA_SNAPSHOT"}}},"projects":{}}
+EOF
+}
+
+store_with() {
+  { echo "LEMMALOG-SNAPSHOT-V1"
+    for f in "$@"; do printf 'FACT\tedge\t1\tep1\t%s\n' "$f"; done
+  } > "$CLAUDE_RIG_LEMMA_SNAPSHOT"
+}
+
+# --- it never fails ------------------------------------------------------
+
+@test "exits 0 with nothing installed at all" {
+  run "$I"
+  [ "$status" -eq 0 ]
+}
+
+@test "exits 0 when every input file is missing" {
+  export CLAUDE_RIG_LEMMA_QUEUE="$BATS_TEST_TMPDIR/nope.tsv"
+  export CLAUDE_RIG_LEMMA_SNAPSHOT="$BATS_TEST_TMPDIR/nope.snapshot"
+  export CLAUDE_RIG_CLAUDE_JSON="$BATS_TEST_TMPDIR/nope.json"
+
+  run "$I"
+  [ "$status" -eq 0 ]
+}
+
+@test "exits 0 on a malformed store rather than reporting a bad count" {
+  printf 'not a snapshot at all\n\x00\x01\n' > "$CLAUDE_RIG_LEMMA_SNAPSHOT"
+
+  run "$I"
+  [ "$status" -eq 0 ]
+}
+
+# --- the engine ----------------------------------------------------------
+
+@test "reports the engine as missing when it has not been built" {
+  run "$I"
+  [[ "$output" == *"engine"* ]]
+  [[ "$output" == *"not built"* || "$output" == *"missing"* ]]
+}
+
+@test "reports the engine as present once built" {
+  engine_present
+  run "$I"
+  [[ "$output" == *"$LEMMALOG_SRC/target/release/lemmalog-mcp"* ]]
+}
+
+@test "names bin/lemma-install as the fix when the engine is missing" {
+  run "$I"
+  [[ "$output" == *"lemma-install"* ]]
+}
+
+@test "does not nag about installing once engine and registration are both in place" {
+  engine_present
+  registered
+  run "$I"
+  [[ "$output" != *"lemma-install"* ]]
+}
+
+# --- the registration ----------------------------------------------------
+
+@test "reports an absent MCP registration" {
+  engine_present
+  echo '{"projects":{}}' > "$CLAUDE_RIG_CLAUDE_JSON"
+
+  run "$I"
+  [[ "$output" == *"not registered"* || "$output" == *"registered"* ]]
+  [[ "$output" == *"lemma-install"* ]]
+}
+
+@test "reports a user-scope registration as global" {
+  engine_present
+  registered
+
+  run "$I"
+  [[ "$output" == *"user"* || "$output" == *"global"* ]]
+}
+
+@test "flags a project-scoped entry that shadows the global one" {
+  engine_present
+  cat > "$CLAUDE_RIG_CLAUDE_JSON" <<EOF
+{"mcpServers":{"lemmalog":{"env":{"LEMMALOG_MCP_PATH":"$CLAUDE_RIG_LEMMA_SNAPSHOT"}}},
+ "projects":{"/somewhere/other-repo":{"mcpServers":{"lemmalog":{"type":"stdio"}}}}}
+EOF
+
+  run "$I"
+  [[ "$output" == *"other-repo"* ]]
+  [[ "$output" == *"shadow"* ]]
+}
+
+# --- the store -----------------------------------------------------------
+
+@test "says the store does not exist yet rather than reporting zero facts" {
+  engine_present
+  registered
+
+  run "$I"
+  # "0 facts" reads like a working empty store; "not created" says nothing has
+  # ever been asserted, which is a different and more actionable state.
+  [[ "$output" == *"nothing asserted"* || "$output" == *"not created"* ]]
+}
+
+@test "counts the facts in the store" {
+  engine_present
+  registered
+  store_with "s:claude-rig s:ruled_out s:per-repo-stores" \
+             "s:claude-rig s:uses s:datalog" \
+             "s:questor s:uses s:ruby"
+
+  run "$I"
+  [[ "$output" == *"3"* ]]
+}
+
+@test "breaks facts down by repo, since one global store spans many" {
+  engine_present
+  registered
+  store_with "s:claude-rig s:ruled_out s:per-repo-stores" \
+             "s:claude-rig s:uses s:datalog" \
+             "s:questor s:uses s:ruby"
+
+  run "$I"
+  [[ "$output" == *"claude-rig"* ]]
+  [[ "$output" == *"questor"* ]]
+}
+
+# --- the queue -----------------------------------------------------------
+
+@test "reports an empty queue as nothing pending" {
+  run "$I"
+  [[ "$output" == *"0"* || "$output" == *"none"* || "$output" == *"nothing"* ]]
+}
+
+@test "counts pending commits and breaks them down by repo" {
+  queue claude-rig aaa1111 "first"
+  queue claude-rig bbb2222 "second"
+  queue home ccc3333 "elsewhere"
+
+  run "$I"
+  [[ "$output" == *"3"* ]]
+  [[ "$output" == *"claude-rig"* ]]
+  [[ "$output" == *"home"* ]]
+}
+
+@test "mentions /lemma-drain when commits are pending" {
+  queue claude-rig aaa1111 "first"
+
+  run "$I"
+  [[ "$output" == *"lemma-drain"* ]]
+}
+
+@test "does not push /lemma-drain when the queue is empty" {
+  engine_present
+  registered
+
+  run "$I"
+  [[ "$output" != *"/lemma-drain"* ]]
+}
+
+# --- the reminder --------------------------------------------------------
+#
+# The stated reason this exists: a reminder of how to get status. Knowing the
+# store holds 40 facts is useless without the next move.
+
+@test "names the MCP tools for actually querying the store" {
+  engine_present
+  registered
+  store_with "s:claude-rig s:uses s:datalog"
+
+  run "$I"
+  [[ "$output" == *"lemmalog_query"* ]]
+  [[ "$output" == *"lemmalog_why"* ]]
+}
+
+@test "says the tools need a session restart when nothing is connected" {
+  engine_present
+  registered
+
+  run "$I"
+  [[ "$output" == *"restart"* || "$output" == *"session"* ]]
+}
