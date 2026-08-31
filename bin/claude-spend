@@ -1,13 +1,101 @@
 #!/usr/bin/env bash
-set -euo pipefail
+#
+# claude-spend - report usage-credit spend, on the accounts that have any.
+#
+# `.spend` is the usage-credits block — spend against a credit limit — not "how
+# much have I used this week". Individual plans have no credit limit and no
+# dollar figure anywhere in the response; they meter in percentages, which the
+# status line already shows. So those accounts get told that, and exit 0.
 
-TOKEN="$(security find-generic-password -s "Claude Code-credentials" -w)"
-ACCESS_TOKEN="$(jq -r '.claudeAiOauth.accessToken // empty' <<<"$TOKEN")"
-[[ -n "$ACCESS_TOKEN" ]] || { echo "no token" >&2; exit 1; }
+set -uo pipefail
+set +x   # tracing prints the keychain blob, refresh token included
 
-curl -sS \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  https://api.anthropic.com/api/oauth/usage \
-| jq -r '.spend | select(. != null) |
-  "\(.percent)% used · $\(.used.amount_minor / 100 | tostring) / $\(.limit.amount_minor / 100 | tostring)"'
+export ASDF_SUPERDB_VERSION=0.3.0
+
+FIXTURE="${CLAUDE_RIG_SPEND_JSON:-}"
+ENDPOINT="${CLAUDE_RIG_SPEND_ENDPOINT:-https://api.anthropic.com/api/oauth/usage}"
+
+command -v super >/dev/null || {
+  echo "claude-spend: super (SuperDB) is not on PATH" >&2
+  exit 1
+}
+
+# Routed through a record field so is_error() can catch it: a bare
+# `values claudeAiOauth.accessToken` on a blob without that key prints the
+# string error("missing") and exits 0, which would be sent as the bearer token.
+TOKEN_QUERY='values {t: claudeAiOauth.accessToken} | where not is_error(t) | values t'
+
+# No rows out means no credit spend to report. The nulls are coalesced to
+# NO_MONEY before anything reaches into them, because spend.limit.amount_minor
+# will not compile when limit is null; the -1 is so a real limit of 0 still
+# counts. Cents are integer modulo padded by slicing, not floats — SuperDB has
+# no printf verb.
+REPORT_QUERY=$(cat <<'SQL'
+fn unit(e): (cast(pow(10, e), <int64>))
+fn money(m, e, c): (
+  (c == "USD" ? "$" : "")
+  || f"{cast(m / unit(e), <int64>)}"
+  || "."
+  || f"{unit(e) + m % unit(e)}"[-e:]
+  || (c == "USD" ? "" : f" {c}")
+)
+const NO_MONEY = {amount_minor: -1, exponent: 2, currency: "USD"}
+
+values {spend: {enabled: false, percent: 0, used: NO_MONEY, limit: null}, ...this}
+| values {
+    enabled: spend.enabled,
+    percent: spend.percent,
+    lim: coalesce(spend.limit, NO_MONEY),
+    used: coalesce(spend.used, NO_MONEY)
+  }
+| where enabled == true and lim.amount_minor >= 0
+| values f"{percent}% used · "
+    || money(used.amount_minor, used.exponent, used.currency)
+    || " / "
+    || money(lim.amount_minor, lim.exponent, lim.currency)
+SQL
+)
+
+fetch() {
+  if [[ -n "$FIXTURE" ]]; then
+    cat "$FIXTURE" || return 1
+    return 0
+  fi
+
+  local blob access
+  blob="$(security find-generic-password -s "Claude Code-credentials" -w)" || return 1
+  access="$(printf '%s' "$blob" | super -f line -i json -c "$TOKEN_QUERY" -)"
+  [[ -n "$access" ]] || return 1
+
+  curl -sS --fail --location --max-time 20 \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $access" \
+    --url "$ENDPOINT"
+}
+
+not_for_this_account() {
+  cat <<'MSG'
+Nothing to report: usage credits are not enabled on this account.
+
+This reports spend against a credit limit, which the API only fills in for
+accounts that have usage credits turned on — otherwise the limit, cap and
+balance all come back empty. Plans without them meter in percentages rather
+than dollars, and the status line already shows those.
+MSG
+}
+
+main() {
+  local json line
+  json="$(fetch)" || { echo "claude-spend: could not read usage" >&2; exit 1; }
+  [[ -n "$json" ]] || { echo "claude-spend: empty response" >&2; exit 1; }
+
+  line="$(printf '%s' "$json" | super -f line -i json -c "$REPORT_QUERY" -)" || {
+    echo "claude-spend: could not read the response" >&2
+    exit 1
+  }
+
+  [[ -n "$line" ]] || { not_for_this_account; exit 0; }
+  printf '%s\n' "$line"
+}
+
+main "$@"
