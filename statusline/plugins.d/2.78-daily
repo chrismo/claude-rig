@@ -1,0 +1,83 @@
+#!/bin/bash
+# Segment: credit spend against the daily limit, resetting midnight UTC.
+#
+# Layout:  24h [bar] <dur>
+#   bar — 8-cell track: ● spent, ◇ on-pace, ◉ both at once, · empty
+#   dur — time left in the UTC day, largest single unit (18h, 38m)
+#
+# Same alphabet as 2.76's 5h/7d bars, one window further out. The credit limit
+# is a daily one that resets at midnight UTC, so the used/limit figures 2.77
+# prints as "92% $4283/$4640" are today's spend — this plots them against how
+# far into the UTC day we are, which is the part 2.77 cannot show. At 92% with
+# 25m to go the bar is full and red, with the marker up against the diamond.
+#
+# Hardcoded to the Dscout account's daily-reset-at-midnight-UTC shape. The
+# payload carries no reset timestamp for it (extra_usage.daily is null), so the
+# window is computed from the clock rather than read.
+#
+# Silent on any failure. A status line that breaks the prompt is worse than a
+# status line missing a segment.
+
+muted_green="\033[2;32m"
+muted_yellow="\033[2;33m"
+muted_red="\033[2;31m"
+color_reset="\033[2;37m"
+
+SLOTS=8
+DAY_SECONDS=86400
+
+spend_bin="${CLAUDE_RIG_SPEND_BIN:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../bin" 2>/dev/null && pwd)/claude-spend}"
+[[ -x "$spend_bin" ]] || spend_bin=$(command -v claude-spend)
+[[ -n "$spend_bin" && -x "$spend_bin" ]] || exit 0
+
+# Clock, pinned by CLAUDE_RIG_DAILY_NOW in tests.
+now_iso="${CLAUDE_RIG_DAILY_NOW:-}"
+if [[ -n "$now_iso" ]]; then
+  now_epoch=$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$now_iso" +%s 2>/dev/null) \
+    || now_epoch=$(date -u -d "$now_iso" +%s 2>/dev/null) || exit 0
+else
+  now_epoch=$(date -u +%s)
+fi
+
+# The same row 2.77 renders: percent, used, limit. Percent is the API's own,
+# not recomputed, so the two segments can never disagree about the number.
+row=$("$spend_bin" --brief 2>/dev/null) || exit 0
+[[ -n "$row" ]] || exit 0
+IFS='|' read -r pct used limit <<<"$row"
+[[ -n "$limit" && "$pct" =~ ^[0-9]+$ ]] || exit 0
+
+elapsed=$(( now_epoch % DAY_SECONDS ))
+remaining=$(( DAY_SECONDS - elapsed ))
+
+# Colour: red ≥90% absolute, yellow at/over pace, green under. Matches 2.76.
+if (( pct >= 90 )); then
+  color="$muted_red"
+elif (( elapsed > 0 )) && (( pct * DAY_SECONDS >= 100 * elapsed )); then
+  color="$muted_yellow"
+else
+  color="$muted_green"
+fi
+
+# Bar: ● at the spent slot, ◇ at the slot the clock says you should be at.
+slot_used=$(( pct * SLOTS / 100 ))
+(( slot_used >= SLOTS )) && slot_used=$(( SLOTS - 1 ))
+(( slot_used < 0 )) && slot_used=0
+slot_expected=$(( elapsed * SLOTS / DAY_SECONDS ))
+(( slot_expected >= SLOTS )) && slot_expected=$(( SLOTS - 1 ))
+
+bar=""
+for (( i = 0; i < SLOTS; i++ )); do
+  if   (( i == slot_used && i == slot_expected )); then bar+="◉"
+  elif (( i == slot_used     ));                   then bar+="●"
+  elif (( i == slot_expected ));                   then bar+="◇"
+  else                                                  bar+="·"
+  fi
+done
+
+# Countdown to midnight UTC, largest single unit. 18h, 38m, then "now".
+if   (( remaining >= 3600 )); then left="$(( remaining / 3600 ))h"
+elif (( remaining >= 60   )); then left="$(( remaining / 60 ))m"
+else                               left="now"
+fi
+
+echo -e "${color}24h [${bar}] ${left}${color_reset}"
