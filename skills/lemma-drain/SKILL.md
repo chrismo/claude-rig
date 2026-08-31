@@ -60,6 +60,14 @@ message is fully explained by its own diff, there is no fact in it.
    proof tree leads back to something readable. Tag inferences `[0.4]`–`[0.7]`;
    leave read-and-verified facts untagged.
 
+   **Pass `ts` = the commit's `%at`**, not the default clock. The engine's update
+   policy is temporal: a later value on an `exclusive` predicate closes the
+   earlier one's interval, so `current()` returns what still holds. Asserting at
+   "now" instead breaks that ordering against anything `/lemma-backfill` put in
+   from history — a fact from 2026-04 would land after one from 2026-08 and
+   supersede it backwards. `/lemma-backfill` documents the policy and the
+   exclusivity vocabulary; use the same relations here.
+
 5. **Drain what you asserted.** Remove those rows from the queue — and only
    those. A row you decided against is still drained (the decision was made);
    a row you did not reach is not. Never truncate the file wholesale.
