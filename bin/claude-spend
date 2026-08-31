@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TOKEN="$(security find-generic-password -s "Claude Code-credentials" -w)"
+ACCESS_TOKEN="$(jq -r '.claudeAiOauth.accessToken // empty' <<<"$TOKEN")"
+[[ -n "$ACCESS_TOKEN" ]] || { echo "no token" >&2; exit 1; }
+
+curl -sS \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  https://api.anthropic.com/api/oauth/usage \
+| jq -r '.spend | select(. != null) |
+  "\(.percent)% used · $\(.used.amount_minor / 100 | tostring) / $\(.limit.amount_minor / 100 | tostring)"'
