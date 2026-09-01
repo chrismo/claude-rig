@@ -387,14 +387,13 @@ Note that display *width* is a third axis: one code point can occupy two
 terminal columns (every picture emoji is East Asian Wide). Usually document
 rather than enforce, but say so out loud.
 
-### 16. Inert Test Assertions - `[[ ]]` Under `set -e` With an `ERR` Trap
+### 16. Inert Test Assertions - `[[ ]]` Under `set -e` on Bash 3.2
 
 **In a bats test, a non-terminal `[[ ]]` assertion cannot fail. It is decoration.
 The test passes no matter what it asserts.**
 
-This is a bash bug, not a bats choice, and it is the highest-value thing to find
-in a test suite: a green suite that is not testing anything. Verified identical
-on bash 3.2.57 and 5.2.37.
+This is a bash 3.2 bug, not a bats choice, and it is the highest-value thing to
+find in a test suite: a green suite that is not testing anything.
 
 ```bash
 # BAD: this test passes. Both assertions are inert.
@@ -406,20 +405,31 @@ on bash 3.2.57 and 5.2.37.
 }
 ```
 
-**The mechanism.** With `set -e` *and* an `ERR` trap installed, a failing `[[ ]]`
-or `(( ))` neither fires the trap nor exits the shell — bash does not propagate
-the failure of these conditional compound commands. Remove the trap and the same
-`[[ ]]` exits correctly. bats installs an `ERR` trap to report `(in test file
-…, line N)`, so every bats test body runs in exactly the configuration that
-triggers the bug.
+**The mechanism is the bash version, and it is macOS-specific in practice.**
+Bash 3.2 does not propagate a failing `[[ ]]` or `(( ))` under `set -e` when the
+construct is not the last statement — the shell just continues. Bash 5.2 handles
+the same code correctly and stops. The `ERR` trap is *not* a factor either way;
+neither is being inside a function.
+
+bats is `#!/usr/bin/env bash`, so it runs test bodies under whatever `bash` comes
+first on `PATH`. On macOS that is `/bin/bash` 3.2.57 — Apple's last GPLv2 bash —
+so a suite that is sound on a Linux CI box can be almost entirely inert on a
+developer's Mac. **Confirm which bash is actually running the bodies before
+reporting a count:**
+
+```bash
+# inside a test: echo "$BASH_VERSION" >&3
+bats --version && bash --version | head -1
+```
 
 Two consequences worth checking separately:
 
 - **`(( ))` has the same hole as `[[ ]]`** — `(( 1 == 2 ))` in non-terminal
   position is equally inert.
 - **The `[ ]` builtin is NOT affected**, and neither is `false`, a failing
-  pipeline, or any ordinary command. So errexit is working; do not conclude
-  "bats disables errexit" and stop looking.
+  pipeline, or any ordinary command — verified on 3.2.57. So errexit is working;
+  do not conclude "bats disables errexit" and stop looking. The hole is specific
+  to `[[ ]]` and `(( ))`, the two conditional compound constructs.
 
 **Only the last statement of the test body carries its exit status.** So exactly
 one `[[ ]]` per test can fail — the final one — and only if nothing follows it.
@@ -439,7 +449,13 @@ makes the problem legible — a suite with 80 inert assertions is not a suite.
 Confirm it empirically before reporting: negate one assertion in place and show
 the test still passes.
 
-**The fix.** All of these restore failure; pick per project:
+**The fix.** Note that running the suite under bash 5 also makes every one of
+these assertions live — which is worth saying out loud, because it means the
+suite's *current* green result is not evidence of anything, and a reviewer should
+expect real failures to surface on the first bash-5 run. Rewriting is still
+preferable to depending on the interpreter.
+
+All of these restore failure on 3.2; pick per project:
 
 ```bash
 [ "$status" -eq 0 ]            # the [ ] builtin propagates correctly
@@ -448,10 +464,11 @@ the test still passes.
 assert_equal "$status" 0       # bats-assert; see below
 ```
 
-A helper works because the `[[ ]]` moves *inside a function*: the function's
-`return 1` is an ordinary command, and ordinary commands propagate normally. Any
-wrapper of that shape is immune, which is why suites using `bats-assert` never
-had this problem.
+A helper works for the same reason `|| false` does, not because of the function
+boundary — a bare `[[ ]]` inside a function is just as inert. `bats-assert`
+helpers are written `[[ ... ]] || fail`, so the failing path ends in an ordinary
+command (`fail`), and ordinary commands propagate normally. That `|| <command>`
+shape is the whole fix; wrapping it in a function only adds a nicer message.
 
 Prefer `bats-assert` if the project already vendors it — the helpers also print
 the expected/actual values, which a bare `[[ ]]` never did. Otherwise `[ ]` is
