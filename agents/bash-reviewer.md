@@ -387,6 +387,82 @@ Note that display *width* is a third axis: one code point can occupy two
 terminal columns (every picture emoji is East Asian Wide). Usually document
 rather than enforce, but say so out loud.
 
+### 16. Inert Test Assertions - `[[ ]]` Under `set -e` With an `ERR` Trap
+
+**In a bats test, a non-terminal `[[ ]]` assertion cannot fail. It is decoration.
+The test passes no matter what it asserts.**
+
+This is a bash bug, not a bats choice, and it is the highest-value thing to find
+in a test suite: a green suite that is not testing anything. Verified identical
+on bash 3.2.57 and 5.2.37.
+
+```bash
+# BAD: this test passes. Both assertions are inert.
+@test "computes the score" {
+  run score_for "alice"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" = "42" ]]
+  run cleanup            # <- the terminal statement, and it succeeds
+}
+```
+
+**The mechanism.** With `set -e` *and* an `ERR` trap installed, a failing `[[ ]]`
+or `(( ))` neither fires the trap nor exits the shell — bash does not propagate
+the failure of these conditional compound commands. Remove the trap and the same
+`[[ ]]` exits correctly. bats installs an `ERR` trap to report `(in test file
+…, line N)`, so every bats test body runs in exactly the configuration that
+triggers the bug.
+
+Two consequences worth checking separately:
+
+- **`(( ))` has the same hole as `[[ ]]`** — `(( 1 == 2 ))` in non-terminal
+  position is equally inert.
+- **The `[ ]` builtin is NOT affected**, and neither is `false`, a failing
+  pipeline, or any ordinary command. So errexit is working; do not conclude
+  "bats disables errexit" and stop looking.
+
+**Only the last statement of the test body carries its exit status.** So exactly
+one `[[ ]]` per test can fail — the final one — and only if nothing follows it.
+A trailing `run`, `echo`, log line, or cleanup call makes *every* `[[ ]]` in the
+test inert, and `run` as the last line is the common case.
+
+**How to review it.** Do not eyeball this — count it:
+
+```bash
+# every [[ ]] that is not the final statement of its test body is suspect
+grep -n '^\s*\[\[' path/to/suite.bats
+```
+
+Then, per test, ask: is this `[[ ]]` the last statement? If not, it cannot fail.
+Report the ratio (`N of M assertions cannot fail`), because the number is what
+makes the problem legible — a suite with 80 inert assertions is not a suite.
+Confirm it empirically before reporting: negate one assertion in place and show
+the test still passes.
+
+**The fix.** All of these restore failure; pick per project:
+
+```bash
+[ "$status" -eq 0 ]            # the [ ] builtin propagates correctly
+[[ "$status" -eq 0 ]] || false # force a real command into the failure path
+[[ "$status" -eq 0 ]] || return 1
+assert_equal "$status" 0       # bats-assert; see below
+```
+
+A helper works because the `[[ ]]` moves *inside a function*: the function's
+`return 1` is an ordinary command, and ordinary commands propagate normally. Any
+wrapper of that shape is immune, which is why suites using `bats-assert` never
+had this problem.
+
+Prefer `bats-assert` if the project already vendors it — the helpers also print
+the expected/actual values, which a bare `[[ ]]` never did. Otherwise `[ ]` is
+the smallest diff and needs no dependency. Note that `[ ]` lacks `=~`, `&&`, and
+unquoted-RHS pattern matching; a regex assertion has to become
+`[[ $x =~ re ]] || false` rather than a `[ ]` rewrite.
+
+Flag as **Critical** — a suite that cannot fail provides no protection, and every
+finding "covered by tests" elsewhere in the review is invalidated if the covering
+test is inert.
+
 ## Review Checklist
 
 - [ ] No user-controlled value reaches `$(( ))`, `-eq`, `eval`, an array
@@ -404,6 +480,7 @@ rather than enforce, but say so out loud.
 - [ ] Nothing interpolated unquoted into query text
 - [ ] Arrays used for lists of items
 - [ ] Length/slice checks safe under a non-UTF-8 locale
+- [ ] No bats `[[ ]]`/`(( ))` assertion sitting in non-terminal position
 
 ## Common Patterns to Flag
 
@@ -419,6 +496,8 @@ rather than enforce, but say so out loud.
 10. Error-swallowing: `|| true`, `|| echo "[]"`, `2>/dev/null`, silent fallbacks
 11. SuperDB trailing `-` with no stdin (silent empty output)
 12. `${#var}` guarding data that may be non-ASCII, with no locale pinned
+13. A bats `[[ ]]` or `(( ))` assertion that is not the test's last statement
+    (inert — the test cannot fail)
 
 ## Output Format
 
