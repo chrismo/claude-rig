@@ -455,11 +455,20 @@ suite's *current* green result is not evidence of anything, and a reviewer shoul
 expect real failures to surface on the first bash-5 run. Rewriting is still
 preferable to depending on the interpreter.
 
-All of these restore failure on 3.2; pick per project:
+**Default to suffixing `|| false`.** It applies mechanically to every `[[ ]]` and
+`(( ))` with no rewrite of the condition, which is what you want when a suite has
+dozens of sites:
 
 ```bash
-[ "$status" -eq 0 ]            # the [ ] builtin propagates correctly
-[[ "$status" -eq 0 ]] || false # force a real command into the failure path
+[[ "$status" -eq 0 ]] || false   # <- the default; works on any condition
+(( count > 0 )) || false         # same for arithmetic
+```
+
+The alternatives are narrower:
+
+```bash
+[ "$status" -eq 0 ]            # [ ] propagates, but cannot express =~, &&,
+                               #   or unquoted-RHS pattern matching
 [[ "$status" -eq 0 ]] || return 1
 assert_equal "$status" 0       # bats-assert; see below
 ```
@@ -470,11 +479,10 @@ helpers are written `[[ ... ]] || fail`, so the failing path ends in an ordinary
 command (`fail`), and ordinary commands propagate normally. That `|| <command>`
 shape is the whole fix; wrapping it in a function only adds a nicer message.
 
-Prefer `bats-assert` if the project already vendors it — the helpers also print
-the expected/actual values, which a bare `[[ ]]` never did. Otherwise `[ ]` is
-the smallest diff and needs no dependency. Note that `[ ]` lacks `=~`, `&&`, and
-unquoted-RHS pattern matching; a regex assertion has to become
-`[[ $x =~ re ]] || false` rather than a `[ ]` rewrite.
+Prefer `bats-assert` over the bare forms if the project already vendors it — the
+helpers also print expected/actual values, which a bare `[[ ]]` never did. Do not
+propose adding the dependency mid-review just for this; `|| false` fixes the
+soundness problem without one.
 
 Flag as **Critical** — a suite that cannot fail provides no protection, and every
 finding "covered by tests" elsewhere in the review is invalidated if the covering
@@ -497,7 +505,7 @@ test is inert.
 - [ ] Nothing interpolated unquoted into query text
 - [ ] Arrays used for lists of items
 - [ ] Length/slice checks safe under a non-UTF-8 locale
-- [ ] No bats `[[ ]]`/`(( ))` assertion sitting in non-terminal position
+- [ ] No bats `[[ ]]`/`(( ))` assertion in non-terminal position without `|| false`
 
 ## Common Patterns to Flag
 
@@ -513,8 +521,8 @@ test is inert.
 10. Error-swallowing: `|| true`, `|| echo "[]"`, `2>/dev/null`, silent fallbacks
 11. SuperDB trailing `-` with no stdin (silent empty output)
 12. `${#var}` guarding data that may be non-ASCII, with no locale pinned
-13. A bats `[[ ]]` or `(( ))` assertion that is not the test's last statement
-    (inert — the test cannot fail)
+13. A bats `[[ ]]` or `(( ))` assertion that is not the test's last statement and
+    lacks `|| false` (inert on bash 3.2 — the test cannot fail)
 
 ## Output Format
 
