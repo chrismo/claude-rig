@@ -61,8 +61,8 @@ setup() {
   input=$'36\t⚪ aws (branch-a)\n\n37\tdscout (main)\n'
   run gt_parse_menu <<<"$input"
   [ "$status" -eq 0 ]
-  [[ "$(echo "$output" | sed -n 1p)" == $'36\t⚪ aws (branch-a)' ]]
-  [[ "$(echo "$output" | sed -n 2p)" == $'37\tdscout (main)' ]]
+  [[ "$(echo "$output" | sed -n 1p)" == $'36\t⚪ aws (branch-a)' ]] || false
+  [[ "$(echo "$output" | sed -n 2p)" == $'37\tdscout (main)' ]] || false
   [ "$(echo "$output" | grep -c .)" -eq 2 ]
 }
 
@@ -90,7 +90,7 @@ setup() {
 
   run gt_preview "🔵 claude-rig (main)"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"$DEV_ROOT/claude-rig"* ]]
+  [[ "$output" == *"$DEV_ROOT/claude-rig"* ]] || false
 
   rm -rf "$DEV_ROOT"
 }
@@ -101,7 +101,7 @@ setup() {
   run gt_preview "🔵 nonexistent-thing (main)"
   [ "$status" -eq 0 ]
   # Must not crash, and must surface the title/leaf so the pane isn't blank.
-  [[ "$output" == *"nonexistent-thing"* ]]
+  [[ "$output" == *"nonexistent-thing"* ]] || false
 
   rm -rf "$DEV_ROOT"
 }

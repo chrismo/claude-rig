@@ -208,7 +208,7 @@ EOF
   write_session "$wt" "11111111-2222-3333-4444-555555555555" >/dev/null
   run "$POD" --all "$wt"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"modified"* ]]
+  [[ "$output" == *"modified"* ]] || false
   [[ "$output" == *"11111111"* ]]
 }
 
@@ -227,7 +227,7 @@ EOF
   export CLAUDE_CODE_SESSION_ID="11111111-2222-3333-4444-555555555555"
   run "$POD" --peers "$wt"
   [ "$status" -eq 0 ]
-  [[ "$output" != *"11111111-2222"* ]]
+  [[ "$output" != *"11111111-2222"* ]] || false
   [[ "$output" == *"22222222-3333"* ]]
 }
 
@@ -277,7 +277,7 @@ EOF
   run "$POD" --all "$wt"
   [ "$status" -eq 0 ]
   # Garbage indicators that would appear under the old loose grep.
-  [[ "$output" != *"survives after"* ]]
+  [[ "$output" != *"survives after"* ]] || false
   [[ "$output" != *"NAME"* ]]
 }
 
@@ -318,7 +318,7 @@ EOF
   # additionally validates portability.
   run /bin/bash "$POD" --all "$wt"
   [ "$status" -eq 0 ]
-  [[ "$output" != *"unbound variable"* ]]
+  [[ "$output" != *"unbound variable"* ]] || false
   [[ "$output" != *"EXCLUDES"* ]]
 }
 
@@ -328,7 +328,7 @@ EOF
   wt=$(make_worktree wt1)
   run --separate-stderr "$POD" --console "$wt"
   [ "$status" -eq 1 ]
-  [[ "$stderr" == *"no console recording"* ]]
+  [[ "$stderr" == *"no console recording"* ]] || false
   [[ "$stderr" == *"--record"* ]]
 }
 
@@ -337,8 +337,8 @@ EOF
   write_console "$wt" >/dev/null
   run "$POD" --console "$wt"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"PASS first-test"* ]]
-  [[ "$output" == *"boom: NoMethodError"* ]]
+  [[ "$output" == *"PASS first-test"* ]] || false
+  [[ "$output" == *"boom: NoMethodError"* ]] || false
   # No raw escape bytes survive.
   [[ "$output" != *$'\033'* ]]
 }
@@ -356,8 +356,8 @@ EOF
   write_console "$wt" >/dev/null
   run "$POD" --console "$wt"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"progress 100%"* ]]
-  [[ "$output" != *"progress 10%"* ]]
+  [[ "$output" == *"progress 100%"* ]] || false
+  [[ "$output" != *"progress 10%"* ]] || false
   [[ "$output" != *"progress 50%"* ]]
 }
 
@@ -374,7 +374,7 @@ EOF
   write_console "$wt" >/dev/null
   run "$POD" --console --tail 1 "$wt"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"boom: NoMethodError"* ]]
+  [[ "$output" == *"boom: NoMethodError"* ]] || false
   [[ "$output" != *"PASS first-test"* ]]
 }
 
@@ -398,7 +398,7 @@ EOF
   export CLAUDE_CONSOLE_LOG="$wt/elsewhere.log"
   run "$POD" --console "$wt"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"from-the-override"* ]]
+  [[ "$output" == *"from-the-override"* ]] || false
   [[ "$output" != *"boom: NoMethodError"* ]]
 }
 
@@ -425,7 +425,7 @@ two_consoles() {
   two_consoles "$wt"
   run "$POD" --console-list "$wt"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"server"* ]]
+  [[ "$output" == *"server"* ]] || false
   [[ "$output" == *"tests"* ]]
 }
 
@@ -441,9 +441,9 @@ two_consoles() {
   two_consoles "$wt"
   run "$POD" --console "$wt"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"listening on :3000"* ]]
-  [[ "$output" == *"3 failures"* ]]
-  [[ "$output" == *"server"* ]]
+  [[ "$output" == *"listening on :3000"* ]] || false
+  [[ "$output" == *"3 failures"* ]] || false
+  [[ "$output" == *"server"* ]] || false
   [[ "$output" == *"tests"* ]]
 }
 
@@ -460,7 +460,7 @@ two_consoles() {
   two_consoles "$wt"
   run "$POD" --console --tag server "$wt"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"listening on :3000"* ]]
+  [[ "$output" == *"listening on :3000"* ]] || false
   [[ "$output" != *"3 failures"* ]]
 }
 
@@ -469,7 +469,7 @@ two_consoles() {
   write_console "$wt" >/dev/null
   run "$POD" --console "$wt"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"main"* ]]
+  [[ "$output" == *"main"* ]] || false
   [[ "$output" == *"boom: NoMethodError"* ]]
 }
 
@@ -478,7 +478,7 @@ two_consoles() {
   write_console "$wt" .my-console.log >/dev/null
   run "$POD" --console "$wt"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"my"* ]]
+  [[ "$output" == *"my"* ]] || false
   [[ "$output" == *"boom: NoMethodError"* ]]
 }
 
@@ -487,8 +487,8 @@ two_consoles() {
   two_consoles "$wt"
   run --separate-stderr "$POD" --console --tag nope "$wt"
   [ "$status" -eq 1 ]
-  [[ "$stderr" == *"nope"* ]]
-  [[ "$stderr" == *"server"* ]]
+  [[ "$stderr" == *"nope"* ]] || false
+  [[ "$stderr" == *"server"* ]] || false
   [[ "$stderr" == *"tests"* ]]
 }
 
@@ -500,9 +500,9 @@ two_consoles() {
   run "$POD" --console --tail 1 "$wt"
   [ "$status" -eq 0 ]
   # Last line of BOTH panes survives; the earlier line of each is dropped.
-  [[ "$output" == *"listening on :3000"* ]]
-  [[ "$output" == *"3 failures"* ]]
-  [[ "$output" != *"server-old"* ]]
+  [[ "$output" == *"listening on :3000"* ]] || false
+  [[ "$output" == *"3 failures"* ]] || false
+  [[ "$output" != *"server-old"* ]] || false
   [[ "$output" != *"tests-old"* ]]
 }
 
@@ -519,7 +519,7 @@ two_consoles() {
   two_consoles "$wt"
   run "$POD" --console-list "$wt"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"ended"* ]]
+  [[ "$output" == *"ended"* ]] || false
   [[ "$output" != *"live"* ]]
 }
 
@@ -529,7 +529,7 @@ two_consoles() {
   touch -t 202601010000 "$wt/.server-console.log"
   run "$POD" --console-list "$wt"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"ago"* ]]
+  [[ "$output" == *"ago"* ]] || false
   # Aged well over a year — must read in days, not minutes.
   [[ "$output" == *"d ago"* ]]
 }
@@ -559,8 +559,8 @@ two_consoles() {
   touch -t 202601010000 "$wt/.server-console.log"
   run "$POD" --console "$wt"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"ended"* ]]
-  [[ "$output" == *"ago"* ]]
+  [[ "$output" == *"ended"* ]] || false
+  [[ "$output" == *"ago"* ]] || false
   [[ "$output" == *"ancient"* ]]
 }
 
@@ -577,7 +577,7 @@ two_consoles() {
   write_console "$wt" >/dev/null
   run "$POD" --console --new --tail 1 "$wt"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"boom: NoMethodError"* ]]
+  [[ "$output" == *"boom: NoMethodError"* ]] || false
   [[ "$output" != *"PASS first-test"* ]]
 }
 
@@ -586,12 +586,12 @@ two_consoles() {
   write_console "$wt" >/dev/null
   run "$POD" --console --new "$wt"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"boom: NoMethodError"* ]]
+  [[ "$output" == *"boom: NoMethodError"* ]] || false
 
   printf 'freshly-appended-line\n' >> "$wt/.main-console.log"
   run "$POD" --console --new "$wt"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"freshly-appended-line"* ]]
+  [[ "$output" == *"freshly-appended-line"* ]] || false
   [[ "$output" != *"boom: NoMethodError"* ]]
 }
 
@@ -616,7 +616,7 @@ two_consoles() {
   printf 'a brand new session\n' > "$wt/.main-console.log"
   run "$POD" --console --new "$wt"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"a brand new session"* ]]
+  [[ "$output" == *"a brand new session"* ]] || false
   [[ "$output" == *"re-recorded"* ]]
 }
 
@@ -631,8 +631,8 @@ two_consoles() {
   for i in $(seq 1 500); do printf 'flood-line-%s\n' "$i"; done >> "$wt/.main-console.log"
   run "$POD" --console --new --tail 5 "$wt"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"flood-line-500"* ]]
-  [[ "$output" != *"flood-line-1 "* ]]
+  [[ "$output" == *"flood-line-500"* ]] || false
+  [[ "$output" != *"flood-line-1 "* ]] || false
   [[ "$output" != *"flood-line-100"* ]]
 }
 
@@ -643,7 +643,7 @@ two_consoles() {
   export CLAUDE_CODE_SESSION_ID="aaaaaaaa-1111-1111-1111-aaaaaaaaaaaa"
   run "$POD" --console --new "$wt"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"boom: NoMethodError"* ]]
+  [[ "$output" == *"boom: NoMethodError"* ]] || false
 
   # A different reader has never looked; it must still see the content.
   export CLAUDE_CODE_SESSION_ID="bbbbbbbb-2222-2222-2222-bbbbbbbbbbbb"
@@ -658,7 +658,7 @@ two_consoles() {
   write_session "$wt" "$sid" >/dev/null
   run "$POD" --session "$sid" --new "$wt"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"hello"* ]]
+  [[ "$output" == *"hello"* ]] || false
 
   local file
   file="$(session_dir_for "$wt")/$sid.jsonl"
@@ -667,7 +667,7 @@ two_consoles() {
 EOF
   run "$POD" --session "$sid" --new "$wt"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"a-brand-new-turn"* ]]
+  [[ "$output" == *"a-brand-new-turn"* ]] || false
   [[ "$output" != *"hello"* ]]
 }
 
@@ -691,8 +691,8 @@ EOF
   run "$POD" --peers --new "$wt"
   [ "$status" -eq 0 ]
   # The peer's turns, not our own.
-  [[ "$output" == *"hi"* ]]
-  [[ "$output" == *"22222222"* ]]
+  [[ "$output" == *"hi"* ]] || false
+  [[ "$output" == *"22222222"* ]] || false
   [[ "$output" != *"11111111"* ]]
 }
 
@@ -702,7 +702,7 @@ EOF
   wt=$(make_worktree wt1)
   run "$POD" --record "$wt"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"script -F -q"* ]]
+  [[ "$output" == *"script -F -q"* ]] || false
   [[ "$output" == *".main-console.log"* ]]
 }
 
@@ -800,7 +800,7 @@ write_codex_subagent() {
   write_codex_session "$wt" "aaaaaaaa-1111-2222-3333-444444444444" >/dev/null
   run "$POD" --codex "$wt"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"hello from codex"* ]]
+  [[ "$output" == *"hello from codex"* ]] || false
   [[ "$output" == *"hi from codex"* ]]
 }
 
@@ -811,7 +811,7 @@ write_codex_subagent() {
   write_codex_session "$wt2" "bbbbbbbb-1111-2222-3333-444444444444" "user:in wt2" >/dev/null
   run "$POD" --codex "$wt1"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"in wt1"* ]]
+  [[ "$output" == *"in wt1"* ]] || false
   [[ "$output" != *"in wt2"* ]]
 }
 
@@ -829,7 +829,7 @@ write_codex_subagent() {
   write_codex_subagent "$wt" "99999999-1111-2222-3333-444444444444" >/dev/null
   run "$POD" --codex --all "$wt"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"aaaaaaaa-1111-2222-3333-444444444444"* ]]
+  [[ "$output" == *"aaaaaaaa-1111-2222-3333-444444444444"* ]] || false
   [[ "$output" != *"99999999-1111-2222-3333-444444444444"* ]]
 }
 
@@ -961,7 +961,7 @@ write_codex_subagent() {
   touch "$xf"
   run --separate-stderr "$POD" "$wt"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"codex is fresher"* ]]
+  [[ "$output" == *"codex is fresher"* ]] || false
   [[ "$stderr" == *"--claude"* ]]
 }
 
@@ -974,7 +974,7 @@ write_codex_subagent() {
   touch "$cf"
   run --separate-stderr "$POD" "$wt"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"hello"* ]]
+  [[ "$output" == *"hello"* ]] || false
   [[ "$stderr" == *"--codex"* ]]
 }
 
@@ -987,7 +987,7 @@ write_codex_subagent() {
   touch "$xf"
   run "$POD" --claude "$wt"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"hello"* ]]
+  [[ "$output" == *"hello"* ]] || false
   [[ "$output" != *"codex fresher"* ]]
 }
 

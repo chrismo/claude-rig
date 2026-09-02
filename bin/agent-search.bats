@@ -31,8 +31,8 @@ setup() {
 
   run search_claude_projects "fivetran" 30 "$BATS_TEST_TMPDIR/claude-projects"
   [ "$status" -eq 0 ]
-  [[ "$output" == *'"source":"claude"'* ]]
-  [[ "$output" == *'"sessionId":"abc123"'* ]]
+  [[ "$output" == *'"source":"claude"'* ]] || false
+  [[ "$output" == *'"sessionId":"abc123"'* ]] || false
   [[ "$output" == *'"project":"widget"'* ]]
 }
 
@@ -61,8 +61,8 @@ setup() {
 
   run search_pi_sessions "fivetran" 30 "$BATS_TEST_TMPDIR/pi-sessions"
   [ "$status" -eq 0 ]
-  [[ "$output" == *'"source":"pi"'* ]]
-  [[ "$output" == *'"sessionId":"pi-session-1"'* ]]
+  [[ "$output" == *'"source":"pi"'* ]] || false
+  [[ "$output" == *'"sessionId":"pi-session-1"'* ]] || false
   [[ "$output" == *'"project":"widget"'* ]]
 }
 

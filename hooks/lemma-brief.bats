@@ -65,7 +65,7 @@ queue() { printf '%s\t%s\t%s\t%s\n' "$1" "$2" 100 "$3" >> "$CLAUDE_RIG_LEMMA_QUE
 
   run "$HOOK"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"2 commits"* ]]
+  [[ "$output" == *"2 commits"* ]] || false
   [[ "$output" == *"claude-rig"* ]]
 }
 
@@ -75,7 +75,7 @@ queue() { printf '%s\t%s\t%s\t%s\n' "$1" "$2" 100 "$3" >> "$CLAUDE_RIG_LEMMA_QUE
   queue questor   aaa1111 "theirs too"
 
   run "$HOOK"
-  [[ "$output" == *"1 commit"* ]]
+  [[ "$output" == *"1 commit"* ]] || false
   [[ "$output" != *"3 commits"* ]]
 }
 
@@ -111,7 +111,7 @@ EOF
   [ "$status" -eq 0 ]
   # Still reports the pending commit -- it is only the facts line that is
   # suppressed. "0 facts on record" is discouraging noise on day one.
-  [[ "$output" == *"1 commit"* ]]
+  [[ "$output" == *"1 commit"* ]] || false
   [[ "$output" != *"Facts on record"* ]]
 }
 

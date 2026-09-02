@@ -30,7 +30,7 @@ setup() {
   [ "$status" -eq 0 ]
 
   run cat "$CLAUDE_RIG_LEMMA_QUEUE"
-  [[ "$output" == "claude-rig"$'\t'"03d41dc"$'\t'* ]]
+  [[ "$output" == "claude-rig"$'\t'"03d41dc"$'\t'* ]] || false
   [[ "$output" == *"contract: record what each test established" ]]
 }
 

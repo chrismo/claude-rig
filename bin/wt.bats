@@ -44,22 +44,22 @@ EOF
 @test "parses dir and branch for ordinary worktrees" {
   run bash -c 'source "$1"; printf "%s\n" "worktree /x/r" "HEAD abc" "branch refs/heads/main" | wt_parse_worktrees' _ "$WT"
   [ "$status" -eq 0 ]
-  [[ "$output" == *'"dir":"/x/r"'* ]]
-  [[ "$output" == *'"branch":"main"'* ]]
+  [[ "$output" == *'"dir":"/x/r"'* ]] || false
+  [[ "$output" == *'"branch":"main"'* ]] || false
   [[ "$output" == *'"leaf":"r"'* ]]
 }
 
 @test "a detached worktree gets a readable branch label, not an error value" {
   run bash -c 'source "$1"; printf "%s\n" "worktree /x/d" "HEAD abc" "detached" | wt_parse_worktrees' _ "$WT"
   [ "$status" -eq 0 ]
-  [[ "$output" == *'(detached)'* ]]
+  [[ "$output" == *'(detached)'* ]] || false
   [[ "$output" != *'error'* ]]
 }
 
 @test "a bare worktree gets a readable branch label" {
   run bash -c 'source "$1"; printf "%s\n" "worktree /x/bare" "HEAD abc" "bare" | wt_parse_worktrees' _ "$WT"
   [ "$status" -eq 0 ]
-  [[ "$output" == *'(bare)'* ]]
+  [[ "$output" == *'(bare)'* ]] || false
   [[ "$output" != *'error'* ]]
 }
 
@@ -69,29 +69,29 @@ EOF
   run bash -c 'source "$1"; wt_parse_worktrees' _ "$WT" <<< "$(porcelain_with_detached_middle)"
   [ "$status" -eq 0 ]
   [ "$(printf '%s\n' "$output" | grep -c .)" -eq 3 ]
-  [[ "$output" == *'"dir":"/x/b","branch":"feat"'* ]]
+  [[ "$output" == *'"dir":"/x/b","branch":"feat"'* ]] || false
   [[ "$output" != *'null'* ]]
 }
 
 @test "preserves the order git reported" {
   run bash -c 'source "$1"; wt_parse_worktrees' _ "$WT" <<< "$(porcelain_with_detached_middle)"
   [ "$status" -eq 0 ]
-  [[ "$(printf '%s\n' "$output" | sed -n 1p)" == *'/x/r'* ]]
-  [[ "$(printf '%s\n' "$output" | sed -n 2p)" == *'/x/d'* ]]
+  [[ "$(printf '%s\n' "$output" | sed -n 1p)" == *'/x/r'* ]] || false
+  [[ "$(printf '%s\n' "$output" | sed -n 2p)" == *'/x/d'* ]] || false
   [[ "$(printf '%s\n' "$output" | sed -n 3p)" == *'/x/b'* ]]
 }
 
 @test "handles paths containing spaces" {
   run bash -c 'source "$1"; printf "%s\n" "worktree /x/my project" "HEAD abc" "branch refs/heads/main" | wt_parse_worktrees' _ "$WT"
   [ "$status" -eq 0 ]
-  [[ "$output" == *'"dir":"/x/my project"'* ]]
+  [[ "$output" == *'"dir":"/x/my project"'* ]] || false
   [[ "$output" == *'"leaf":"my project"'* ]]
 }
 
 @test "a branch literally named 'detached' is not mangled into the placeholder" {
   run bash -c 'source "$1"; printf "%s\n" "worktree /x/w" "HEAD abc" "branch refs/heads/detached" | wt_parse_worktrees' _ "$WT"
   [ "$status" -eq 0 ]
-  [[ "$output" == *'"branch":"detached"'* ]]
+  [[ "$output" == *'"branch":"detached"'* ]] || false
   [[ "$output" != *'(detached)'* ]]
 }
 
@@ -116,8 +116,8 @@ EOF
   run bash -c 'source "$1"; wt_parse_worktrees | wt_display_lines' _ "$WT" \
     <<< "$(porcelain_with_detached_middle)"
   [ "$status" -eq 0 ]
-  [[ "$(printf '%s\n' "$output" | sed -n 1p)" == $'/x/r\tr [main]' ]]
-  [[ "$(printf '%s\n' "$output" | sed -n 2p)" == $'/x/d\td [(detached)]' ]]
+  [[ "$(printf '%s\n' "$output" | sed -n 1p)" == $'/x/r\tr [main]' ]] || false
+  [[ "$(printf '%s\n' "$output" | sed -n 2p)" == $'/x/d\td [(detached)]' ]] || false
   [[ "$(printf '%s\n' "$output" | sed -n 3p)" == $'/x/b\tb [feat]' ]]
 }
 

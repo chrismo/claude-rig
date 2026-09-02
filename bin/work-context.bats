@@ -46,7 +46,7 @@ setup() {
   [ "$status" -eq 0 ]
   # If the gitdir->worktree path strip is wrong, the dir won't exist and the
   # worktree record is dropped. This pins that derivation.
-  [[ "$output" == *'"name":"wt-feature"'* ]]
+  [[ "$output" == *'"name":"wt-feature"'* ]] || false
   [[ "$output" == *'"branch":"feature"'* ]]
 }
 
@@ -61,16 +61,16 @@ setup() {
   run collect_worktree_data
   [ "$status" -eq 0 ]
   for line in "${lines[@]}"; do
-    [[ "$line" == '{'*'}' ]]
-    [[ "$line" == *'"branch":'* ]]
-    [[ "$line" == *'"commit_ts":'* ]]
+    [[ "$line" == '{'*'}' ]] || false
+    [[ "$line" == *'"branch":'* ]] || false
+    [[ "$line" == *'"commit_ts":'* ]] || false
   done
 }
 
 @test "reports a clean worktree as not dirty" {
   run collect_worktree_data
   [ "$status" -eq 0 ]
-  [[ "$output" == *'"dirty":false'* ]]
+  [[ "$output" == *'"dirty":false'* ]] || false
   [[ "$output" != *'"dirty":true'* ]]
 }
 

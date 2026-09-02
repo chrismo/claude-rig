@@ -82,8 +82,8 @@ expected_ref() {
 
   run "$PEER" --list
   [ "$status" -eq 0 ]
-  [[ "$output" == *"alpha"* ]]
-  [[ "$output" == *"$$"* ]]
+  [[ "$output" == *"alpha"* ]] || false
+  [[ "$output" == *"$$"* ]] || false
   [[ "$output" == *"$(expected_ref "$sock")"* ]]
 }
 
@@ -136,7 +136,7 @@ s = socket.socket(socket.AF_UNIX); s.bind('$sock'); s.close()"
 
   run "$PEER" --all
   [ "$status" -eq 0 ]
-  [[ "$output" == *"ghost"* ]]
+  [[ "$output" == *"ghost"* ]] || false
   [[ "$output" == *"unreachable"* ]]
 }
 
@@ -298,7 +298,7 @@ json.dump(d, open(f,'w'))
 
   run "$PEER" --watch --interval 0.2 --timeout 15
   [ "$status" -eq 0 ]
-  [[ "$output" == *"alpha"* ]]
+  [[ "$output" == *"alpha"* ]] || false
   [[ "$output" == *"idle"* ]]
 }
 
@@ -315,7 +315,7 @@ json.dump(d, open(f,'w'))
   [ "$status" -eq 0 ]
   # It fires on the transition INTO idle. The line names the prior status too,
   # so assert on what it fired on, not on the mere presence of the word.
-  [[ "$output" == *"-> idle"* ]]
+  [[ "$output" == *"-> idle"* ]] || false
   [[ "$output" != *"-> shell"* ]]
 }
 
@@ -397,7 +397,7 @@ reg_count() { ls "$CLAUDE_SESSIONS_META_DIR" 2>/dev/null | wc -l | tr -d ' '; }
 
   CLAUDE_PEER_SOCKET_DIR="$(ASK_SOCK_DIR)" run "$PEER" --ask builder "did it land?" --timeout 15
   [ "$status" -eq 0 ]
-  [[ "$output" == *"migration landed, 8 tables verified"* ]]
+  [[ "$output" == *"migration landed, 8 tables verified"* ]] || false
   [[ "$output" != *"cross-session-message"* ]]
 }
 
@@ -491,7 +491,7 @@ reg_count() { ls "$CLAUDE_SESSIONS_META_DIR" 2>/dev/null | wc -l | tr -d ' '; }
   CLAUDE_PEER_SOCKET_DIR="$(ASK_SOCK_DIR)" run "$PEER" --ask mute "q" --timeout 4
 
   run cat "$BATS_TEST_TMPDIR/names"
-  [[ "$output" == *"peer-ask-"* ]]
+  [[ "$output" == *"peer-ask-"* ]] || false
   # A session socket is <pid>.sock; ours must never match that shape.
   [[ ! "$output" =~ ^[0-9]+\.sock$ ]]
 }
@@ -518,6 +518,6 @@ reg_count() { ls "$CLAUDE_SESSIONS_META_DIR" 2>/dev/null | wc -l | tr -d ' '; }
   [ "$status" -eq 2 ]
 
   run cat "$got"
-  [[ "$output" == *"uds:"* ]]
+  [[ "$output" == *"uds:"* ]] || false
   [[ "$output" == *"peer-ask-"* ]]
 }

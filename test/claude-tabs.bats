@@ -90,9 +90,9 @@ registry_line() {
   write_transcript /Users/chrismo/dev/ds5 abc-123-def
 
   run detect_sessions "$(registry_line /Users/chrismo/dev/ds5 abc-123-def)"
-  [[ "$status" -eq 0 ]]
-  [[ "$output" == *'"path": "/Users/chrismo/dev/ds5"'* ]]
-  [[ "$output" == *'"session_id": "abc-123-def"'* ]]
+  [[ "$status" -eq 0 ]] || false
+  [[ "$output" == *'"path": "/Users/chrismo/dev/ds5"'* ]] || false
+  [[ "$output" == *'"session_id": "abc-123-def"'* ]] || false
   [[ "$output" == *'"name": "ds5"'* ]]
 }
 
@@ -113,15 +113,15 @@ registry_line() {
             registry_line /Users/chrismo/dev/ds5 sess-c)"
 
   run detect_sessions "$ndjson"
-  [[ "$status" -eq 0 ]]
+  [[ "$status" -eq 0 ]] || false
 
   local path_count
   path_count=$(echo "$output" | grep -c '"path": "/Users/chrismo/dev/ds5"')
-  [[ "$path_count" -eq 3 ]]
+  [[ "$path_count" -eq 3 ]] || false
 
-  [[ "$output" == *'"session_id": "sess-a"'* ]]
-  [[ "$output" == *'"session_id": "sess-b"'* ]]
-  [[ "$output" == *'"session_id": "sess-c"'* ]]
+  [[ "$output" == *'"session_id": "sess-a"'* ]] || false
+  [[ "$output" == *'"session_id": "sess-b"'* ]] || false
+  [[ "$output" == *'"session_id": "sess-c"'* ]] || false
   [[ "$output" != *'"session_id": "old-stale"'* ]]
 }
 
@@ -131,7 +131,7 @@ registry_line() {
   # A tab opened but never typed into: the registry has it, but Claude has
   # written no transcript, so `claude --resume` has nothing to reopen.
   run detect_sessions "$(registry_line /Users/chrismo/dev/ds5 never-prompted)"
-  [[ "$status" -eq 0 ]]
+  [[ "$status" -eq 0 ]] || false
   [[ "$output" == "[]" ]]
 }
 
@@ -147,7 +147,7 @@ registry_line() {
             registry_line /Users/chrismo/dev/ds5 daemon-1 daemon)"
 
   run detect_sessions "$ndjson"
-  [[ "$status" -eq 0 ]]
+  [[ "$status" -eq 0 ]] || false
   [[ "$output" == "[]" ]]
 }
 
@@ -157,7 +157,7 @@ registry_line() {
   write_transcript /Users/chrismo/dev/ds5 no-kind
 
   run detect_sessions "$(registry_line /Users/chrismo/dev/ds5 no-kind '')"
-  [[ "$status" -eq 0 ]]
+  [[ "$status" -eq 0 ]] || false
   [[ "$output" == *'"session_id": "no-kind"'* ]]
 }
 
@@ -165,7 +165,7 @@ registry_line() {
   source "$CLAUDE_TABS"
 
   run detect_sessions ""
-  [[ "$status" -eq 0 ]]
+  [[ "$status" -eq 0 ]] || false
   [[ "$output" == "[]" ]]
 }
 
@@ -179,10 +179,10 @@ registry_line() {
             registry_line /Users/chrismo/dev/mta def-456)"
 
   run detect_sessions "$ndjson"
-  [[ "$status" -eq 0 ]]
-  [[ "$output" == *'"name": "ds5"'* ]]
-  [[ "$output" == *'"name": "mta"'* ]]
-  [[ "$output" == *'"session_id": "abc-123"'* ]]
+  [[ "$status" -eq 0 ]] || false
+  [[ "$output" == *'"name": "ds5"'* ]] || false
+  [[ "$output" == *'"name": "mta"'* ]] || false
+  [[ "$output" == *'"session_id": "abc-123"'* ]] || false
   [[ "$output" == *'"session_id": "def-456"'* ]]
 }
 
@@ -199,8 +199,8 @@ registry_line() {
   write_session "$$" /Users/chrismo/dev/ds5 abc-123
 
   run read_registry
-  [[ "$status" -eq 0 ]]
-  [[ "$output" == *'"cwd":"/Users/chrismo/dev/ds5"'* ]]
+  [[ "$status" -eq 0 ]] || false
+  [[ "$output" == *'"cwd":"/Users/chrismo/dev/ds5"'* ]] || false
   [[ "$output" == *'"sessionId":"abc-123"'* ]]
 }
 
@@ -213,8 +213,8 @@ registry_line() {
   write_session "$$" /Users/chrismo/dev/ds5 abc-123
 
   run read_registry
-  [[ "$status" -eq 0 ]]
-  [[ "$output" == *'"sessionId":"abc-123"'* ]]
+  [[ "$status" -eq 0 ]] || false
+  [[ "$output" == *'"sessionId":"abc-123"'* ]] || false
   [[ "$output" != *"dead-1"* ]]
 }
 
@@ -226,8 +226,8 @@ registry_line() {
   echo 'not json' > "$CLAUDE_TABS_SESSIONS_DIR/README.txt"
 
   run read_registry
-  [[ "$status" -eq 0 ]]
-  [[ "$output" != *"junk-1"* ]]
+  [[ "$status" -eq 0 ]] || false
+  [[ "$output" != *"junk-1"* ]] || false
   [[ "$output" != *"not json"* ]]
 }
 
@@ -236,7 +236,7 @@ registry_line() {
 
   export CLAUDE_TABS_SESSIONS_DIR="$TEST_DIR/no-such-dir"
   run read_registry
-  [[ "$status" -eq 0 ]]
+  [[ "$status" -eq 0 ]] || false
   [[ -z "$output" ]]
 }
 
@@ -256,8 +256,8 @@ registry_line() {
   write_session "$$" /Users/chrismo/dev/ds5 abc-123
 
   run read_registry
-  [[ "$status" -eq 0 ]]
-  [[ "$output" != *"should not be called"* ]]
+  [[ "$status" -eq 0 ]] || false
+  [[ "$output" != *"should not be called"* ]] || false
   [[ "$output" == *'"sessionId":"abc-123"'* ]]
 }
 
@@ -274,12 +274,12 @@ registry_line() {
 
   # Save
   run cmd_save
-  [[ "$status" -eq 0 ]]
-  [[ -f "$CLAUDE_TABS_MANIFEST" ]]
+  [[ "$status" -eq 0 ]] || false
+  [[ -f "$CLAUDE_TABS_MANIFEST" ]] || false
 
   # Verify manifest content
   run cat "$CLAUDE_TABS_MANIFEST"
-  [[ "$output" == *'"path": "/Users/chrismo/dev/ds5"'* ]]
+  [[ "$output" == *'"path": "/Users/chrismo/dev/ds5"'* ]] || false
   [[ "$output" == *'"session_id": "abc-123"'* ]]
 }
 
@@ -293,7 +293,7 @@ registry_line() {
   write_transcript /Users/chrismo/dev/mta def-456
 
   run cmd_save
-  [[ "$status" -eq 0 ]]
+  [[ "$status" -eq 0 ]] || false
   [[ "$output" == *"Saved 2 sessions"* ]]
 }
 
@@ -305,12 +305,12 @@ registry_line() {
   write_transcript /Users/chrismo/dev/ds5 abc-123
 
   run cmd_list_active
-  [[ "$status" -eq 0 ]]
+  [[ "$status" -eq 0 ]] || false
   # Should contain box-drawing characters from grdy table
-  [[ "$output" == *"╭"* ]]
-  [[ "$output" == *"ds5"* ]]
+  [[ "$output" == *"╭"* ]] || false
+  [[ "$output" == *"ds5"* ]] || false
   # Should NOT contain the old "active Claude sessions" text
-  [[ "$output" != *"active Claude sessions"* ]]
+  [[ "$output" != *"active Claude sessions"* ]] || false
   # Manifest should NOT be written
   [[ ! -f "$CLAUDE_TABS_MANIFEST" ]]
 }
@@ -337,7 +337,7 @@ registry_line() {
   mango_idx=$(echo "$manifest" | grep -n '"name": "mango"' | head -1 | cut -d: -f1)
   zebra_idx=$(echo "$manifest" | grep -n '"name": "zebra"' | head -1 | cut -d: -f1)
 
-  [[ "$apple_idx" -lt "$mango_idx" ]]
+  [[ "$apple_idx" -lt "$mango_idx" ]] || false
   [[ "$mango_idx" -lt "$zebra_idx" ]]
 }
 
@@ -349,7 +349,7 @@ registry_line() {
   write_session 3616 /Users/chrismo/dev/never-prompted zzz-999
 
   run cmd_list_active
-  [[ "$status" -eq 0 ]]
+  [[ "$status" -eq 0 ]] || false
   [[ -z "$output" ]]
 }
 
@@ -368,11 +368,11 @@ registry_line() {
 MANIFEST
 
   run cmd_list_saved
-  [[ "$status" -eq 0 ]]
+  [[ "$status" -eq 0 ]] || false
   # Box-drawing chars from the grdy table
-  [[ "$output" == *"╭"* ]]
-  [[ "$output" == *"ds5"* ]]
-  [[ "$output" == *"mta"* ]]
+  [[ "$output" == *"╭"* ]] || false
+  [[ "$output" == *"ds5"* ]] || false
+  [[ "$output" == *"mta"* ]] || false
   [[ "$output" == *"abc-123"* ]]
 }
 
@@ -391,8 +391,8 @@ MANIFEST
 MANIFEST
 
   run cmd_list_saved
-  [[ "$status" -eq 0 ]]
-  [[ "$output" == *"ds5"* ]]
+  [[ "$status" -eq 0 ]] || false
+  [[ "$output" == *"ds5"* ]] || false
   [[ "$output" != *"live-only"* ]]
 }
 
@@ -401,8 +401,8 @@ MANIFEST
 
   export CLAUDE_TABS_MANIFEST="$TEST_DIR/nonexistent.json"
   run cmd_list_saved
-  [[ "$status" -eq 0 ]]
-  [[ "$output" == *"$TEST_DIR/nonexistent.json"* ]]
+  [[ "$status" -eq 0 ]] || false
+  [[ "$output" == *"$TEST_DIR/nonexistent.json"* ]] || false
   [[ "$output" == *"o saved"* ]]
 }
 
@@ -411,7 +411,7 @@ MANIFEST
 
   echo "[]" > "$CLAUDE_TABS_MANIFEST"
   run cmd_list_saved
-  [[ "$status" -eq 0 ]]
+  [[ "$status" -eq 0 ]] || false
   [[ "$output" == *"empty"* ]]
 }
 
@@ -432,8 +432,8 @@ MANIFEST
 
   export CLAUDE_TABS_DRY_RUN=1
   run cmd_restore
-  [[ "$status" -eq 0 ]]
-  [[ "$output" == *"/Users/chrismo/dev/ds5 --resume abc-123"* ]]
+  [[ "$status" -eq 0 ]] || false
+  [[ "$output" == *"/Users/chrismo/dev/ds5 --resume abc-123"* ]] || false
   [[ "$output" == *"/Users/chrismo/dev/mta --resume def-456"* ]]
 }
 
@@ -442,7 +442,7 @@ MANIFEST
 
   export CLAUDE_TABS_MANIFEST="$TEST_DIR/nonexistent.json"
   run cmd_restore
-  [[ "$status" -ne 0 ]]
+  [[ "$status" -ne 0 ]] || false
   [[ "$output" == *"not found"* ]]
 }
 
@@ -469,17 +469,17 @@ MANIFEST
 
   cmd_restore
 
-  [[ -f "$CLAUDE_TABS_CMD_DIR/cmd-0.txt" ]]
-  [[ -f "$CLAUDE_TABS_CMD_DIR/cmd-1.txt" ]]
+  [[ -f "$CLAUDE_TABS_CMD_DIR/cmd-0.txt" ]] || false
+  [[ -f "$CLAUDE_TABS_CMD_DIR/cmd-1.txt" ]] || false
 
   local cmd0
   cmd0=$(cat "$CLAUDE_TABS_CMD_DIR/cmd-0.txt")
-  [[ "$cmd0" == *"cd /Users/chrismo/dev/ds5"* ]]
-  [[ "$cmd0" == *"claude --resume abc-123"* ]]
+  [[ "$cmd0" == *"cd /Users/chrismo/dev/ds5"* ]] || false
+  [[ "$cmd0" == *"claude --resume abc-123"* ]] || false
 
   local cmd1
   cmd1=$(cat "$CLAUDE_TABS_CMD_DIR/cmd-1.txt")
-  [[ "$cmd1" == *"cd /Users/chrismo/dev/mta"* ]]
+  [[ "$cmd1" == *"cd /Users/chrismo/dev/mta"* ]] || false
   [[ "$cmd1" == *"claude --resume def-456"* ]]
 }
 
@@ -514,7 +514,7 @@ MANIFEST
 
   cmd_restore
 
-  [[ -f "$OSASCRIPT_COUNT_FILE" ]]
+  [[ -f "$OSASCRIPT_COUNT_FILE" ]] || false
   local count
   count=$(cat "$OSASCRIPT_COUNT_FILE")
   [[ "$count" -eq 1 ]]
@@ -526,9 +526,9 @@ MANIFEST
   local script
   script=$(build_restore_applescript "/tmp/test-cmds" 3)
 
-  [[ "$script" == *'set sessionCount to 3'* ]]
-  [[ "$script" == *'/tmp/test-cmds'* ]]
-  [[ "$script" == *'sendToTerminal'* ]]
+  [[ "$script" == *'set sessionCount to 3'* ]] || false
+  [[ "$script" == *'/tmp/test-cmds'* ]] || false
+  [[ "$script" == *'sendToTerminal'* ]] || false
   [[ "$script" == *'new tab'* ]]
 }
 
@@ -540,11 +540,11 @@ MANIFEST
   export CLAUDE_TABS_HISTORY_DIR="$TEST_DIR/tab-history"
 
   run "$CLAUDE_TABS"
-  [[ "$status" -ne 0 ]]
-  [[ "$output" == *"list-active"* ]]
-  [[ "$output" == *"list-saved"* ]]
+  [[ "$status" -ne 0 ]] || false
+  [[ "$output" == *"list-active"* ]] || false
+  [[ "$output" == *"list-saved"* ]] || false
   # Plain `list` is gone — must not be advertised.
-  [[ "$output" != *"  list "* ]]
+  [[ "$output" != *"  list "* ]] || false
   # History location is surfaced, with the real resolved path.
   [[ "$output" == *"$TEST_DIR/tab-history"* ]]
 }
@@ -563,7 +563,7 @@ MANIFEST
 
   cmd_save
 
-  [[ -d "$CLAUDE_TABS_HISTORY_DIR" ]]
+  [[ -d "$CLAUDE_TABS_HISTORY_DIR" ]] || false
   local count
   count=$(ls "$CLAUDE_TABS_HISTORY_DIR" | wc -l | tr -d ' ')
   [[ "$count" -eq 1 ]]
@@ -614,7 +614,7 @@ MANIFEST
   export CLAUDE_SLOT_CMD_DIR="$TEST_DIR/slot-cmd"
   mkdir -p "$TEST_DIR/worktree"
   run "$CLAUDE_SLOT" "$TEST_DIR/worktree" --resume abc-123-def
-  [[ "$status" -eq 0 ]]
+  [[ "$status" -eq 0 ]] || false
 
   cmd=$(cat "$CLAUDE_SLOT_CMD_DIR/cmd.txt")
   [[ "$cmd" == *"claude --resume abc-123-def"* ]]
@@ -629,10 +629,10 @@ MANIFEST
   export CLAUDE_SLOT_CMD_DIR="$TEST_DIR/slot-cmd"
   mkdir -p "$TEST_DIR/worktree"
   run "$CLAUDE_SLOT" "$TEST_DIR/worktree" --resume abc-123
-  [[ "$status" -eq 0 ]]
+  [[ "$status" -eq 0 ]] || false
 
   cmd=$(cat "$CLAUDE_SLOT_CMD_DIR/cmd.txt")
-  [[ "$cmd" == *"claude --resume abc-123"* ]]
+  [[ "$cmd" == *"claude --resume abc-123"* ]] || false
   [[ "$cmd" != *"claude --resume abc-123 \""* ]]
 }
 
@@ -645,7 +645,7 @@ MANIFEST
   export CLAUDE_SLOT_CMD_DIR="$TEST_DIR/slot-cmd"
   mkdir -p "$TEST_DIR/worktree"
   run "$CLAUDE_SLOT" "$TEST_DIR/worktree" /mta:join PROJ-123
-  [[ "$status" -eq 0 ]]
+  [[ "$status" -eq 0 ]] || false
 
   cmd=$(cat "$CLAUDE_SLOT_CMD_DIR/cmd.txt")
   [[ "$cmd" == *'claude "/mta:join PROJ-123"'* ]]
@@ -660,7 +660,7 @@ MANIFEST
   export CLAUDE_SLOT_CMD_DIR="$TEST_DIR/slot-cmd"
   mkdir -p "$TEST_DIR/worktree"
   run "$CLAUDE_SLOT" "$TEST_DIR/worktree"
-  [[ "$status" -eq 0 ]]
+  [[ "$status" -eq 0 ]] || false
 
   cmd=$(cat "$CLAUDE_SLOT_CMD_DIR/cmd.txt")
   [[ "$cmd" == *"&& claude" ]]

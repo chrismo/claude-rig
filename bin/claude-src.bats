@@ -48,7 +48,7 @@ fake_binary() {
 
   run extract_bundle "$TEST_DIR/2.1.224"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"XDG_RUNTIME_DIR"* ]]
+  [[ "$output" == *"XDG_RUNTIME_DIR"* ]] || false
   [[ "$output" != *$'\001'* ]]
 }
 
@@ -87,8 +87,8 @@ fake_binary() {
   # not part of the answer.
   run --separate-stderr ensure_extracted "$TEST_DIR/2.1.224"
   [ "$status" -eq 0 ]
-  [[ "$output" == "$CLAUDE_SRC_CACHE_DIR/2.1.224.lines" ]]
-  [[ -f "$CLAUDE_SRC_CACHE_DIR/2.1.224.lines" ]]
+  [[ "$output" == "$CLAUDE_SRC_CACHE_DIR/2.1.224.lines" ]] || false
+  [[ -f "$CLAUDE_SRC_CACHE_DIR/2.1.224.lines" ]] || false
 
   # Second call must not re-read the binary — prove it by making the binary
   # unreadable and asking again.
@@ -112,7 +112,7 @@ fake_binary() {
 
   ensure_extracted "$TEST_DIR/2.1.224" > /dev/null
   run cat "$CLAUDE_SRC_CACHE_DIR/2.1.224.lines"
-  [[ "$output" == *"REBUILT"* ]]
+  [[ "$output" == *"REBUILT"* ]] || false
   [[ "$output" != *"XDG_RUNTIME_DIR"* ]]
 }
 
@@ -150,7 +150,7 @@ fake_binary() {
 
   run cmd_search "XDG_RUNTIME_DIR"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"XDG_RUNTIME_DIR"* ]]
+  [[ "$output" == *"XDG_RUNTIME_DIR"* ]] || false
   # Context lines carry the neighbouring statement.
   [[ "$output" == *"return e"* ]]
 }

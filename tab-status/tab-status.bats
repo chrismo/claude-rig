@@ -61,7 +61,7 @@ make_transcript() {
   run compute_title </dev/null
 
   [ "$status" -eq 0 ]
-  [[ "$output" == *"(find-difficult-words-script)"* ]]
+  [[ "$output" == *"(find-difficult-words-script)"* ]] || false
   [[ "$output" != *"(main)"* ]]
 }
 
@@ -79,7 +79,7 @@ make_transcript() {
   run compute_title </dev/null
 
   [ "$status" -eq 0 ]
-  [[ "$output" == *"(third-name)"* ]]
+  [[ "$output" == *"(third-name)"* ]] || false
   [[ "$output" != *"first-name"* ]]
 }
 
@@ -89,7 +89,7 @@ make_transcript() {
   run compute_title </dev/null
 
   [ "$status" -eq 0 ]
-  [[ "$output" == *"(some-feature)"* ]]
+  [[ "$output" == *"(some-feature)"* ]] || false
   [[ "$output" != *"find-difficult-words-script"* ]]
 }
 
@@ -99,7 +99,7 @@ make_transcript() {
   run compute_title </dev/null
 
   [ "$status" -eq 0 ]
-  [[ "$output" == *"(stateful-petting-sunbeam)"* ]]
+  [[ "$output" == *"(stateful-petting-sunbeam)"* ]] || false
   [[ "$output" != *"(master)"* ]]
 }
 
@@ -109,7 +109,7 @@ make_transcript() {
   run compute_title </dev/null
 
   [ "$status" -eq 0 ]
-  [[ "$output" == *"plain"* ]]
+  [[ "$output" == *"plain"* ]] || false
   [[ "$output" != *"("* ]]
 }
 
@@ -120,7 +120,7 @@ make_transcript() {
   run compute_title </dev/null
 
   [ "$status" -eq 0 ]
-  [[ "$output" == *"🟢 "* ]]
+  [[ "$output" == *"🟢 "* ]] || false
   [[ "$output" == *"(find-difficult-words-script)"* ]]
 }
 
@@ -130,7 +130,7 @@ make_transcript() {
   run compute_title </dev/null
 
   [ "$status" -eq 0 ]
-  [[ "$output" == *"🟡 "* ]]
+  [[ "$output" == *"🟡 "* ]] || false
   [[ "$output" == *"(some-feature)"* ]]
 }
 

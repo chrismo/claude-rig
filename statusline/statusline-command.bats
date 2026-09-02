@@ -48,6 +48,6 @@ run_loader() {
   write_plugin "$PLUGINS/disabled/1.20-inactive" "INACTIVE"
 
   run run_loader
-  [[ "$output" == *"ACTIVE"* ]]
+  [[ "$output" == *"ACTIVE"* ]] || false
   [[ "$output" != *"INACTIVE"* ]]
 }

@@ -43,7 +43,7 @@ setup() {
 
   run "$HOOK"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"2.1.224"* ]]
+  [[ "$output" == *"2.1.224"* ]] || false
   [[ "$output" == *"2.1.231"* ]]
 }
 
@@ -177,7 +177,7 @@ setup() {
   printf 'A1\tpass\t2.1.231\t100\nR1\tskip\t2.1.231\t100\n' > "$CLAUDE_RIG_CONTRACT_RESULTS"
 
   run "$HOOK"
-  [[ "$output" == *"1 confirmed"* ]]
+  [[ "$output" == *"1 confirmed"* ]] || false
   [[ "$output" == *"1 skipped"* ]]
 }
 
@@ -188,7 +188,7 @@ setup() {
   printf 'A1\tpass\t2.1.231\t100\nB3\tfail\t2.1.231\t100\n' > "$CLAUDE_RIG_CONTRACT_RESULTS"
 
   run "$HOOK"
-  [[ "$output" == *"B3"* ]]
+  [[ "$output" == *"B3"* ]] || false
   [[ "$output" == *"failing"* ]]
 }
 
@@ -211,7 +211,7 @@ setup() {
   printf 'A1\tfail\t2.1.231\t100\nA1\tpass\t2.1.231\t200\n' > "$CLAUDE_RIG_CONTRACT_RESULTS"
 
   run "$HOOK"
-  [[ "$output" == *"1 confirmed"* ]]
+  [[ "$output" == *"1 confirmed"* ]] || false
   [[ "$output" != *"failing"* ]]
 }
 
@@ -222,7 +222,7 @@ setup() {
 
   run "$HOOK"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"2.1.231"* ]]
+  [[ "$output" == *"2.1.231"* ]] || false
   [[ "$output" != *"confirmed"* ]]
 }
 

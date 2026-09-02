@@ -192,7 +192,7 @@ EOF
 
   run bash "$PLUGIN"
   # No 4d3h or 4d12h compound — only 4d
-  [[ ! "$output" =~ [0-9]d[0-9] ]]
+  [[ ! "$output" =~ [0-9]d[0-9] ]] || false
   [[ "$output" == *"] 4d"* ]]
 }
 
@@ -204,7 +204,7 @@ EOF
   write_input 5 "$five_resets" 5 "$seven_resets"
 
   run bash "$PLUGIN"
-  [[ ! "$output" =~ [0-9]h[0-9] ]]
+  [[ ! "$output" =~ [0-9]h[0-9] ]] || false
   [[ "$output" == *"] 1h"* ]]
 }
 
@@ -240,7 +240,7 @@ EOF
 EOF
 
   run bash "$PLUGIN"
-  [[ "$output" != *'error("missing")'* ]]
+  [[ "$output" != *'error("missing")'* ]] || false
   [[ "$output" == *'] ?'* ]]
 }
 
@@ -254,7 +254,7 @@ EOF
   write_input 50 "$five_resets" 50 "$seven_resets"
 
   run bash "$PLUGIN"
-  [[ "$output" == *"${GREEN}5h"* ]]
+  [[ "$output" == *"${GREEN}5h"* ]] || false
   [[ "$output" == *"${GREEN}7d"* ]]
 }
 

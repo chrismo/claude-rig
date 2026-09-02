@@ -66,7 +66,7 @@ JSON
 @test "individual plan: names the account kind and points at the status line" {
   individual_plan
   run "$S"
-  [[ "$output" == *"usage credits"* ]]
+  [[ "$output" == *"usage credits"* ]] || false
   [[ "$output" == *"status line"* ]]
 }
 
@@ -87,16 +87,16 @@ JSON
   with_spend_limit 1234 5000 25
   run "$S"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"25%"* ]]
-  [[ "$output" == *'$12'* ]]
+  [[ "$output" == *"25%"* ]] || false
+  [[ "$output" == *'$12'* ]] || false
   [[ "$output" == *'$50'* ]]
 }
 
 @test "cents round to the nearest dollar, half up" {
   with_spend_limit 1250 10000 5
   run "$S"
-  [[ "$output" == *'$13'* ]]
-  [[ "$output" == *'$100'* ]]
+  [[ "$output" == *'$13'* ]] || false
+  [[ "$output" == *'$100'* ]] || false
   [[ "$output" != *"."* ]]
 }
 
@@ -119,7 +119,7 @@ JSON
 JSON
   run "$S"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"12 EUR"* ]]
+  [[ "$output" == *"12 EUR"* ]] || false
   [[ "$output" != *'$'* ]]
 }
 
@@ -189,7 +189,7 @@ JSON
   echo '{"spend":{"used":{"amount_minor":9900,"currency":"USD","exponent":2},"limit":{"amount_minor":9900,"currency":"USD","exponent":2},"percent":99,"enabled":true}}' > "$CLAUDE_RIG_SPEND_CACHE"
   with_spend_limit 1234 5000 25
   run "$S"
-  [[ "$output" == *'$99'* ]]
+  [[ "$output" == *'$99'* ]] || false
   [[ "$output" != *'$12'* ]]
 }
 

@@ -83,7 +83,7 @@ store_with() {
 
 @test "reports the engine as missing when it has not been built" {
   run "$I"
-  [[ "$output" == *"engine"* ]]
+  [[ "$output" == *"engine"* ]] || false
   [[ "$output" == *"not built"* || "$output" == *"missing"* ]]
 }
 
@@ -132,7 +132,7 @@ store_with() {
 EOF
 
   run "$I"
-  [[ "$output" == *"other-repo"* ]]
+  [[ "$output" == *"other-repo"* ]] || false
   [[ "$output" == *"shadow"* ]]
 }
 
@@ -170,7 +170,7 @@ EOF
   edge sharding in_repo questor
 
   run "$I"
-  [[ "$output" == *"claude-rig"* ]]
+  [[ "$output" == *"claude-rig"* ]] || false
   [[ "$output" == *"questor"* ]]
 }
 
@@ -187,8 +187,8 @@ EOF
   queue home ccc3333 "elsewhere"
 
   run "$I"
-  [[ "$output" == *"3"* ]]
-  [[ "$output" == *"claude-rig"* ]]
+  [[ "$output" == *"3"* ]] || false
+  [[ "$output" == *"claude-rig"* ]] || false
   [[ "$output" == *"home"* ]]
 }
 
@@ -218,7 +218,7 @@ EOF
   store_with "s:claude-rig s:uses s:datalog"
 
   run "$I"
-  [[ "$output" == *"lemmalog_query"* ]]
+  [[ "$output" == *"lemmalog_query"* ]] || false
   [[ "$output" == *"lemmalog_why"* ]]
 }
 
@@ -265,7 +265,7 @@ new_store() { printf 'LEMMALOG1\nNOW\t100\nRULES\t\n' > "$CLAUDE_RIG_LEMMA_SNAPS
   edge sharding in_repo questor
 
   run "$I"
-  [[ "$output" == *"claude-rig"* ]]
+  [[ "$output" == *"claude-rig"* ]] || false
   [[ "$output" == *"questor"* ]]
 }
 
@@ -285,7 +285,7 @@ new_store() { printf 'LEMMALOG1\nNOW\t100\nRULES\t\n' > "$CLAUDE_RIG_LEMMA_SNAPS
 
   run "$I"
   # in_repo + the open location = 2, not 3
-  [[ "$output" == *"2"*"claude-rig"* ]]
+  [[ "$output" == *"2"*"claude-rig"* ]] || false
   [[ "$output" != *"3  claude-rig"* ]]
 }
 
@@ -300,7 +300,7 @@ new_store() { printf 'LEMMALOG1\nNOW\t100\nRULES\t\n' > "$CLAUDE_RIG_LEMMA_SNAPS
   export CLAUDE_RIG_LEMMA_MARKER="$BATS_TEST_TMPDIR/absent"
 
   run "$I"
-  [[ "$output" == *"hooks"* ]]
+  [[ "$output" == *"hooks"* ]] || false
   [[ "$output" == *"off"* || "$output" == *"disabled"* ]]
 }
 
@@ -318,7 +318,7 @@ new_store() { printf 'LEMMALOG1\nNOW\t100\nRULES\t\n' > "$CLAUDE_RIG_LEMMA_SNAPS
   : > "$CLAUDE_RIG_LEMMA_MARKER"
 
   run "$I"
-  [[ "$output" == *"hooks"* ]]
+  [[ "$output" == *"hooks"* ]] || false
   [[ "$output" != *"touch"* ]]
 }
 

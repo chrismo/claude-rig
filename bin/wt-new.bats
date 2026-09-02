@@ -99,7 +99,7 @@ setup() {
 @test "wt_new_main with no branch exits nonzero and says so on stderr" {
   run --separate-stderr wt_new_main
   [ "$status" -ne 0 ]
-  [[ "$stderr" == *"usage"* ]]
+  [[ "$stderr" == *"usage"* ]] || false
   [ -z "$output" ]
 }
 
@@ -239,7 +239,7 @@ EOF
   git config wt.setup 'true'
   run --separate-stderr wt_new_main announced
   [ "$status" -eq 0 ]
-  [[ "$stderr" == *"wt.setup"* ]]
+  [[ "$stderr" == *"wt.setup"* ]] || false
   [ "$output" = "$TMP/announced" ]
 }
 
@@ -278,8 +278,8 @@ EOF
   chmod +x "$REPO/.git/worktree-setup"
   run --separate-stderr wt_new_main failing-script
   [ "$status" -ne 0 ]
-  [[ "$stderr" == *"boom"* ]]
-  [[ "$stderr" == *"worktree-setup"* ]]
+  [[ "$stderr" == *"boom"* ]] || false
+  [[ "$stderr" == *"worktree-setup"* ]] || false
   [ "$output" = "$TMP/failing-script" ]
 }
 

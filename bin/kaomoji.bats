@@ -56,7 +56,7 @@ clipboard() { cat "$BATS_TEST_TMPDIR/clipboard"; }
 
 @test "the running man moved out of shrug into strut" {
   run "$KAOMOJI" list strut
-  [[ "$output" == *"ᕕ( ᐛ )ᕗ"* ]]
+  [[ "$output" == *"ᕕ( ᐛ )ᕗ"* ]] || false
   run "$KAOMOJI" list shrug
   [[ "$output" != *"ᕕ( ᐛ )ᕗ"* ]]
 }
@@ -65,7 +65,7 @@ clipboard() { cat "$BATS_TEST_TMPDIR/clipboard"; }
   # Regression guard for the actual bug: a face with ᕗ/ᕤ momentum arms is a
   # strut, not a shrug.
   run "$KAOMOJI" list shrug
-  [[ "$output" != *"ᕗ"* ]]
+  [[ "$output" != *"ᕗ"* ]] || false
   [[ "$output" != *"ᕤ"* ]]
 }
 
@@ -121,10 +121,10 @@ clipboard() { cat "$BATS_TEST_TMPDIR/clipboard"; }
   [ "$status" -eq 0 ]
   # The bare-word surface is the documented one; flags survive only as
   # undocumented back-compat aliases.
-  [[ "$output" != *"--catalog"* ]]
-  [[ "$output" != *"--moods"* ]]
-  [[ "$output" != *"--synonyms"* ]]
-  [[ "$output" != *"--list"* ]]
+  [[ "$output" != *"--catalog"* ]] || false
+  [[ "$output" != *"--moods"* ]] || false
+  [[ "$output" != *"--synonyms"* ]] || false
+  [[ "$output" != *"--list"* ]] || false
   [[ "$output" != *"--all"* ]]
 }
 
@@ -151,7 +151,7 @@ clipboard() { cat "$BATS_TEST_TMPDIR/clipboard"; }
 @test "--catalog groups faces under mood names" {
   run "$KAOMOJI" --catalog
   [ "$status" -eq 0 ]
-  [[ "$output" == *"shrug"* ]]
+  [[ "$output" == *"shrug"* ]] || false
   [[ "$output" == *"table-flip"* ]]
 }
 
@@ -270,8 +270,8 @@ clipboard() { cat "$BATS_TEST_TMPDIR/clipboard"; }
   [ "$status" -eq 0 ]
   while read -r alias target; do
     [ -n "$alias" ] || continue
-    [[ ! "$alias" =~ [[:space:]] ]]
-    [[ ! "$alias" =~ - ]]
+    [[ ! "$alias" =~ [[:space:]] ]] || false
+    [[ ! "$alias" =~ - ]] || false
   done <<< "$output"
 }
 
@@ -313,15 +313,15 @@ clipboard() { cat "$BATS_TEST_TMPDIR/clipboard"; }
 @test "unknown mood fails with a helpful message" {
   run "$KAOMOJI" nonsense
   [ "$status" -eq 1 ]
-  [[ "$output" == *"no such mood: nonsense"* ]]
+  [[ "$output" == *"no such mood: nonsense"* ]] || false
   [[ "$output" == *"moods:"* ]]
 }
 
 @test "--list with no mood lists mood names" {
   run "$KAOMOJI" --list
   [ "$status" -eq 0 ]
-  [[ "$output" == *"shrug"* ]]
-  [[ "$output" == *"table-flip"* ]]
+  [[ "$output" == *"shrug"* ]] || false
+  [[ "$output" == *"table-flip"* ]] || false
   [[ "$output" == *"friday"* ]]
 }
 
@@ -375,7 +375,7 @@ clipboard() { cat "$BATS_TEST_TMPDIR/clipboard"; }
   run "$KAOMOJI" --moods
   [ "$status" -eq 0 ]
   # No parens, no synonyms -- just names, one per line.
-  [[ "$output" != *"("* ]]
+  [[ "$output" != *"("* ]] || false
   [[ "$output" == *"rage"* ]]
 }
 
@@ -389,7 +389,7 @@ clipboard() { cat "$BATS_TEST_TMPDIR/clipboard"; }
 @test "bare 'list' subcommand lists mood names" {
   run "$KAOMOJI" list
   [ "$status" -eq 0 ]
-  [[ "$output" == *"shrug"* ]]
+  [[ "$output" == *"shrug"* ]] || false
   [[ "$output" == *"friday"* ]]
 }
 
@@ -458,7 +458,7 @@ clipboard() { cat "$BATS_TEST_TMPDIR/clipboard"; }
 @test "--all prints every mood with indented faces" {
   run "$KAOMOJI" --all
   [ "$status" -eq 0 ]
-  [[ "$output" == *"shrug:"* ]]
+  [[ "$output" == *"shrug:"* ]] || false
   [ ! -f "$BATS_TEST_TMPDIR/clipboard" ]
 }
 
@@ -508,8 +508,8 @@ clipboard() { cat "$BATS_TEST_TMPDIR/clipboard"; }
   run "$KAOMOJI" happy 4
   [ "$status" -eq 0 ]
   # No double spaces, no leading/trailing space.
-  [[ "$(clipboard)" != *"  "* ]]
-  [[ "$(clipboard)" != " "* ]]
+  [[ "$(clipboard)" != *"  "* ]] || false
+  [[ "$(clipboard)" != " "* ]] || false
   [[ "$(clipboard)" != *" " ]]
 }
 
@@ -549,7 +549,7 @@ clipboard() { cat "$BATS_TEST_TMPDIR/clipboard"; }
   run "$KAOMOJI" --list
   [ "$status" -eq 0 ]
   for mood in $output; do
-    [[ ! "$mood" =~ ^[0-9]+$ ]]
+    [[ ! "$mood" =~ ^[0-9]+$ ]] || false
   done
 }
 

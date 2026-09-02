@@ -26,12 +26,12 @@ setup() {
   # The old, racy approach pasted via the clipboard and routed cmd+v
   # through System Events — which delivered to whatever tab happened to
   # be focused. The new approach must target terminals directly.
-  [[ "$output" != *'keystroke "v"'* ]]
-  [[ "$output" != *"pbcopy"* ]]
+  [[ "$output" != *'keystroke "v"'* ]] || false
+  [[ "$output" != *"pbcopy"* ]] || false
 
   # New approach uses Ghostty's scripting commands.
-  [[ "$output" == *"input text"* ]]
-  [[ "$output" == *"send key"* ]]
+  [[ "$output" == *"input text"* ]] || false
+  [[ "$output" == *"send key"* ]] || false
   [[ "$output" == *"to terminal"* ]] || [[ "$output" == *"to term"* ]]
 }
 
@@ -41,7 +41,7 @@ setup() {
   [ "$status" -eq 0 ]
 
   # Old approach: keystroke "t" using command down (focus-dependent).
-  [[ "$output" != *'keystroke "t"'* ]]
+  [[ "$output" != *'keystroke "t"'* ]] || false
 
   # New approach: ask Ghostty to make a tab and hand us back the object.
   [[ "$output" == *"new tab"* ]]
@@ -56,7 +56,7 @@ setup() {
   # window — it can launch (or wake a backgrounded) Ghostty that has zero
   # windows. The script must explicitly create one via the scripting
   # dictionary's `new window` rather than waiting for activate to do it.
-  [[ "$output" == *"new window"* ]]
+  [[ "$output" == *"new window"* ]] || false
   [[ "$output" == *"count of windows"* ]]
 }
 
@@ -67,7 +67,7 @@ setup() {
 
   # Ghostty's `send key` rejects "return" with "Unknown key name: return".
   # Its key names use "enter" (per the scripting dictionary's own example).
-  [[ "$output" != *'send key "return"'* ]]
+  [[ "$output" != *'send key "return"'* ]] || false
   [[ "$output" == *'send key "enter"'* ]]
 }
 
@@ -75,7 +75,7 @@ setup() {
   run build_restore_applescript "/my/cmd/dir" 7
 
   [ "$status" -eq 0 ]
-  [[ "$output" == *"/my/cmd/dir"* ]]
+  [[ "$output" == *"/my/cmd/dir"* ]] || false
   [[ "$output" == *"7"* ]]
 }
 
@@ -105,8 +105,8 @@ setup() {
 
   first="$(echo "$output" | sed -n 1p)"
   second="$(echo "$output" | sed -n 2p)"
-  [[ "$first"  == *"tab-state-20260102-020202.json"$'\t'"2026-01-02 02:02:02" ]]
-  [[ "$second" == *"tab-state-20260101-010101.json"$'\t'"2026-01-01 01:01:01" ]]
+  [[ "$first"  == *"tab-state-20260102-020202.json"$'\t'"2026-01-02 02:02:02" ]] || false
+  [[ "$second" == *"tab-state-20260101-010101.json"$'\t'"2026-01-01 01:01:01" ]] || false
 
   rm -rf "$dir"
 }
@@ -115,6 +115,6 @@ setup() {
   dir="$(mktemp -d "${TMPDIR:-/tmp}/tab-hist-empty.XXXXXX")"
   run history_rows "$dir"
   [ "$status" -eq 0 ]
-  [[ -z "$output" ]]
+  [[ -z "$output" ]] || false
   rm -rf "$dir"
 }

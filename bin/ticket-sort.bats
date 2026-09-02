@@ -346,7 +346,7 @@ preview_fixture() {
   TS_SETTLED=([1]=1)     # position 1 is final, holding DEV-1
   run ts_preview 4
   # Line 1 is the header, so rank 2 lands on line 3.
-  [[ "$(sed -n 3p <<< "$output")" == *"DEV-1"* ]]
+  [[ "$(sed -n 3p <<< "$output")" == *"DEV-1"* ]] || false
   [[ "$(sed -n 3p <<< "$output")" == *"2."* ]]
 }
 
@@ -522,7 +522,7 @@ EOF
   run --separate-stderr env TS_COMPARISONS_FILE="$cache" TS_INPUT="$BATS_TEST_TMPDIR/answers" \
     bash "$TS" full < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
-  [[ "$stderr" == *"already placed"* ]]
+  [[ "$stderr" == *"already placed"* ]] || false
   [[ "$stderr" == *"1 new"* ]]
 }
 
@@ -921,7 +921,7 @@ EOF
   [ "$status" -eq 0 ]
   [ "$(grep -c . <<< "$output")" -eq 3 ]
   # Today's comparison is the one that survived, so C outranks A.
-  [[ "$output" == *"C"* && "$output" == *"A"* ]]
+  [[ "$output" == *"C"* && "$output" == *"A"* ]] || false
   local c_line a_line
   c_line=$(grep -n ' C ' <<< "$output" | cut -d: -f1)
   a_line=$(grep -n ' A ' <<< "$output" | cut -d: -f1)
@@ -1044,7 +1044,7 @@ EOF
     bash "$TS" full < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
   # X-2 was declared the winner, so it ranks first without any question asked.
-  [[ "$(head -1 <<< "$output")" == *"X-2"* ]]
+  [[ "$(head -1 <<< "$output")" == *"X-2"* ]] || false
   [[ "$stderr" == *"1 answer reused"* ]]
 }
 
@@ -1134,12 +1134,12 @@ FULL_TICKET='{"id":"ENG-412","title":"Fix checkout timeout","priority":"Urgent",
   TS_TODAY=2026-07-27
   run ts_render "$FULL_TICKET"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"ENG-412"* ]]
-  [[ "$output" == *"Fix checkout timeout"* ]]
-  [[ "$output" == *"Urgent"* ]]
-  [[ "$output" == *"2026-08-03"* ]]
-  [[ "$output" == *"P1 - 2 business days"* ]]
-  [[ "$output" == *"bug, customer"* ]]
+  [[ "$output" == *"ENG-412"* ]] || false
+  [[ "$output" == *"Fix checkout timeout"* ]] || false
+  [[ "$output" == *"Urgent"* ]] || false
+  [[ "$output" == *"2026-08-03"* ]] || false
+  [[ "$output" == *"P1 - 2 business days"* ]] || false
+  [[ "$output" == *"bug, customer"* ]] || false
   [[ "$output" == *"Checkout Revamp"* ]]
 }
 
@@ -1152,7 +1152,7 @@ FULL_TICKET='{"id":"ENG-412","title":"Fix checkout timeout","priority":"Urgent",
 @test "ts_render marks a past due date as overdue" {
   TS_TODAY=2026-08-10
   run ts_render "$FULL_TICKET"
-  [[ "$output" == *"OVERDUE"* ]]
+  [[ "$output" == *"OVERDUE"* ]] || false
   [[ "$output" == *"7d"* ]]
 }
 
@@ -1189,7 +1189,7 @@ FULL_TICKET='{"id":"ENG-412","title":"Fix checkout timeout","priority":"Urgent",
 @test "ts_render flags a breached SLA" {
   TS_TODAY=2026-08-10
   run ts_render '{"id":"E-1","title":"t","sla":"2026-08-03T17:00:00.000Z"}'
-  [[ "$output" == *"OVERDUE"* ]]
+  [[ "$output" == *"OVERDUE"* ]] || false
   [[ "$output" == *"7d"* ]]
 }
 
@@ -1204,7 +1204,7 @@ FULL_TICKET='{"id":"ENG-412","title":"Fix checkout timeout","priority":"Urgent",
   # nothing at day granularity.
   TS_TODAY=2026-07-27
   run ts_render '{"id":"E-1","title":"t","sla":"2026-08-03T17:00:00.000Z"}'
-  [[ "$output" == *"2026-08-03"* ]]
+  [[ "$output" == *"2026-08-03"* ]] || false
   [[ "$output" != *"T17:00:00"* ]]
 }
 
@@ -1232,7 +1232,7 @@ FULL_TICKET='{"id":"ENG-412","title":"Fix checkout timeout","priority":"Urgent",
   TS_TODAY=2026-07-27
   run ts_render '{"id":"ENG-9","title":"bare","status":"In Progress"}'
   [ "$status" -eq 0 ]
-  [[ "$output" == *"Status"* ]]
+  [[ "$output" == *"Status"* ]] || false
   [[ "$output" == *"In Progress"* ]]
 }
 
@@ -1246,8 +1246,8 @@ FULL_TICKET='{"id":"ENG-412","title":"Fix checkout timeout","priority":"Urgent",
   TS_TODAY=2026-07-27
   run ts_render '{"id":"ENG-9","title":"bare"}'
   [ "$status" -eq 0 ]
-  [[ "$output" == *"ENG-9"* ]]
-  [[ "$output" == *"bare"* ]]
+  [[ "$output" == *"ENG-9"* ]] || false
+  [[ "$output" == *"bare"* ]] || false
   [[ "$output" == *"—"* ]]
 }
 
@@ -1292,9 +1292,9 @@ EOF
   # ticket ahead; the result must still be a complete ranking of all three.
   run --separate-stderr run_sort $'1\n1\n1\n1\n1'
   [ "$status" -eq 0 ]
-  [[ "$output" == *"A"* ]]
-  [[ "$output" == *"B"* ]]
-  [[ "$output" == *"C"* ]]
+  [[ "$output" == *"A"* ]] || false
+  [[ "$output" == *"B"* ]] || false
+  [[ "$output" == *"C"* ]] || false
   [ "$(grep -c . <<< "$output")" -eq 3 ]
 }
 
@@ -1383,10 +1383,10 @@ EOF
   TS_SETTLED[2]=1   # settled past the head - must be numbered
   run ts_report no 1 4
   [ "$status" -eq 0 ]
-  [[ "$output" == *" 1. A"* ]]
-  [[ "$output" == *" 3. C"* ]]
+  [[ "$output" == *" 1. A"* ]] || false
+  [[ "$output" == *" 3. C"* ]] || false
   # B and D were never settled, so they stay dotted.
-  [[ "$output" == *"·  B"* ]]
+  [[ "$output" == *"·  B"* ]] || false
   [[ "$output" == *"·  D"* ]]
 }
 
@@ -1657,7 +1657,7 @@ EOF
     bash "$TS" prune < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
   [ "$(cat "$PRUNE_STORE")" = "$before" ]
-  [[ "$stderr" == *"dry run"* ]]
+  [[ "$stderr" == *"dry run"* ]] || false
   [[ "$stderr" == *"--apply"* ]]
 }
 
@@ -1670,7 +1670,7 @@ EOF
   run --separate-stderr env TS_COMPARISONS_FILE="$PRUNE_STORE" \
     bash "$TS" prune --force < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 2 ]
-  [[ "$stderr" == *"unknown option"* ]]
+  [[ "$stderr" == *"unknown option"* ]] || false
   [ "$(cat "$PRUNE_STORE")" = "$before" ]
 }
 
@@ -1681,7 +1681,7 @@ EOF
   run --separate-stderr env TS_COMPARISONS_FILE="$PRUNE_STORE" \
     bash "$TS" prune < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
-  [[ "$stderr" == *"A"* ]]
+  [[ "$stderr" == *"A"* ]] || false
   [[ "$stderr" == *"Done"* ]]
 }
 
@@ -1744,7 +1744,7 @@ EOF
   # /dev/null is how a test says "nothing was piped in".
   run --separate-stderr env TS_COMPARISONS_FILE="$cache" bash "$TS" report < /dev/null
   [ "$status" -eq 0 ]
-  [[ "$output" == *"A"* ]]
+  [[ "$output" == *"A"* ]] || false
   [[ "$output" == *"C"* ]]
 }
 
@@ -1757,7 +1757,7 @@ EOF
   run --separate-stderr env TS_COMPARISONS_FILE="$cache" bash "$TS" report < /dev/null
   [ "$status" -eq 0 ]
   [ "$(grep -c . <<< "$output")" -eq 3 ]
-  [[ "$(sed -n '1p' <<< "$output")" == *"A"* ]]
+  [[ "$(sed -n '1p' <<< "$output")" == *"A"* ]] || false
   [[ "$(sed -n '3p' <<< "$output")" == *"C"* ]]
 }
 
@@ -1780,7 +1780,7 @@ EOF
   run --separate-stderr env TS_COMPARISONS_FILE="$cache" \
     bash "$TS" report < "$BATS_TEST_TMPDIR/tickets"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"alpha title"* ]]
+  [[ "$output" == *"alpha title"* ]] || false
   [ "$(grep -c . <<< "$output")" -eq 2 ]
   [[ "$output" != *"C"* ]]
 }
@@ -1814,8 +1814,8 @@ EOF
   [ "$status" -eq 0 ]
   # A beats B and (transitively) C; B beats C. Input order is C,A,B - the
   # report must reorder.
-  [[ "$(sed -n '1p' <<< "$output")" == *"A"* ]]
-  [[ "$(sed -n '2p' <<< "$output")" == *"B"* ]]
+  [[ "$(sed -n '1p' <<< "$output")" == *"A"* ]] || false
+  [[ "$(sed -n '2p' <<< "$output")" == *"B"* ]] || false
   [[ "$(sed -n '3p' <<< "$output")" == *"C"* ]]
 }
 

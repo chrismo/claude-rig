@@ -64,7 +64,7 @@ settings_get() {
   count=$(settings_get 'len(this.hooks.SessionStart)')
   [ "$count" -eq 2 ]
   drift=$(settings_get 'this.hooks.SessionStart[0].hooks[0].command')
-  [[ "$drift" == *"internals-drift.sh"* ]]
+  [[ "$drift" == *"internals-drift.sh"* ]] || false
   brief=$(settings_get 'this.hooks.SessionStart[1].hooks[0].command')
   [[ "$brief" == *"lemma-brief.sh"* ]]
 }
@@ -98,7 +98,7 @@ EOF
   count=$(settings_get 'len(this.hooks.SessionStart)')
   [ "$count" -eq 2 ]
   cmd=$(settings_get 'this.hooks.SessionStart[0].hooks[0].command')
-  [[ "$cmd" != *"/old/ensure-sandbox.sh"* ]]
+  [[ "$cmd" != *"/old/ensure-sandbox.sh"* ]] || false
   # And the rest of the settings survived the replacement.
   matcher=$(settings_get 'this.hooks.PreToolUse[0].matcher')
   [ "$matcher" = "Bash" ]
@@ -185,7 +185,7 @@ EOF
   allows=$(settings_get 'this.permissions.allow')
   # Edit(), not Write() - Claude Code warns that Write() rules gate nothing,
   # so 13e56e7 dropped them from allow.sup as pure duplicates.
-  [[ "$allows" == *"Edit(.claude/tmp/*)"* ]]
+  [[ "$allows" == *"Edit(.claude/tmp/*)"* ]] || false
   [[ "$allows" == *"Edit(tmp/*)"* ]]
 }
 
@@ -202,7 +202,7 @@ EOF
   [ "$status" -eq 0 ]
   local allows
   allows=$(settings_get 'this.permissions.allow')
-  [[ "$allows" == *"Bash(git add:*)"* ]]
+  [[ "$allows" == *"Bash(git add:*)"* ]] || false
   [[ "$allows" == *"Edit(.claude/tmp/*)"* ]]
 }
 
@@ -266,7 +266,7 @@ EOF
     if [ -L "${link%/}" ]; then
       local target
       target=$(readlink "${link%/}")
-      [[ "$target" == "$BATS_TEST_DIRNAME/skills/"* ]]
+      [[ "$target" == "$BATS_TEST_DIRNAME/skills/"* ]] || false
     fi
   done
 }
@@ -324,7 +324,7 @@ EOF
     if [ -L "$link" ]; then
       local target
       target=$(readlink "$link")
-      [[ "$target" == "$BATS_TEST_DIRNAME/agents/"* ]]
+      [[ "$target" == "$BATS_TEST_DIRNAME/agents/"* ]] || false
     fi
   done
 }
@@ -430,7 +430,7 @@ EOF
   printf 'export PATH=/usr/bin\n' > "$ZSHRC"
   run_installer
   [ "$status" -eq 0 ]
-  [[ "$output" == *"shell/rig.zsh"* ]]
+  [[ "$output" == *"shell/rig.zsh"* ]] || false
   [[ "$output" == *"source"* ]]
 }
 
@@ -457,7 +457,7 @@ EOF
   printf 'source %s/shell/rig.zsh\n' "$BATS_TEST_DIRNAME" > "$ZSHRC"
   run_installer
   [ "$status" -eq 0 ]
-  [[ "$output" == *"rig.zsh"* ]]
+  [[ "$output" == *"rig.zsh"* ]] || false
   [[ "$output" != *"Add this to"* ]]
 }
 
@@ -523,7 +523,7 @@ EOF
   [ "$status" -eq 0 ]
   local denys
   denys=$(settings_get 'this.permissions.deny')
-  [[ "$denys" == *"Bash(sudo:*)"* ]]
+  [[ "$denys" == *"Bash(sudo:*)"* ]] || false
   [[ "$denys" == *"Bash(rm -rf:*)"* ]]
 }
 
@@ -555,7 +555,7 @@ EOF
   [ "$status" -eq 0 ]
   local paths
   paths=$(settings_get 'join(this.sandbox.filesystem.allowWrite, ",")')
-  [[ "$paths" == *"~/.claude/logs"* ]]
+  [[ "$paths" == *"~/.claude/logs"* ]] || false
   [[ "$paths" == *"~/.claude/contexts"* ]]
 }
 
@@ -573,7 +573,7 @@ EOF
   [ "$status" -eq 0 ]
   local paths
   paths=$(settings_get 'join(this.sandbox.filesystem.allowWrite, ",")')
-  [[ "$paths" == *"~/.custom/path"* ]]
+  [[ "$paths" == *"~/.custom/path"* ]] || false
   [[ "$paths" == *"~/.claude/logs"* ]]
 }
 
@@ -706,7 +706,7 @@ EOF
 EOF
   run bash "$HARVESTER" --dry-run
   [ "$status" -eq 0 ]
-  [[ "$output" == *"=== permissions/allow.sup"* ]]
+  [[ "$output" == *"=== permissions/allow.sup"* ]] || false
   # File should be unchanged
   diff "$BATS_TEST_DIRNAME/permissions/allow.sup" "$TEST_DIR/allow.sup.orig"
   harvest_teardown
@@ -744,7 +744,7 @@ EOF
   harvest_teardown
   [ "$status" -eq 0 ]
   # Both the existing entry and the harvested entry should be present
-  [[ "$result" == *'"Bash(launchctl load:*)"'* ]]
+  [[ "$result" == *'"Bash(launchctl load:*)"'* ]] || false
   [[ "$result" == *'"Write(.claude/tmp/*)"'* ]]
 }
 
@@ -764,7 +764,7 @@ EOF
   result=$(cat "$BATS_TEST_DIRNAME/permissions/deny.sup")
   harvest_teardown
   [ "$status" -eq 0 ]
-  [[ "$result" == *'"Bash(sudo:*)"'* ]]
+  [[ "$result" == *'"Bash(sudo:*)"'* ]] || false
   [[ "$result" == *'"Bash(rm -rf:*)"'* ]]
 }
 

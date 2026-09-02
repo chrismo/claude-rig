@@ -31,7 +31,7 @@ source_rig() {
 
 @test "defines new_wt and wt as functions" {
   source_rig "source '$RIG'; type new_wt; type wt"
-  [[ "$output" == *"new_wt is a shell function"* ]]
+  [[ "$output" == *"new_wt is a shell function"* ]] || false
   [[ "$output" == *"wt is a shell function"* ]]
 }
 
@@ -44,7 +44,7 @@ source_rig() {
 
 @test "the wt function wins over a pre-existing wt alias" {
   source_rig "alias wt='echo ALIAS'; source '$RIG'; type wt"
-  [[ "$output" == *"wt is a shell function"* ]]
+  [[ "$output" == *"wt is a shell function"* ]] || false
   [[ "$output" != *"alias"* ]]
 }
 
@@ -75,7 +75,7 @@ exit 7
 EOF
   chmod +x "$fake/wt-new"
   source_rig "PATH='$fake:\$PATH'; source '$RIG'; new_wt br; echo \"rc=\$?\"; pwd"
-  [[ "$output" == *"rc=7"* ]]
+  [[ "$output" == *"rc=7"* ]] || false
   [[ "$output" == *"$BATS_TEST_TMPDIR/dest"* ]]
 }
 
@@ -97,6 +97,6 @@ EOF
   printf '#!/bin/sh\nexit 0\n' > "$fake/wt"
   chmod +x "$fake/wt"
   source_rig "PATH='$fake:\$PATH'; cd /tmp; source '$RIG'; wt; echo \"rc=\$?\"; pwd"
-  [[ "$output" == *"rc=0"* ]]
+  [[ "$output" == *"rc=0"* ]] || false
   [[ "$output" == *"/tmp"* ]]
 }

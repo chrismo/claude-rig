@@ -124,8 +124,8 @@ EOF
   chmod +x "$STUB/git"
 
   run "$I"
-  [[ "$(calls)" == *"git clone"* ]]
-  [[ "$(calls)" == *"$LEMMALOG_REPO_URL"* ]]
+  [[ "$(calls)" == *"git clone"* ]] || false
+  [[ "$(calls)" == *"$LEMMALOG_REPO_URL"* ]] || false
   [[ "$(calls)" == *"$LEMMALOG_SRC"* ]]
 }
 
@@ -150,7 +150,7 @@ EOF
 
   run "$I"
   [ "$status" -eq 0 ]
-  [[ "$(calls)" == *"--release"* ]]
+  [[ "$(calls)" == *"--release"* ]] || false
   [[ "$(calls)" == *"--features mcp"* ]]
 }
 
@@ -184,7 +184,7 @@ EOF
 
   run "$I"
   [ "$status" -eq 0 ]
-  [[ "$(calls)" == *"mcp add"* ]]
+  [[ "$(calls)" == *"mcp add"* ]] || false
   [[ "$(calls)" == *"--scope user"* ]]
 }
 
@@ -237,7 +237,7 @@ EOF
 
   run "$I"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"claude-rig"* ]]
+  [[ "$output" == *"claude-rig"* ]] || false
   [[ "$output" == *"mcp remove"* ]]
 }
 

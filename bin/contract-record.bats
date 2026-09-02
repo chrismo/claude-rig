@@ -37,7 +37,7 @@ setup() {
   "$REC" "R2: live sessions on the installed build get inboxes" skip 2.1.251
 
   run cat "$CLAUDE_RIG_CONTRACT_RESULTS"
-  [[ "$output" == "R2"$'\t'"skip"* ]]
+  [[ "$output" == "R2"$'\t'"skip"* ]] || false
   [[ "$output" != *"pass"* ]]
 }
 
