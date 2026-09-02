@@ -73,6 +73,20 @@ Both lines are plugin-driven — assembled from executable scripts in `statuslin
 | `2.60-lines` | lines added/removed |
 | `2.70-context` | context window usage % |
 | `2.75-rate-limits` | 5h / 7d rate-limit usage + reset |
+| `2.77-spend` | credit spend + pace against the UTC day — a shim, see below |
+
+`2.77-spend` renders nothing itself. The segment
+(`38% $229/$611 | 24h [···●·◇··] 8h`) is built by
+`scripts/claude-daily-spend-statusline.sh` in the claude-plugins marketplace
+repo, and the plugin shells out to it. That script has to be maintained past
+the switch to the litellm stack, and the way to notice it breaking is to run
+it rather than keep a parallel copy here that drifts — so this statusline
+renders from the artifact an outside user gets. Point the plugin somewhere
+else with `CLAUDE_RIG_SPEND_STATUSLINE`, or edit the one path at the top of
+it. Missing checkout means a missing segment, silently.
+
+`bin/claude-spend` is no longer in that path. It stays as a CLI for a one-off
+reading; the statusline does not use it.
 
 Drop any executable into `plugins.d/` to add a segment. The script receives `CLAUDE_STATUS_INPUT` env var pointing to the session JSON. Output a string on stdout; empty output = segment skipped.
 

@@ -1,64 +1,75 @@
 #!/bin/bash
-# Segment: usage-credit spend, on the accounts that have any.
+# Segment: credit spend and its pace against the UTC day.
 #
-# 2.76 renders 5h/7d from the statusline payload, which costs nothing. Accounts
-# with usage credits are the ones the payload says nothing useful about, so this
-# asks the API — through bin/claude-spend, which caches globally for 5 minutes
-# so a machine full of pods makes one request between them rather than one each.
+# Layout:  <pct>% <used>/<limit> | 24h [bar] <dur>
+#
+# This is a shim. The segment is built by claude-daily-spend-statusline.sh in
+# the claude-plugins marketplace repo, and this plugin only shells out to it
+# and prints what comes back. Nothing about the bar, the colours or the
+# countdown is decided here — read the upstream script for any of that.
+#
+# The arrangement is deliberate. That script has to be maintained past the
+# switch to the litellm stack, and the way to notice it breaking is to run it,
+# not to keep a parallel copy here that drifts. So this machine's status line
+# renders from the artifact an outside user gets: a regression upstream shows
+# up in this prompt before anyone reports it.
+#
+# The two segments this replaces (2.77 spend, 2.78 daily bar) were one plugin
+# each, joined by the runner. Upstream emits both as one string with its own
+# " | " in the middle, so it is one plugin now and 2.78 is gone. Keeping the
+# split would have meant cutting upstream's output apart on a separator this
+# repo does not control.
+#
+# The "24h" half is only true while something ratchets the monthly credit
+# limit up by one day's worth at each UTC midnight — the API has no native
+# daily limit. That ratchet is a third moving part, in neither this repo nor
+# the marketplace one. If it stops running, this segment keeps rendering and
+# starts lying: the percent becomes percent-of-month.
+#
+# bin/claude-spend is no longer in this path. It stays as a CLI on PATH —
+# `claude-spend` for a one-off reading — but the status line does not use it,
+# and upstream does its own fetching and caching (jq, not SuperDB, so the
+# script has no dependency beyond what an outside user already has).
 #
 # Silent on any failure. A status line that breaks the prompt is worse than a
 # status line missing a segment.
 
-input="${CLAUDE_STATUS_INPUT:-/tmp/claude-status-input.json}"
+# Edit this when the script moves to the litellm stack.
+UPSTREAM="${CLAUDE_RIG_SPEND_STATUSLINE:-$HOME/dev/claude-plugins/scripts/claude-daily-spend-statusline.sh}"
 
-muted_green="\033[2;32m"
-muted_yellow="\033[2;33m"
-muted_red="\033[2;31m"
-color_reset="\033[2;37m"
+[[ -f "$UPSTREAM" && -x "$UPSTREAM" ]] || exit 0
 
-spend_bin="${CLAUDE_RIG_SPEND_BIN:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../bin" 2>/dev/null && pwd)/claude-spend}"
-[[ -x "$spend_bin" ]] || spend_bin=$(command -v claude-spend)
-[[ -n "$spend_bin" && -x "$spend_bin" ]] || exit 0
+# `timeout` is not in the macOS base system, only in coreutils, so it is used
+# when present and skipped when not. Upstream caps its own curl at 20s, but
+# the cap is upstream's promise rather than this repo's, and a status line
+# renders on every keystroke: a hang wedges the prompt instead of merely
+# blanking a segment.
+timeout_bin=$(command -v timeout || command -v gtimeout)
+timeout_secs="${CLAUDE_RIG_SPEND_TIMEOUT:-10}"
 
-row=$("$spend_bin" --brief 2>/dev/null) || exit 0
-
-if [[ -n "$row" ]]; then
-  IFS='|' read -r percent used limit <<<"$row"
-  [[ -n "$limit" ]] || exit 0
-
-  if   (( percent >= 90 )); then color="$muted_red"
-  elif (( percent >= 70 )); then color="$muted_yellow"
-  else                          color="$muted_green"
-  fi
-
-  echo -e "${color}${percent}% ${used}/${limit}${color_reset}"
-  exit 0
+if [[ -n "$timeout_bin" ]]; then
+  segment=$("$timeout_bin" "$timeout_secs" "$UPSTREAM" 2>/dev/null) || exit 0
+else
+  segment=$("$UPSTREAM" 2>/dev/null) || exit 0
 fi
 
-# No credits. If the payload also carries no rate_limits — the shape where 2.76
-# renders nothing — show the windows the API returned, so the line is not blank.
-have_limits=$(super -f line -c 'values {rate_limits: null, ...this} | where kind(rate_limits) == "record" | values "y"' "$input" 2>/dev/null)
-[[ -z "$have_limits" ]] || exit 0
+[[ -n "$segment" ]] || exit 0
 
-windows=$("$spend_bin" --raw 2>/dev/null | super -f line -i json -c '
-  values {five_hour: null, seven_day: null, ...this}
-  | values {
-      five: coalesce(cast(five_hour.utilization, <int64>), -1),
-      seven: coalesce(cast(seven_day.utilization, <int64>), -1)
-    }
-  | where five >= 0 or seven >= 0
-  | values f"{five}|{seven}"
-' - 2>/dev/null) || exit 0
-[[ -n "$windows" ]] || exit 0
+# Upstream emits one line. If it ever emits more, the runner would read the
+# extra newlines as line breaks in the status line and mangle the layout, so
+# they are folded into the one segment this plugin promises to be.
+#
+# \r is folded for the same reason and is the worse of the two: a stray
+# carriage return does not add a line, it moves the cursor back to the start
+# of this one and overwrites the segments already printed to its left.
+#
+# Substitution rather than `tr`, to avoid a fork per keystroke. ${var//x/y} is
+# bash 3.2 — it is ${var,,} and friends that need 4.x.
+segment=${segment//$'\n'/ }
+segment=${segment//$'\r'/ }
 
-IFS='|' read -r five seven <<<"$windows"
+# Whitespace-only survives the -n check above and renders as an empty segment
+# with a stray " | " join around it.
+[[ -n "${segment//[[:space:]]/}" ]] || exit 0
 
-segments=""
-(( five  >= 0 )) && segments="5h ${five}%"
-if (( seven >= 0 )); then
-  [[ -n "$segments" ]] && segments+=" | "
-  segments+="7d ${seven}%"
-fi
-[[ -n "$segments" ]] || exit 0
-
-echo -e "${muted_green}${segments}${color_reset}"
+printf '%s\n' "$segment"
