@@ -21,11 +21,12 @@ This outputs JSON containing:
 - **worktrees**: Git worktrees with branch names, age (days), and dirty status
 - **cloud_sessions**: Claude web session branches with PR status (requires gh CLI)
 - **standup**: (optional) Recent Linear issues with status and standup comments
-- **conversations**: Recent Claude Code conversation topics grouped by date/project
+- **conversations**: Recent local agent conversation topics grouped by date/project, merged from Claude Code (`~/.claude/projects`) and the pi coding agent (`~/.pi/agent/sessions`) into one timeline, each record tagged `source: "claude"` or `source: "pi"`
 
 Notes:
 - Standup data is only available when a Linear integration is configured.
 - Cloud sessions tracks branches matching `claude/*` or ending with 13-digit timestamps.
+- pi sessions have no recorded git branch in their transcript; `gitBranch` for a pi record is derived live from the session's working directory (empty if that directory no longer exists).
 
 ## Analysis Instructions
 

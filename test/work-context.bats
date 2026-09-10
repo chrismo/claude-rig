@@ -13,6 +13,7 @@ setup() {
 
   TEST_HOME="$(mktemp -d)"
   mkdir -p "$TEST_HOME/.claude/projects/test-project"
+  mkdir -p "$TEST_HOME/.pi/agent/sessions/test-project"
   mkdir -p "$TEST_HOME/.config"
 
   # Create minimal config with UTC timezone for deterministic tests
@@ -30,6 +31,7 @@ setup() {
 
   # Source the script with controlled config
   export CLAUDE_PROJECTS_DIR="$TEST_HOME/.claude/projects"
+  export PI_SESSIONS_DIR="$TEST_HOME/.pi/agent/sessions"
   export WORK_CONTEXT_CONFIG="$TEST_HOME/.config/work-context.sup"
   source "$SCRIPT"
   # Undo strict -u (unbound vars) and -o pipefail from sourced script,
@@ -61,6 +63,24 @@ create_conversation() {
   } > "$dir/$filename"
 }
 
+# Helper: create a fake pi agent session JSONL file
+# Args: filename session_id timestamp prompt [cwd]
+# pi writes one file per session (no follow-up message count needed for
+# these tests — messageCount for pi sessions comes from counting
+# type=message/role=user lines, so we always include exactly one).
+create_pi_session() {
+  local filename="$1" session_id="$2" timestamp="$3" prompt="$4"
+  local cwd="${5:-/Users/tester/dev/test-project}"
+  local dir="$TEST_HOME/.pi/agent/sessions/test-project"
+
+  {
+    printf '{"type":"session","version":3,"id":"%s","timestamp":"%s","cwd":"%s"}\n' \
+      "$session_id" "$timestamp" "$cwd"
+    printf '{"type":"message","id":"m1","parentId":null,"timestamp":"%s","message":{"role":"user","content":[{"type":"text","text":"%s"}]}}\n' \
+      "$timestamp" "$prompt"
+  } > "$dir/$filename"
+}
+
 # ==============================================================================
 # conversations_json filtering
 # ==============================================================================
@@ -71,7 +91,7 @@ create_conversation() {
 
   run conversations_json 0
   assert_success
-  [[ "$output" == *"sess-today"* ]]
+  [[ "$output" == *"sess-today"* ]] || false
   [[ "$output" != *"sess-yesterday"* ]]
 }
 
@@ -82,8 +102,8 @@ create_conversation() {
 
   run conversations_json 1
   assert_success
-  [[ "$output" == *"sess-today"* ]]
-  [[ "$output" == *"sess-yesterday"* ]]
+  [[ "$output" == *"sess-today"* ]] || false
+  [[ "$output" == *"sess-yesterday"* ]] || false
   [[ "$output" != *"sess-old"* ]]
 }
 
@@ -93,7 +113,7 @@ create_conversation() {
 
   run conversations_json 7
   assert_success
-  [[ "$output" == *"sess-today"* ]]
+  [[ "$output" == *"sess-today"* ]] || false
   [[ "$output" == *"sess-3days"* ]]
 }
 
@@ -108,13 +128,55 @@ create_conversation() {
 
   run conversations_json 0
   assert_success
-  [[ "$output" == *"sessionId"* ]]
-  [[ "$output" == *"date"* ]]
-  [[ "$output" == *"time"* ]]
-  [[ "$output" == *"started"* ]]
-  [[ "$output" == *"project"* ]]
-  [[ "$output" == *"messageCount"* ]]
+  [[ "$output" == *"sessionId"* ]] || false
+  [[ "$output" == *"date"* ]] || false
+  [[ "$output" == *"time"* ]] || false
+  [[ "$output" == *"started"* ]] || false
+  [[ "$output" == *"project"* ]] || false
+  [[ "$output" == *"messageCount"* ]] || false
   [[ "$output" == *"first_prompt"* ]]
+}
+
+# ==============================================================================
+# pi agent session data (parallel source alongside Claude Code)
+# ==============================================================================
+
+@test "conversations_json includes pi sessions alongside Claude sessions" {
+  create_conversation "today.jsonl" "sess-claude-today" "$TODAY_TS" "claude today prompt"
+  create_pi_session "$(date +%s).jsonl" "sess-pi-today" "$TODAY_TS" "pi today prompt"
+
+  run conversations_json 0
+  assert_success
+  [[ "$output" == *"sess-claude-today"* ]] || false
+  [[ "$output" == *"sess-pi-today"* ]]
+}
+
+@test "conversations_json tags each record with its source" {
+  create_conversation "today.jsonl" "sess-claude-today" "$TODAY_TS" "claude today prompt"
+  create_pi_session "$(date +%s).jsonl" "sess-pi-today" "$TODAY_TS" "pi today prompt"
+
+  run conversations_json 0
+  assert_success
+  [[ "$output" == *'"source": "claude"'* ]] || false
+  [[ "$output" == *'"source": "pi"'* ]]
+}
+
+@test "conversations_json filters pi sessions by days like Claude sessions" {
+  create_pi_session "today.jsonl" "sess-pi-today" "$TODAY_TS" "pi today prompt"
+  create_pi_session "yesterday.jsonl" "sess-pi-yesterday" "$YESTERDAY_TS" "pi yesterday prompt"
+
+  run conversations_json 0
+  assert_success
+  [[ "$output" == *"sess-pi-today"* ]] || false
+  [[ "$output" != *"sess-pi-yesterday"* ]]
+}
+
+@test "conversations_json extracts pi user prompt text from message content" {
+  create_pi_session "today.jsonl" "sess-pi-today" "$TODAY_TS" "distinctive pi prompt text"
+
+  run conversations_json 0
+  assert_success
+  [[ "$output" == *"distinctive pi prompt text"* ]]
 }
 
 @test "conversations_json filters on updatedAt not created (cross-midnight session)" {
@@ -156,7 +218,7 @@ create_conversation() {
 
   run conversations 0
   assert_success
-  [[ "$output" == *"RECENT CLAUDE CONVERSATIONS"* ]]
+  [[ "$output" == *"RECENT CONVERSATIONS"* ]] || false
   [[ "$output" == *"my test prompt"* ]]
 }
 
@@ -168,7 +230,7 @@ create_conversation() {
 
   run conversations 0
   assert_success
-  [[ "$output" == *"today prompt"* ]]
+  [[ "$output" == *"today prompt"* ]] || false
   [[ "$output" != *"yesterday prompt"* ]]
 }
 
@@ -262,7 +324,7 @@ inject_worktree_data() {
   run worktrees
   assert_success
   # ds3 is dirty; it must not appear as "ds3*" (the marker now lives in its own column)
-  [[ "$output" != *"ds3*"* ]]
+  [[ "$output" != *"ds3*"* ]] || false
   # But ds3 itself must still be present
   [[ "$output" == *"ds3"* ]]
 }
@@ -274,9 +336,9 @@ inject_worktree_data() {
   run worktrees
   assert_success
   # Column header "gone" must be present (alongside the existing "dirty" header)
-  [[ "$output" == *"gone"* ]]
+  [[ "$output" == *"gone"* ]] || false
   # ds5 (gone:true) is 3d old, should appear in recent table with an 'x' marker
-  [[ "$output" == *"ds5"* ]]
+  [[ "$output" == *"ds5"* ]] || false
   # Check the ds5 row has an 'x' between two column separators (ASCII | or Unicode │)
   echo "$output" | grep -E "ds5\b" | grep -qE '[|│]\s*x\s*[|│]'
 }
@@ -294,7 +356,7 @@ inject_worktree_data() {
   run worktrees
   assert_success
   # Truncated form (46 chars) present
-  [[ "$output" == *"devops-1149-support-revival-of-shutdown-stagin"* ]]
+  [[ "$output" == *"devops-1149-support-revival-of-shutdown-stagin"* ]] || false
   # Full form absent
   [[ "$output" != *"devops-1149-support-revival-of-shutdown-staging-axon-worker"* ]]
 }

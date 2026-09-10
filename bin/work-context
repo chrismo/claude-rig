@@ -347,7 +347,66 @@ function collect_session_data() {
                           created:=min(timestamp), updatedAt:=max(timestamp)
               | put messageCount := ${msg_count}
               | put project := '${project_name}'
-              | cut sessionId, created, updatedAt, gitBranch, firstPrompt, messageCount, project
+              | put source := 'claude'
+              | cut sessionId, created, updatedAt, gitBranch, firstPrompt, messageCount, project, source
+            " "$jsonl_file" 2>/dev/null
+        done
+    )
+}
+
+function collect_pi_session_data() {
+    # Collect session data from pi agent JSONL files (~/.pi/agent/sessions).
+    # One file = one session. Schema differs from Claude Code's transcripts:
+    #   - session id + cwd live on a single type=session record (not per-line)
+    #   - user prompts are type=message, message.role=user, message.content[].text
+    #   - no gitBranch field; derive it live via git if the cwd still exists
+    local days_filter="${1:-30}"
+    local pi_sessions_dir="${PI_SESSIONS_DIR:-$HOME/.pi/agent/sessions}"
+    [[ -d "$pi_sessions_dir" ]] || return
+
+    local now
+    now=$(date +%s)
+    local cutoff_mtime=$((now - (days_filter + 1) * 86400))
+
+    (
+        for jsonl_file in "$pi_sessions_dir"/*/*.jsonl; do
+            [[ -f "$jsonl_file" ]] || continue
+
+            local file_mtime
+            file_mtime=$(stat -f %m "$jsonl_file")
+            [[ $file_mtime -lt $cutoff_mtime ]] && continue
+
+            local project_dir project_name
+            project_dir=$(dirname "$jsonl_file")
+            project_name=$(basename "$project_dir" | sed 's/.*-dev-//' | sed "s/-Users-$(whoami)$//")
+
+            # Count user prompts (fast grep, handles varying JSON whitespace)
+            local msg_count
+            msg_count=$(grep -cE '"role"\s*:\s*"user"' "$jsonl_file" 2>/dev/null) || msg_count=0
+            [[ $msg_count -eq 0 ]] && continue
+
+            # The session id and cwd live on the single type=session record,
+            # not per-message, so pull them once and splice into the summary.
+            local session_id cwd git_branch
+            session_id=$(super -f line -c "where type=='session' | values id" "$jsonl_file" 2>/dev/null | head -1)
+            cwd=$(super -f line -c "where type=='session' | values cwd" "$jsonl_file" 2>/dev/null | head -1)
+            git_branch=""
+            if [[ -n "$cwd" && -d "$cwd" ]]; then
+                git_branch=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null) || git_branch=""
+            fi
+
+            super -f line -c "
+              where type == 'message' and message.role == 'user'
+              | sort timestamp
+              | put firstPrompt := message.content[0].text
+              | summarize firstPrompt:=any(firstPrompt),
+                          created:=min(timestamp), updatedAt:=max(timestamp)
+              | put sessionId := '${session_id}'
+              | put messageCount := ${msg_count}
+              | put project := '${project_name}'
+              | put gitBranch := '${git_branch}'
+              | put source := 'pi'
+              | cut sessionId, created, updatedAt, gitBranch, firstPrompt, messageCount, project, source
             " "$jsonl_file" 2>/dev/null
         done
     )
@@ -356,20 +415,19 @@ function collect_session_data() {
 function conversations() {
     local days="${1:-7}"
 
-    echo -e "${CYAN}${BOLD}📝 RECENT CLAUDE CONVERSATIONS (last ${days} days)${RESET}"
+    echo -e "${CYAN}${BOLD}📝 RECENT CONVERSATIONS (last ${days} days)${RESET}  ${DIM}(claude + pi)${RESET}"
     echo -e "${DIM}───────────────────────────────────────────────────────────────${RESET}"
 
-    local projects_dir="$HOME/.claude/projects"
-    if [[ -d "$projects_dir" ]]; then
-        :  # exists, continue
-    else
-        echo -e "${DIM}(Claude projects not found at $projects_dir)${RESET}"
+    local claude_dir="${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
+    local pi_dir="${PI_SESSIONS_DIR:-$HOME/.pi/agent/sessions}"
+    if [[ ! -d "$claude_dir" && ! -d "$pi_dir" ]]; then
+        echo -e "${DIM}(no Claude projects at $claude_dir or pi sessions at $pi_dir)${RESET}"
         return
     fi
 
     conversations_json "$days" | super -f json -c "
       put started_col := started != date ? started : ''
-      | cut date, time, started:=started_col, project, msgs:=messageCount, prompt:=first_prompt[0:80]
+      | cut date, time, started:=started_col, source, project, msgs:=messageCount, prompt:=first_prompt[0:80]
     " - 2>/dev/null | mlr --j2p --barred cat
 
     echo
@@ -610,9 +668,6 @@ function worktrees_json() {
 
 function conversations_json() {
     local days="${1:-7}"
-    local projects_dir="${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
-
-    [[ -d "$projects_dir" ]] || return
 
     # Calculate cutoff as local midnight N days ago, expressed in UTC
     # days=0 means "today", days=1 means "today+yesterday", etc.
@@ -624,9 +679,9 @@ function conversations_json() {
     local utc_midnight_hour=$((0 - tz_offset_hours))
     local cutoff="${local_date}T$(printf '%02d' $utc_midnight_hour):00"
 
-    # Each conversation as separate record with full metadata
+    # Merge both agent sources into one timeline, tagged by `source`.
     # Filter and sort on updatedAt (last activity); convert UTC to local time using tz_offset_hours
-    collect_session_data "$days" | super -f json -c "
+    { collect_session_data "$days"; collect_pi_session_data "$days"; } | super -f json -c "
       where updatedAt >= '${cutoff}'
       | put local_updated:=updatedAt::time + '${tz_offset_hours}h'::duration
       | put date:=strftime('%Y-%m-%d', local_updated)
@@ -635,7 +690,7 @@ function conversations_json() {
       | put first_prompt:=replace(firstPrompt[0:300], '\\n', ' ')
       | put conv_summary:=replace(has(summary) ? summary : '', '\\n', ' ')
       | sort -updatedAt
-      | cut sessionId, date, time, started, project, messageCount, gitBranch, first_prompt, conv_summary
+      | cut sessionId, date, time, started, project, messageCount, gitBranch, first_prompt, conv_summary, source
     " - 2>/dev/null
 }
 
