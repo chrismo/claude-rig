@@ -1,6 +1,6 @@
 ---
 name: pod-peer
-description: You may have peer Claude sessions cooperating with you, and a human whose terminal is recorded — read what they're doing with claude-pod, or ask them directly with SendMessage
+description: You may have peer Claude, Codex, or pi sessions cooperating with you, and a human whose terminal is recorded — read what they're doing with claude-pod, or ask them directly with SendMessage
 allowed-tools: Bash, ListAgents, SendMessage
 ---
 
@@ -34,8 +34,8 @@ their context. So messaging is not a strict upgrade over reading — it's the
 louder instrument. Reach for it when the answer requires their judgment, not
 when you just want to know what file they're in.
 
-Only Claude sessions can be messaged. Codex peers and the human's consoles are
-read-only, always — `claude-pod` is the only way to reach them.
+Only Claude sessions can be messaged. Codex and pi peers, and the human's
+consoles, are read-only, always — `claude-pod` is the only way to reach them.
 
 ## On invoking this skill, orient yourself
 
@@ -88,8 +88,8 @@ so you can look into another worktree when the human points you at one.
 
 ## claude-pod — the reading tool
 
-`claude-pod` reads peer Claude sessions' `.jsonl` files and renders readable
-turns.
+`claude-pod` reads peer Claude, Codex, or pi sessions' `.jsonl` files and
+renders readable turns.
 
 ```
 Usage: claude-pod <path> [flags]
@@ -104,8 +104,9 @@ Selection:
   --session <id-or-name> show a specific session by UUID or /rename name
   --exclude <id-or-name> skip this session (repeatable; with --all/--peers)
 
-Source (default: auto — the source with sessions here; freshest wins if both):
+Source (default: auto — the source with sessions here; freshest wins if several):
   --codex                force Codex (~/.codex) sessions
+  --pi                   force pi (~/.pi/agent/sessions) sessions
   --claude               force Claude sessions
 
 Render flags:
@@ -133,30 +134,54 @@ worktree.
 
 A peer in the same worktree may be Codex (the OpenAI CLI), not Claude. By default
 claude-pod **auto-detects**: with no source flag it reads whichever source has
-sessions here, and if both do, it shows the more recently active one and prints a
-one-line hint on stderr naming the other. So `claude-pod --peers` usually just
-does the right thing.
+sessions here, and if more than one does, it shows the most recently active one
+and prints a one-line hint on stderr naming the other(s). So `claude-pod --peers`
+usually just does the right thing.
 
 To be explicit, `--codex` and `--claude` pin the source, pointing every selection
 and render flag at `~/.codex` or `~/.claude`:
 
 ```
-claude-pod --peers                  # auto: peers here (Claude or Codex, freshest wins)
+claude-pod --peers                  # auto: peers here (freshest source wins)
 claude-pod --codex --peers          # only Codex sessions in this worktree
 claude-pod --codex --peers --new    # …only what they've said since you looked
 claude-pod --codex --session <uuid> # a specific Codex rollout, by UUID
 claude-pod --claude --peers         # only Claude sessions (force past auto)
 ```
 
-When the auto hint tells you the other source also has sessions, and you care
-about both halves of a mixed worktree, run the pinned form for each. Three things
-Codex doesn't support: `--session` by name (Codex records no `/rename`),
-`--all/--peers -f` firehose (use `--new`), and `--console`/`--record` (those read
-the human's terminal, which has no source).
+When the auto hint tells you another source also has sessions, and you care
+about more than one half of a mixed worktree, run the pinned form for each.
+Three things Codex doesn't support: `--session` by name (Codex records no
+`/rename`), `--all/--peers -f` firehose (use `--new`), and `--console`/
+`--record` (those read the human's terminal, which has no source).
 
 Codex prepends each session with injected `<environment_context>` and
 `<user_instructions>` turns — orientation boilerplate, not conversation. Skim
 past them.
+
+## pi peers
+
+A peer in the same worktree may also be pi (pi.dev, a coding agent analogous to
+Claude Code and Codex), not Claude. pi's directory layout mirrors Claude's — one
+directory per worktree — so auto-detection works the same way: freshest source
+wins, with a stderr hint naming whichever other source(s) also have sessions
+here.
+
+```
+claude-pod --peers               # auto: peers here (freshest source wins)
+claude-pod --pi --peers          # only pi sessions in this worktree
+claude-pod --pi --peers --new    # …only what they've said since you looked
+claude-pod --pi --session <uuid> # a specific pi session, by UUID
+```
+
+pi has the same three gaps as Codex, for the same underlying reason (no
+`/rename` mechanism, no per-turn session id in the transcript): `--session` by
+name, `--all/--peers -f` firehose (use `--new` instead), and `--console`/
+`--record`. pi has one gap Codex doesn't: there's no live-session registry to
+resolve `$CLAUDE_CODE_SESSION_ID` against, so `claude-pod --pi --peers` cannot
+actually exclude "this session" — it behaves like `--pi --all`. That's a known
+limitation, not a bug; if you're reading pi peers, assume the list may include
+whichever pi session you're running from, if any.
 
 ## The human's consoles
 

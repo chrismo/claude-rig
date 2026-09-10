@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# claude-pod - Show another Claude session's conversation as readable turns
+# claude-pod - Show another Claude, Codex, or pi session's conversation as
+# readable turns
 #
 # Usage:
 #   claude-pod [path]                     # most-recent session in worktree (default: $PWD)
@@ -23,13 +24,19 @@
 #
 # Worktree mode resolves $path → ~/.claude/projects/<encoded-path>/ and picks the
 # .jsonl with the newest mtime (the active or most recently active session).
-# Path encoding mirrors Claude's: every '/' becomes '-'.
+# Path encoding replaces every non-alphanumeric character with '-'.
+#
+# --codex and --pi read other agents' on-disk transcripts instead (~/.codex,
+# ~/.pi/agent/sessions); see the codex_sessions_dir/pi_sessions_dir comments
+# below for how their directory layout, path encoding, and file naming differ
+# from Claude's.
 #
 # Session names: if a session has been given a name via /rename, listings show
 # it in a 'name' column and --session/--exclude accept it in place of the UUID.
 # Names are sourced from ~/.claude/sessions/<pid>.json for live sessions, with
 # a fallback to the latest "Session renamed to:" event in the .jsonl for exited
-# sessions.
+# sessions. Codex and pi record no /rename equivalent, so --session takes only
+# a UUID for those sources.
 #
 # Output is one block per turn (user prompts + assistant text), oldest-first.
 # Tool calls, tool results, thinking blocks, and meta entries are filtered out.
@@ -102,13 +109,20 @@ usage() {
 
 	Source:
 	  (default: auto)        pick whichever source has sessions for the worktree;
-	                         if both do, the more recently active one wins and a
-	                         hint on stderr names the other. --session tries both.
+	                         if more than one does, the most recently active wins
+	                         and a hint on stderr names the other(s). --session
+	                         tries all three.
 	  --codex                force Codex (~/.codex) sessions. The worktree is matched
 	                         on each rollout's recorded cwd. Not supported for Codex:
 	                         --session by /rename name (no rename source), --all/
 	                         --peers -f firehose (no per-turn session id to tag the
 	                         merged stream), and console/record.
+	  --pi                   force pi (~/.pi/agent/sessions) sessions. Not supported
+	                         for pi (same reasons as Codex): --session by /rename
+	                         name, --all/--peers -f firehose, and console/record.
+	                         --peers also can't self-exclude for pi — there's no
+	                         live-session registry to resolve \$CLAUDE_CODE_SESSION_ID
+	                         against, so --pi --peers behaves like --pi --all.
 	  --claude               force Claude sessions (the pre-auto behaviour).
 
 	Render flags:
@@ -149,6 +163,8 @@ usage() {
 	  claude-pod --peers --new                            # what peers said since I looked
 	  claude-pod --codex --peers                          # Codex sessions in this worktree
 	  claude-pod --codex --peers --new                    # what Codex peers said since I looked
+	  claude-pod --pi --peers                             # pi sessions in this worktree
+	  claude-pod --pi --peers --new                       # what pi peers said since I looked
 	  claude-pod --record --tag server                    # how they start a pane
 	EOF
 }
@@ -166,9 +182,35 @@ projects_dir="${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
 # carry the same top-level `timestamp` field Claude's do.
 codex_sessions_dir="${CLAUDE_POD_CODEX_DIR:-$HOME/.codex/sessions}"
 
-# claude | codex | auto. 'auto' (the default) picks whichever source has sessions
-# for the worktree, resolved per invocation by resolve_auto_source; --claude and
-# --codex pin it. Only worktree-scoped modes auto-resolve; --session tries both.
+# pi (pi.dev) is worktree-partitioned like Claude (one directory per cwd, unlike
+# Codex's date partitioning) but with its own path encoding and file naming:
+#   1. The directory name replaces ONLY '/' with '-' (not every non-alphanumeric
+#      char the way Claude's encode_path does — a real cwd's underscore survives
+#      untouched) and wraps the whole thing in a DOUBLE leading/trailing '-':
+#      /Users/x/y encodes to --Users-x-y-- , not Claude's -Users-x-y. Verified
+#      byte-for-byte against real ~/.pi/agent/sessions data; pi_encode_path below
+#      reproduces it. Do NOT reuse encode_path for pi — they diverge on any path
+#      with a non-slash special character (dot, space, @, underscore, …).
+#   2. Filenames are <timestamp>_<uuid>.jsonl — the uuid is the tail after the
+#      last '_', not the whole basename like Claude's <uuid>.jsonl. Needs
+#      tail-of-filename sid extraction like Codex's codex_sid_for.
+#   3. Turns are type=message lines with message.role/message.content (content
+#      is always an array, never a bare string). No isMeta field; other header
+#      record types (session, model_change, thinking_level_change) are filtered
+#      out by requiring type=='message'.
+#   4. No /rename mechanism and no live-session registry (no analogue to
+#      ~/.claude/sessions/<pid>.json or $CLAUDE_CODE_SESSION_ID) — so --session
+#      by name is unsupported (like Codex) and --peers cannot self-exclude for
+#      pi (the excluded id is a Claude session id, which just never matches a
+#      pi UUID — same "--peers behaves like --all" shape as Codex's, but for a
+#      different reason: Codex could in principle be asked to exclude, pi has
+#      nothing on disk that could ever tell it which session is "self").
+pi_sessions_dir="${CLAUDE_POD_PI_DIR:-$HOME/.pi/agent/sessions}"
+
+# claude | codex | pi | auto. 'auto' (the default) picks whichever source has
+# sessions for the worktree, resolved per invocation by resolve_auto_source;
+# --claude, --codex, and --pi pin it. Only worktree-scoped modes auto-resolve;
+# --session tries all three.
 SOURCE=auto
 
 # ── Read cursors ───────────────────────────────────────────────────────────────
@@ -228,6 +270,26 @@ project_dir_for() {
   local encoded
   encoded="$(encode_path "$path")"
   echo "$projects_dir/$encoded"
+}
+
+# pi's encoding: strip the leading '/', replace remaining '/' with '-', wrap
+# the result in a double leading/trailing '-'. Confirmed byte-for-byte against
+# 13 real ~/.pi/agent/sessions directories — see the pi_sessions_dir comment.
+pi_encode_path() {
+  local body="${1#/}"
+  body="$(printf '%s' "$body" | sed 's/\//-/g')"
+  printf -- '--%s--' "$body"
+}
+
+pi_project_dir_for() {
+  local path
+  path="$(cd "$1" 2>/dev/null && pwd)" || {
+    echo "claude-pod: not a directory: $1" >&2
+    exit 1
+  }
+  local encoded
+  encoded="$(pi_encode_path "$path")"
+  echo "$pi_sessions_dir/$encoded"
 }
 
 is_excluded() {
@@ -388,6 +450,11 @@ resolve_session_id() {
     echo "claude-pod: --codex takes a session UUID; /rename names aren't recorded by Codex: $arg" >&2
     return 1
   fi
+  # pi has no /rename source either (no live-session metadata, no rename event).
+  if [[ "$SOURCE" == pi ]]; then
+    echo "claude-pod: --pi takes a session UUID; /rename names aren't recorded by pi: $arg" >&2
+    return 1
+  fi
   local sid
   if sid=$(sid_from_live_sessions "$arg"); then
     echo "$sid"
@@ -444,6 +511,32 @@ list_sessions() {
     done < <(codex_filtered_files "$cwd")
     if [[ $any -eq 0 ]]; then
       echo "claude-pod: no matching Codex sessions for $cwd" >&2
+    fi
+    return 0
+  fi
+
+  if [[ "$SOURCE" == pi ]]; then
+    local pdir
+    pdir="$(pi_project_dir_for "$target")"
+    if [[ ! -d "$pdir" ]]; then
+      echo "claude-pod: no pi sessions for $target" >&2
+      echo "  expected: $pdir" >&2
+      exit 1
+    fi
+    local any=0 f sid mtime turns
+    while IFS= read -r f; do
+      if [[ $any -eq 0 ]]; then
+        printf '%-19s  %-36s  %-5s  %s\n' 'modified' 'sessionId' 'turns' 'name'
+      fi
+      any=1
+      sid="$(pi_sid_for "$f")"
+      mtime=$(stat -f '%Sm' -t '%Y-%m-%d %H:%M:%S' "$f")
+      turns=$(wc -l < "$f" | tr -d ' ')
+      # No name column: pi records no /rename equivalent.
+      printf '%-19s  %-36s  %-5s  %s\n' "$mtime" "$sid" "$turns" ""
+    done < <(pi_filtered_files "$pdir")
+    if [[ $any -eq 0 ]]; then
+      echo "claude-pod: no matching pi sessions in $pdir" >&2
     fi
     return 0
   fi
@@ -599,6 +692,48 @@ find_codex_by_session_id() {
   echo "${matches[0]}"
 }
 
+# ── pi discovery ─────────────────────────────────────────────────────────────────
+
+# pi's filename is <timestamp>_<uuid>.jsonl — the uuid is everything after the
+# last '_', mirroring codex_sid_for's tail-of-filename approach (Claude's
+# <uuid>.jsonl bare-basename shortcut doesn't apply here).
+pi_sid_for() {
+  local b="${1##*/}"
+  b="${b%.jsonl}"
+  echo "${b##*_}"
+}
+
+# pi's directory is worktree-scoped like Claude's (no header-scanning cwd match
+# needed, unlike Codex) — so this mirrors filtered_sessions_in, just with
+# pi_sid_for's tail-of-filename extraction instead of the bare basename.
+pi_filtered_files() {
+  local dir="$1"
+  local files=("$dir"/*.jsonl)
+  [[ ${#files[@]} -eq 0 ]] && return 1
+  local f sid f_mtime
+  while IFS= read -r f; do
+    sid="$(pi_sid_for "$f")"
+    is_excluded "$sid" && continue
+    if [[ -n "${SINCE_EPOCH:-}" ]]; then
+      f_mtime=$(stat -f '%m' "$f")
+      [[ $f_mtime -ge $SINCE_EPOCH ]] || continue
+    fi
+    echo "$f"
+  done < <(ls -t "${files[@]}")
+}
+
+# The pi session file for a UUID, searched across every worktree directory —
+# cross-worktree by design, like find_by_session_id / find_codex_by_session_id.
+find_pi_by_session_id() {
+  local sid="$1"
+  local matches=("$pi_sessions_dir"/*/*"_$sid".jsonl)
+  if [[ ${#matches[@]} -eq 0 ]]; then
+    echo "claude-pod: no pi session file for ID $sid" >&2
+    exit 1
+  fi
+  echo "${matches[0]}"
+}
+
 # ── Auto source resolution ───────────────────────────────────────────────────────
 
 # The newest session mtime a source has for a worktree, as a Unix epoch — the
@@ -623,29 +758,53 @@ codex_freshest_mtime() {
   stat -f '%m' "$first"
 }
 
-# Resolve SOURCE=auto to a concrete source for this worktree, in place. The source
-# with the more recent session wins; when both have sessions, a hint on stderr
-# names the one being hidden so a mixed worktree doesn't silently drop half its
-# peers. Neither present → claude, whose downstream error path names where it
-# looked (the pre-auto default). A no-op unless SOURCE is 'auto'.
+pi_freshest_mtime() {
+  local target="$1" dir
+  dir="$(pi_project_dir_for "$target" 2>/dev/null)" || return 1
+  [[ -d "$dir" ]] || return 1
+  local files=("$dir"/*.jsonl)
+  [[ -e "${files[0]:-}" ]] || return 1
+  stat -f '%m' "${files[@]}" | sort -rn | head -1
+}
+
+# Resolve SOURCE=auto to a concrete source for this worktree, in place. The
+# source with the most recent session wins; when more than one source has
+# sessions here, a hint on stderr names the other(s) being hidden so a mixed
+# worktree doesn't silently drop peers on a source that isn't shown. No source
+# present → claude, whose downstream error path names where it looked (the
+# pre-auto default). A no-op unless SOURCE is 'auto'.
 resolve_auto_source() {
   [[ "$SOURCE" == auto ]] || return 0
-  local target="$1" cwd cm xm
+  local target="$1" cwd cm xm pm
   cwd="$(cd "$target" 2>/dev/null && pwd)" || { SOURCE=claude; return 0; }
   cm="$(claude_freshest_mtime "$target" || true)"
   xm="$(codex_freshest_mtime "$cwd" || true)"
-  if [[ -n "$cm" && -n "$xm" ]]; then
-    if [[ "$xm" -gt "$cm" ]]; then
-      SOURCE=codex
-      echo "claude-pod: showing Codex (more recent here) — Claude sessions also exist; --claude to see them" >&2
-    else
-      SOURCE=claude
-      echo "claude-pod: showing Claude (more recent here) — Codex sessions also exist; --codex to see them" >&2
-    fi
-  elif [[ -n "$xm" ]]; then
-    SOURCE=codex
-  else
-    SOURCE=claude
+  pm="$(pi_freshest_mtime "$target" || true)"
+
+  # Pick the source with the largest mtime among those present; ties favor
+  # claude, then codex, then pi (arbitrary but stable order).
+  local winner=claude best=""
+  [[ -n "$cm" ]] && { winner=claude; best="$cm"; }
+  if [[ -n "$xm" ]] && { [[ -z "$best" ]] || [[ "$xm" -gt "$best" ]]; }; then
+    winner=codex; best="$xm"
+  fi
+  if [[ -n "$pm" ]] && { [[ -z "$best" ]] || [[ "$pm" -gt "$best" ]]; }; then
+    winner=pi; best="$pm"
+  fi
+  SOURCE="$winner"
+
+  # Name every OTHER source that also has sessions here, so a three-way mixed
+  # worktree doesn't silently hide two of its three peers behind one flag.
+  local others=() flag
+  [[ "$winner" != claude && -n "$cm" ]] && others+=("--claude")
+  [[ "$winner" != codex && -n "$xm" ]] && others+=("--codex")
+  [[ "$winner" != pi && -n "$pm" ]] && others+=("--pi")
+  if [[ ${#others[@]} -gt 0 ]]; then
+    local joined=""
+    for flag in "${others[@]}"; do
+      [[ -z "$joined" ]] && joined="$flag" || joined="$joined, $flag"
+    done
+    echo "claude-pod: showing ${winner} (more recent here) — sessions also exist for $joined; pass one of those to see them" >&2
   fi
 }
 
@@ -743,8 +902,30 @@ where type == 'response_item' and payload.type == 'message'
 EOF
 }
 
+# pi turns are type=message lines; role/content live under message. content is
+# ALWAYS an array (never a bare string like Claude's simple-prompt case), mixing
+# text/thinking/toolCall blocks — keep only type=='text'. No isMeta field exists
+# to filter; non-message header lines (session, model_change,
+# thinking_level_change) are excluded by the type=='message' guard itself.
+filter_pipeline_pi() {
+  local since_clause
+  since_clause="$(since_and_cursor_clause)"
+  cat <<EOF
+where type == 'message' and message.role in ['user','assistant']${since_clause}
+| put text := (unnest message.content
+    | where this.type == 'text'
+    | values this.text | collect(this))
+| where len(text) > 0
+| values {ts: timestamp, role: message.role, text: join(text, '\n')}
+EOF
+}
+
 filter_pipeline() {
-  if [[ "$SOURCE" == codex ]]; then filter_pipeline_codex; else filter_pipeline_claude; fi
+  case "$SOURCE" in
+    codex) filter_pipeline_codex ;;
+    pi)    filter_pipeline_pi ;;
+    *)     filter_pipeline_claude ;;
+  esac
 }
 
 # Format a {ts, role, text} record stream as readable blocks.
@@ -772,6 +953,8 @@ last_turn_ts() {
   local where_clause="type in ['user','assistant'] and not has(isMeta)"
   if [[ "$SOURCE" == codex ]]; then
     where_clause="type == 'response_item' and payload.type == 'message' and payload.role in ['user','assistant']"
+  elif [[ "$SOURCE" == pi ]]; then
+    where_clause="type == 'message' and message.role in ['user','assistant']"
   fi
   CURSOR_TS="" SINCE="" super -f line -c "
     where $where_clause
@@ -790,6 +973,8 @@ render_session_new() {
   local sid
   if [[ "$SOURCE" == codex ]]; then
     sid="$(codex_sid_for "$file")"
+  elif [[ "$SOURCE" == pi ]]; then
+    sid="$(pi_sid_for "$file")"
   else
     sid="${file##*/}"
     sid="${sid%.jsonl}"
@@ -1206,6 +1391,10 @@ while [[ $# -gt 0 ]]; do
       SOURCE=codex
       shift
       ;;
+    --pi)
+      SOURCE=pi
+      shift
+      ;;
     --claude)
       SOURCE=claude
       shift
@@ -1308,13 +1497,13 @@ if [[ -n "$TAG" && "$MODE" != "console" && "$MODE" != "record" ]]; then
   exit 2
 fi
 
-# --codex selects a session *source*. The console/record modes read the human's
-# terminal typescript, which is provider-agnostic — there's no Codex variant of
-# it, so pairing them is a category error, not a mode.
-if [[ "$SOURCE" == codex ]]; then
+# --codex/--pi select a session *source*. The console/record modes read the
+# human's terminal typescript, which is provider-agnostic — there's no
+# Codex/pi variant of it, so pairing them is a category error, not a mode.
+if [[ "$SOURCE" == codex || "$SOURCE" == pi ]]; then
   case "$MODE" in
     console | console-list | record)
-      echo "claude-pod: --codex selects a session source; it doesn't apply to console/record" >&2
+      echo "claude-pod: --$SOURCE selects a session source; it doesn't apply to console/record" >&2
       exit 2
       ;;
   esac
@@ -1330,11 +1519,12 @@ fi
 if [[ -n "$SESSION_ID" ]]; then
   SESSION_ID=$(resolve_session_id "$SESSION_ID")
 fi
-# Codex records no /rename names, so its excludes are matched literally by UUID —
-# no resolution step. This also lets --peers work: the excluded observer id is a
-# Claude session id, which simply never matches a Codex UUID (so --peers ≡ --all
-# for Codex), instead of erroring in resolve_session_id as a non-UUID name.
-if [[ ${#EXCLUDES[@]} -gt 0 && "$SOURCE" != codex ]]; then
+# Codex and pi record no /rename names, so their excludes are matched literally
+# by UUID — no resolution step. This also lets --peers work: the excluded
+# observer id is a Claude session id, which simply never matches a Codex/pi
+# UUID (so --peers ≡ --all for both), instead of erroring in resolve_session_id
+# as a non-UUID name.
+if [[ ${#EXCLUDES[@]} -gt 0 && "$SOURCE" != codex && "$SOURCE" != pi ]]; then
   resolved=()
   for ex in "${EXCLUDES[@]}"; do
     resolved+=("$(resolve_session_id "$ex")")
@@ -1352,15 +1542,20 @@ resolve_render_file() {
     session)
       if [[ "$SOURCE" == codex ]]; then
         RENDER_FILE=$(find_codex_by_session_id "$SESSION_ID")
+      elif [[ "$SOURCE" == pi ]]; then
+        RENDER_FILE=$(find_pi_by_session_id "$SESSION_ID")
       elif [[ "$SOURCE" == claude ]]; then
         RENDER_FILE=$(find_by_session_id "$SESSION_ID")
       else
-        # auto: a UUID could belong to either source. Try Claude, then Codex, and
-        # pin SOURCE to whichever matched so filter_pipeline uses the right variant.
+        # auto: a UUID could belong to any source. Try Claude, then Codex, then
+        # pi, pinning SOURCE to whichever matched so filter_pipeline uses the
+        # right variant.
         if RENDER_FILE=$(find_by_session_id "$SESSION_ID" 2>/dev/null); then
           SOURCE=claude
         elif RENDER_FILE=$(find_codex_by_session_id "$SESSION_ID" 2>/dev/null); then
           SOURCE=codex
+        elif RENDER_FILE=$(find_pi_by_session_id "$SESSION_ID" 2>/dev/null); then
+          SOURCE=pi
         else
           echo "claude-pod: no session file for ID $SESSION_ID" >&2
           exit 1
@@ -1385,6 +1580,20 @@ resolve_render_file() {
         RENDER_FILE="${codex_out%%$'\n'*}"
         if [[ -z "$RENDER_FILE" ]]; then
           echo "claude-pod: no matching Codex sessions for $cwd" >&2
+        fi
+        return 0
+      fi
+      if [[ "$SOURCE" == pi ]]; then
+        local pdir
+        pdir="$(pi_project_dir_for "$target")"
+        if [[ ! -d "$pdir" ]]; then
+          echo "claude-pod: no pi sessions for $target" >&2
+          echo "  expected: $pdir" >&2
+          exit 1
+        fi
+        RENDER_FILE=$(pi_filtered_files "$pdir" | head -n 1)
+        if [[ -z "$RENDER_FILE" ]]; then
+          echo "claude-pod: no matching pi sessions in $pdir" >&2
         fi
         return 0
       fi
@@ -1457,10 +1666,10 @@ case "$MODE" in
       # the filename — and tail -qf merges the files, erasing which one each append
       # came from. So Codex can't do firehose-follow; --new (per-file, cursored) is
       # the supported way to catch up on several Codex peers, and it's cheaper too.
-      if [[ "$SOURCE" == codex && "$FOLLOW" -eq 1 ]]; then
-        echo "claude-pod: --codex --all/--peers -f (firehose) isn't supported — Codex" >&2
+      if [[ ( "$SOURCE" == codex || "$SOURCE" == pi ) && "$FOLLOW" -eq 1 ]]; then
+        echo "claude-pod: --$SOURCE --all/--peers -f (firehose) isn't supported — $SOURCE" >&2
         echo "  lines carry no per-turn session id to tag the merged stream with." >&2
-        echo "  use --codex --peers --new to catch up on every Codex peer instead." >&2
+        echo "  use --$SOURCE --peers --new to catch up on every $SOURCE peer instead." >&2
         exit 2
       fi
       files=()
@@ -1476,20 +1685,34 @@ case "$MODE" in
           echo "claude-pod: no matching Codex sessions for $cwd" >&2
           exit 0
         fi
+      elif [[ "$SOURCE" == pi ]]; then
+        pdir="$(pi_project_dir_for "$target")"
+        if [[ ! -d "$pdir" ]]; then
+          echo "claude-pod: no pi sessions for $target" >&2
+          echo "  expected: $pdir" >&2
+          exit 1
+        fi
+        while IFS= read -r f; do
+          files+=("$f")
+        done < <(pi_filtered_files "$pdir")
+        if [[ ${#files[@]} -eq 0 ]]; then
+          echo "claude-pod: no matching pi sessions in $pdir" >&2
+          exit 0
+        fi
       else
-      dir="$(project_dir_for "$target")"
-      if [[ ! -d "$dir" ]]; then
-        echo "claude-pod: no Claude sessions for $target" >&2
-        echo "  expected: $dir" >&2
-        exit 1
-      fi
-      while IFS= read -r f; do
-        files+=("$f")
-      done < <(filtered_sessions_in "$dir")
-      if [[ ${#files[@]} -eq 0 ]]; then
-        echo "claude-pod: no matching sessions in $dir" >&2
-        exit 0
-      fi
+        dir="$(project_dir_for "$target")"
+        if [[ ! -d "$dir" ]]; then
+          echo "claude-pod: no Claude sessions for $target" >&2
+          echo "  expected: $dir" >&2
+          exit 1
+        fi
+        while IFS= read -r f; do
+          files+=("$f")
+        done < <(filtered_sessions_in "$dir")
+        if [[ ${#files[@]} -eq 0 ]]; then
+          echo "claude-pod: no matching sessions in $dir" >&2
+          exit 0
+        fi
       fi
       if [[ "$NEW" -eq 1 ]]; then
         # Catch up on every peer at once: each session gets its own cursor, so

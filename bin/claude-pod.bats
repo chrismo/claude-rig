@@ -18,6 +18,7 @@ setup() {
   export CLAUDE_SESSIONS_META_DIR="$BATS_TEST_TMPDIR/.claude/sessions"
   export CLAUDE_POD_CURSOR_DIR="$BATS_TEST_TMPDIR/.claude/claude-pod/cursors"
   export CLAUDE_POD_CODEX_DIR="$BATS_TEST_TMPDIR/.codex/sessions"
+  export CLAUDE_POD_PI_DIR="$BATS_TEST_TMPDIR/.pi/agent/sessions"
   mkdir -p "$CLAUDE_PROJECTS_DIR" "$CLAUDE_SESSIONS_META_DIR"
   # Many tests want a clean baseline; --peers behavior depends on this.
   unset CLAUDE_CODE_SESSION_ID
@@ -996,4 +997,264 @@ write_codex_subagent() {
   run "$POD" --session "aaaaaaaa-1111-2222-3333-444444444444" "$BATS_TEST_TMPDIR"
   [ "$status" -eq 0 ]
   [[ "$output" == *"codex by uuid auto"* ]]
+}
+
+# ── pi source (--pi) ─────────────────────────────────────────────────────────────
+#
+# pi (pi.dev) stores sessions under ~/.pi/agent/sessions/<encoded-cwd>/, one
+# directory per worktree like Claude — but the path encoding differs from
+# Claude's encode_path (issue: verified against real ~/.pi/agent/sessions data).
+# pi replaces ONLY '/' with '-' (not every non-alphanumeric char — an
+# underscore in a real cwd survived untouched), and wraps the whole thing in a
+# DOUBLE leading and trailing '-': encode_pi_path() below reproduces exactly
+# that, confirmed byte-for-byte against 13 real directories.
+#
+# Filenames are <timestamp>_<uuid>.jsonl (the uuid is the tail after the last
+# underscore) — unlike Claude's bare <uuid>.jsonl, so sid extraction needs a
+# tail-of-filename approach like Codex's, not a bare `${f%.jsonl}`.
+#
+# pi has no /rename mechanism and no live-session registry (no analogue to
+# ~/.claude/sessions/<pid>.json or $CLAUDE_CODE_SESSION_ID), so --session by
+# name is unsupported (like Codex) and --peers cannot self-exclude (documented
+# limitation, not an error).
+
+# encode_pi_path /Users/x/y → --Users-x-y-- (mirrors claude-pod's pi encoding)
+encode_pi_path() {
+  printf -- '--%s--' "$(printf '%s' "${1#/}" | sed 's/\//-/g')"
+}
+
+# pi_session_dir_for WORKTREE → encoded ~/.pi/agent/sessions subdir
+pi_session_dir_for() {
+  echo "$CLAUDE_POD_PI_DIR/$(encode_pi_path "$(cd "$1" && pwd)")"
+}
+
+# write_pi_session WORKTREE SID [ROLE:TEXT ...]
+#   Writes a pi session file: a type=session header record (carrying id + cwd),
+#   followed by one type=message turn per ROLE:TEXT pair (default: a user +
+#   assistant turn). Filename is <timestamp>_<uuid>.jsonl, mirroring pi's
+#   real naming. Echoes the file path.
+write_pi_session() {
+  local wt="$1" sid="$2"; shift 2
+  local dir cwd
+  dir=$(pi_session_dir_for "$wt")
+  cwd=$(cd "$wt" && pwd)
+  mkdir -p "$dir"
+  local file="$dir/2026-07-15T10-00-00-000Z_$sid.jsonl"
+  {
+    printf '{"type":"session","version":3,"id":"%s","timestamp":"2026-07-15T10:00:00.000Z","cwd":"%s"}\n' "$sid" "$cwd"
+    if [[ $# -eq 0 ]]; then
+      set -- "user:hello from pi" "assistant:hi from pi"
+    fi
+    local i=1 pair role text
+    for pair in "$@"; do
+      role="${pair%%:*}"; text="${pair#*:}"
+      printf '{"type":"message","id":"m%d","parentId":null,"timestamp":"2026-07-15T10:00:0%d.000Z","message":{"role":"%s","content":[{"type":"text","text":"%s"}]}}\n' "$i" "$i" "$role" "$text"
+      i=$((i + 1))
+    done
+  } > "$file"
+  echo "$file"
+}
+
+@test "--pi renders the most-recent pi session in a worktree" {
+  wt=$(make_worktree pwt1)
+  write_pi_session "$wt" "01a08278-fc36-778e-8e2e-72bdb768aad2" >/dev/null
+  run "$POD" --pi "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"hello from pi"* ]] || false
+  [[ "$output" == *"hi from pi"* ]] || false
+}
+
+@test "--pi encodes the worktree path the way pi actually does (double-dash wrap)" {
+  wt=$(make_worktree pwt1)
+  write_pi_session "$wt" "01a08278-fc36-778e-8e2e-72bdb768aad2" "user:findable" >/dev/null
+  run "$POD" --pi "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"findable"* ]] || false
+}
+
+@test "--pi --all lists pi sessions for the worktree" {
+  wt=$(make_worktree pwt1)
+  write_pi_session "$wt" "01a08278-fc36-778e-8e2e-72bdb768aad2" >/dev/null
+  run "$POD" --pi --all "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"01a08278-fc36-778e-8e2e-72bdb768aad2"* ]] || false
+}
+
+@test "--pi --session renders a pi session by UUID, cross-worktree" {
+  wt=$(make_worktree pwt1)
+  write_pi_session "$wt" "01a08278-fc36-778e-8e2e-72bdb768aad2" "user:find me by id" >/dev/null
+  run "$POD" --pi --session "01a08278-fc36-778e-8e2e-72bdb768aad2" "$BATS_TEST_TMPDIR"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"find me by id"* ]] || false
+}
+
+@test "--pi --session rejects a /rename name (unsupported for pi)" {
+  wt=$(make_worktree pwt1)
+  write_pi_session "$wt" "01a08278-fc36-778e-8e2e-72bdb768aad2" >/dev/null
+  run "$POD" --pi --session some-name "$wt"
+  [ "$status" -ne 0 ]
+}
+
+@test "--pi with a pi dir that exists but has no sessions → exit 0, message on stderr" {
+  wt=$(make_worktree pwt1)
+  mkdir -p "$(pi_session_dir_for "$wt")"
+  run --separate-stderr "$POD" --pi --all "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"no matching"* ]] || false
+}
+
+# pi's directory is worktree-scoped like Claude's, so a worktree pi has never
+# run in is the same "bad path" case Claude's own bad-path test covers — not
+# Codex's "exit 0" (Codex has no per-worktree directory to be missing).
+@test "--pi with a worktree pi has never used → exit 1" {
+  wt=$(make_worktree pwt1)
+  run --separate-stderr "$POD" --pi --all "$wt"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"no pi sessions"* ]] || false
+}
+
+@test "--pi with --console → exit 2" {
+  wt=$(make_worktree pwt1)
+  run "$POD" --pi --console "$wt"
+  [ "$status" -eq 2 ]
+}
+
+@test "--pi --since filters by timestamp" {
+  wt=$(make_worktree pwt1)
+  f=$(write_pi_session "$wt" "01a08278-fc36-778e-8e2e-72bdb768aad2" \
+    "user:ancient turn" "assistant:ancient reply")
+  touch -t 202401010000 "$f"
+  run "$POD" --pi --since 1s "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"ancient turn"* ]] || false
+}
+
+@test "--pi --all --new renders each pi session's new turns" {
+  wt=$(make_worktree pwt1)
+  write_pi_session "$wt" "01a08278-fc36-778e-8e2e-72bdb768aad2" \
+    "user:fresh pi turn" "assistant:fresh pi reply" >/dev/null
+  run "$POD" --pi --all --new "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"fresh pi turn"* ]] || false
+}
+
+@test "--pi --peers -f (firehose) → exit 2, points at --new" {
+  wt=$(make_worktree pwt1)
+  write_pi_session "$wt" "01a08278-fc36-778e-8e2e-72bdb768aad2" >/dev/null
+  export CLAUDE_CODE_SESSION_ID=observer-session
+  run "$POD" --pi --peers -f "$wt"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--new"* ]] || false
+}
+
+# pi has no live-session registry to resolve $CLAUDE_CODE_SESSION_ID against, so
+# --peers can't actually exclude "this session" for pi — it behaves like --all.
+# This is a documented limitation (see usage() and resolve_render_file), not a
+# bug: the session id passed to --peers is a Claude session id, which simply
+# never matches a pi UUID, exactly like Codex's --peers-is-really---all behavior.
+@test "--pi --peers behaves like --all (no self-exclusion is possible for pi)" {
+  wt=$(make_worktree pwt1)
+  write_pi_session "$wt" "01a08278-fc36-778e-8e2e-72bdb768aad2" "user:peer turn" >/dev/null
+  export CLAUDE_CODE_SESSION_ID=observer-session
+  run "$POD" --pi --peers "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"01a08278-fc36-778e-8e2e-72bdb768aad2"* ]] || false
+}
+
+@test "--pi --all --new: a read peer's cursor doesn't suppress an unread peer's first read" {
+  wt=$(make_worktree pwt1)
+  A=01a08278-fc36-778e-8e2e-72bdb768aad2
+  B=01a08279-fc36-778e-8e2e-72bdb768aad3
+  write_pi_session "$wt" "$B" "user:unread peer turn" >/dev/null
+  fA=$(write_pi_session "$wt" "$A" "user:read peer turn")
+  touch "$fA"
+  run "$POD" --pi --session "$A" --new "$wt"
+  [ "$status" -eq 0 ]
+  run "$POD" --pi --all --new "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"unread peer turn"* ]] || false
+}
+
+@test "--pi filters out non-message records (model_change, thinking_level_change)" {
+  wt=$(make_worktree pwt1)
+  dir=$(pi_session_dir_for "$wt")
+  mkdir -p "$dir"
+  sid=01a08278-fc36-778e-8e2e-72bdb768aad2
+  cwd=$(cd "$wt" && pwd)
+  file="$dir/2026-07-15T10-00-00-000Z_$sid.jsonl"
+  {
+    printf '{"type":"session","version":3,"id":"%s","timestamp":"2026-07-15T10:00:00.000Z","cwd":"%s"}\n' "$sid" "$cwd"
+    printf '{"type":"model_change","id":"m0","parentId":null,"timestamp":"2026-07-15T10:00:01.000Z","provider":"x","modelId":"y"}\n'
+    printf '{"type":"message","id":"m1","parentId":null,"timestamp":"2026-07-15T10:00:02.000Z","message":{"role":"user","content":[{"type":"text","text":"real turn"}]}}\n'
+  } > "$file"
+  run "$POD" --pi "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"real turn"* ]] || false
+  [[ "$output" != *"model_change"* ]] || false
+}
+
+@test "--pi filters assistant content blocks to type=text (drops thinking/toolCall)" {
+  wt=$(make_worktree pwt1)
+  dir=$(pi_session_dir_for "$wt")
+  mkdir -p "$dir"
+  sid=01a08278-fc36-778e-8e2e-72bdb768aad2
+  cwd=$(cd "$wt" && pwd)
+  file="$dir/2026-07-15T10-00-00-000Z_$sid.jsonl"
+  # thinking/toolCall blocks have no .text field at all, so they're dropped by
+  # simply not surviving `values this.text` regardless of the type=='text'
+  # guard — that alone wouldn't prove the guard does anything. A toolResult
+  # block that (like a real tool result might) DOES carry a .text field is
+  # what actually exercises the guard: without it, this leaks into the output.
+  {
+    printf '{"type":"session","version":3,"id":"%s","timestamp":"2026-07-15T10:00:00.000Z","cwd":"%s"}\n' "$sid" "$cwd"
+    printf '{"type":"message","id":"m1","parentId":null,"timestamp":"2026-07-15T10:00:01.000Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"pondering"},{"type":"toolCall","id":"c1","name":"bash","arguments":{}},{"type":"toolResult","text":"tool output leaked"},{"type":"text","text":"the real reply"}]}}\n'
+  } > "$file"
+  run "$POD" --pi "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"the real reply"* ]] || false
+  [[ "$output" != *"pondering"* ]] || false
+  [[ "$output" != *"tool output leaked"* ]] || false
+  [[ "$output" != *"bash"* ]] || false
+}
+
+# ── Auto source detection with pi ────────────────────────────────────────────────
+
+@test "auto source: renders pi when only pi has sessions here" {
+  wt=$(make_worktree awt)
+  write_pi_session "$wt" "01a08278-fc36-778e-8e2e-72bdb768aad2" "user:pi only" >/dev/null
+  run "$POD" "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"pi only"* ]] || false
+}
+
+@test "auto source: with claude and pi both present, the more recent wins (pi), hint names claude" {
+  wt=$(make_worktree awt)
+  cf=$(write_session "$wt" "11111111-1111-1111-1111-111111111111")
+  pf=$(write_pi_session "$wt" "01a08278-fc36-778e-8e2e-72bdb768aad2" "user:pi is fresher")
+  touch -t 202001010000 "$cf"
+  touch "$pf"
+  run --separate-stderr "$POD" "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"pi is fresher"* ]] || false
+  [[ "$stderr" == *"claude"* ]] || false
+}
+
+@test "--pi forces the pi source even when Claude is more recent" {
+  wt=$(make_worktree awt)
+  cf=$(write_session "$wt" "11111111-1111-1111-1111-111111111111")
+  pf=$(write_pi_session "$wt" "01a08278-fc36-778e-8e2e-72bdb768aad2" "user:pi older")
+  touch "$cf"
+  touch -t 202001010000 "$pf"
+  run "$POD" --pi "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"pi older"* ]] || false
+  [[ "$output" != *"hello"* ]] || false
+}
+
+@test "--session with no source flag resolves a pi-only UUID" {
+  wt=$(make_worktree awt)
+  write_pi_session "$wt" "01a08278-fc36-778e-8e2e-72bdb768aad2" "user:pi by uuid auto" >/dev/null
+  run "$POD" --session "01a08278-fc36-778e-8e2e-72bdb768aad2" "$BATS_TEST_TMPDIR"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"pi by uuid auto"* ]] || false
 }
