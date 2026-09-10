@@ -183,6 +183,24 @@ actually exclude "this session" — it behaves like `--pi --all`. That's a known
 limitation, not a bug; if you're reading pi peers, assume the list may include
 whichever pi session you're running from, if any.
 
+pi's config also layers home and project scope rather than one replacing the
+other, per pi.dev's own docs (not a given project's README, which describes
+what that project chose to ship, not the platform's actual behavior):
+
+- **Settings** (`~/.pi/agent/settings.json` global, `.pi/settings.json`
+  project): project overrides global. Nested objects (`compaction`, `retry`,
+  `modelThinkingLevels`, …) deep-merge recursively — an omitted sub-field falls
+  back to the global value. Top-level arrays/primitives (`defaultTools`,
+  `enabledModels`, `packages`, …) are fully replaced by the project value if
+  present, not merged.
+- **Extensions** (`~/.pi/agent/extensions/*.ts` global, `.pi/extensions/*.ts`
+  project, plus `index.ts` in subdirectories of either): both locations load
+  additively in the same process — neither shadows the other. Global
+  extensions load at startup before project trust is evaluated; project
+  extensions load only after the project passes trust validation. Duplicate
+  command names from different extensions are kept side by side with numeric
+  suffixes (`/review:1`, `/review:2`) rather than one overriding the other.
+
 ## The human's consoles
 
 The human can record a terminal with `script`, which mirrors everything they see
