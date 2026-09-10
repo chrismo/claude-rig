@@ -17,7 +17,7 @@ Investigate in parallel, then synthesize:
 - `git log $(git merge-base HEAD @{u} 2>/dev/null || git merge-base HEAD main)..HEAD --oneline` — what's diverged from base
 - `git branch --show-current` and how far ahead/behind its upstream
 - `gh pr list --head "$(git branch --show-current)" --state all` — open or recently-closed PR for this branch
-- Recent Claude session transcripts for this directory (try `claude-search` if available, otherwise `~/.claude/projects/<encoded-cwd>/`)
+- Recent Claude session transcripts for this directory (try `agent-search` if available, otherwise `~/.claude/projects/<encoded-cwd>/`)
 - Memory entries (`MEMORY.md` and the `memory/` directory) for project-type entries about this work
 - TODO/FIXME comments in changed files
 

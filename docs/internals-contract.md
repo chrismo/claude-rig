@@ -104,9 +104,10 @@ losing it costs visibility, not function. Do not work around it.
 ### C — transcripts
 
 The widest blast radius in the repo: seven scripts read these
-(`claude-pod`, `claude-search`, `claude-tabs`, `work-context`, and the three
-`session-*.sh`). It is also the surface most likely to change quietly, because
-it is a data format rather than a mechanism.
+(`claude-pod`, `agent-search` (formerly `claude-search`), `claude-tabs`,
+`work-context`, and the three `session-*.sh`). It is also the surface most
+likely to change quietly, because it is a data format rather than a
+mechanism.
 
 | ID | Assumption | Relied on by | If it fails |
 |---|---|---|---|

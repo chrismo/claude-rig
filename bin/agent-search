@@ -1,65 +1,117 @@
 #!/usr/bin/env bash
 #
-# claude-search - Search Claude prompt history by keyword
+# agent-search - Search Claude and pi prompt history by keyword
 #
-# Usage: claude-search <term> [days]
+# Usage: agent-search <term> [days]
 #
-# Searches ~/.claude/projects/*/*.jsonl session transcripts for user prompts
-# whose content matches <term> (case-insensitive regex). Limits results to the
-# last N days (default: 30). Prints date, project, sessionId, and an 89-char
-# excerpt as a barred table.
+# Searches ~/.claude/projects/*/*.jsonl and ~/.pi/agent/sessions/*/*.jsonl
+# session transcripts for user prompts whose content matches <term>
+# (case-insensitive regex). Limits results to the last N days (default: 30).
+# Prints date, source, project, sessionId, and an 89-char excerpt as a barred
+# table.
 #
-# Use the sessionId with `claude --resume <sessionId>` to resume a session.
+# Use the sessionId with `claude --resume <sessionId>` (claude source) or
+# `pi --resume <sessionId>` (pi source) to resume a session.
 #
 # Date filter uses UTC. Excludes meta entries, compact-summary continuations,
 # and tool-result messages so only real user prompts are returned.
 #
 # Requires: super (SuperDB), grdy.
 #
+# Formerly claude-search; bin/claude-search is a symlink kept for muscle memory.
 
 set -euo pipefail
 shopt -s nullglob
 
 usage() {
   cat <<-EOF
-	Usage: claude-search <term> [days]
+	Usage: agent-search <term> [days]
 
-	Searches ~/.claude/projects/*/*.jsonl for user prompts matching <term>
-	(case-insensitive). Defaults to last 30 days.
+	Searches ~/.claude/projects/*/*.jsonl and ~/.pi/agent/sessions/*/*.jsonl
+	for user prompts matching <term> (case-insensitive). Defaults to last 30
+	days.
 
 	Examples:
-	  claude-search fivetran
-	  claude-search "redis snapshot" 7
+	  agent-search fivetran
+	  agent-search "redis snapshot" 7
 	EOF
 }
 
-if [[ "${1:-}" == "-h" || "${1:-}" == "--help" || -z "${1:-}" ]]; then
-  usage
-  exit 0
+search_claude_projects() {
+  # Search Claude Code's ~/.claude/projects/*/*.jsonl transcripts.
+  local term="$1" days="$2" projects_dir="$3"
+  local files=("$projects_dir"/*/*.jsonl)
+  [[ ${#files[@]} -eq 0 ]] && return 0
+
+  super -j -c "
+    where type=='user'
+      and not has(isMeta)
+      and not has(isCompactSummary)
+      and typeof(message.content) == <string>
+      and cast(timestamp, <time>) >= now() - '${days}d'::duration
+      and grep('(?i)${term}', cast(message.content, <string>))
+    | values {
+        date: strftime('%Y-%m-%d %H:%M', cast(timestamp, <time>)),
+        source: 'claude',
+        project: split(cwd, '/')[-1],
+        sessionId,
+        prompt: replace(cast(message.content, <string>)[0:89], '\n', ' ')
+      }
+  " "${files[@]}"
+}
+
+search_pi_sessions() {
+  # Search pi's ~/.pi/agent/sessions/*/*.jsonl transcripts. Schema differs
+  # from Claude Code's: session id lives on a single type=session record, and
+  # user prompt text is message.content[0].text (an array), not a plain
+  # string. See memory: pi-agent-session-format.
+  local term="$1" days="$2" sessions_dir="$3"
+  local files=("$sessions_dir"/*/*.jsonl)
+  [[ ${#files[@]} -eq 0 ]] && return 0
+
+  local f session_id project
+  for f in "${files[@]}"; do
+    session_id=$(super -f line -c "where type=='session' | values id" "$f" 2>/dev/null | head -1)
+    project=$(basename "$(dirname "$f")" | sed 's/.*-dev-//' | sed "s/-Users-$(whoami)$//")
+
+    super -j -c "
+      where type=='message' and message.role=='user'
+        and typeof(message.content) == <[({text:string})]>
+        and cast(timestamp, <time>) >= now() - '${days}d'::duration
+        and grep('(?i)${term}', message.content[0].text)
+      | values {
+          date: strftime('%Y-%m-%d %H:%M', cast(timestamp, <time>)),
+          source: 'pi',
+          project: '${project}',
+          sessionId: '${session_id}',
+          prompt: replace(message.content[0].text[0:89], '\n', ' ')
+        }
+    " "$f"
+  done
+}
+
+claude_search_main() {
+  local term="$1" days="${2:-30}"
+  local projects_dir="${CLAUDE_SEARCH_PROJECTS_DIR:-$HOME/.claude/projects}"
+  local pi_sessions_dir="${CLAUDE_SEARCH_PI_SESSIONS_DIR:-$HOME/.pi/agent/sessions}"
+
+  if [[ ! -d "$projects_dir" && ! -d "$pi_sessions_dir" ]]; then
+    echo "No session files found under $projects_dir or $pi_sessions_dir" >&2
+    return 1
+  fi
+
+  {
+    search_claude_projects "$term" "$days" "$projects_dir"
+    search_pi_sessions "$term" "$days" "$pi_sessions_dir"
+  } | super -j -c "sort -r date" - | grdy
+}
+
+# Allow bats to source this file (for unit-testing the search_* functions)
+# without running main or exiting the shell.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  if [[ "${1:-}" == "-h" || "${1:-}" == "--help" || -z "${1:-}" ]]; then
+    usage
+    exit 0
+  fi
+  claude_search_main "$1" "${2:-30}"
 fi
-
-term="$1"
-days="${2:-30}"
-projects_dir="${CLAUDE_SEARCH_PROJECTS_DIR:-$HOME/.claude/projects}"
-
-files=("$projects_dir"/*/*.jsonl)
-if [[ ${#files[@]} -eq 0 ]]; then
-  echo "No session files found under $projects_dir" >&2
-  exit 1
-fi
-
-super -j -c "
-  where type=='user'
-    and not has(isMeta)
-    and not has(isCompactSummary)
-    and typeof(message.content) == <string>
-    and cast(timestamp, <time>) >= now() - '${days}d'::duration
-    and grep('(?i)${term}', cast(message.content, <string>))
-  | values {
-      date: strftime('%Y-%m-%d %H:%M', cast(timestamp, <time>)),
-      project: split(cwd, '/')[-1],
-      sessionId,
-      prompt: replace(cast(message.content, <string>)[0:89], '\n', ' ')
-    }
-  | sort -r date
-" "${files[@]}" | grdy
