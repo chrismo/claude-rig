@@ -21,9 +21,8 @@ setup() {
 @test "finds a matching Claude prompt within the day window" {
   local dir="$BATS_TEST_TMPDIR/claude-projects/-Users-tester-dev-widget"
   mkdir -p "$dir"
-  # A sibling isMeta:true record keeps the field present in the batch schema
-  # (see real ~/.claude transcripts) so has(isMeta) resolves per-record
-  # instead of erroring for a field absent from every record.
+  # Mixed schema: one record carries the optional flags, one doesn't — the
+  # common shape in real ~/.claude transcripts.
   cat > "$dir/session.jsonl" <<-EOF
 	{"type":"user","isMeta":true,"isCompactSummary":true,"timestamp":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","sessionId":"abc123","cwd":"/Users/tester/dev/widget","message":{"content":"meta record"}}
 	{"type":"user","timestamp":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","sessionId":"abc123","cwd":"/Users/tester/dev/widget","message":{"content":"fix the fivetran connector"}}
@@ -34,6 +33,34 @@ setup() {
   [[ "$output" == *'"source":"claude"'* ]] || false
   [[ "$output" == *'"sessionId":"abc123"'* ]] || false
   [[ "$output" == *'"project":"widget"'* ]]
+}
+
+@test "finds a Claude prompt when no record carries isMeta/isCompactSummary" {
+  # Real transcripts often contain neither field anywhere in the file. The
+  # optional-field checks must not reference a field name that super cannot
+  # resolve in the input schema, or the whole query fails to compile.
+  local dir="$BATS_TEST_TMPDIR/claude-projects/-Users-tester-dev-widget"
+  mkdir -p "$dir"
+  cat > "$dir/session.jsonl" <<-EOF
+	{"type":"user","timestamp":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","sessionId":"abc123","cwd":"/Users/tester/dev/widget","message":{"content":"fix the fivetran connector"}}
+	EOF
+
+  run search_claude_projects "fivetran" 30 "$BATS_TEST_TMPDIR/claude-projects"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"fivetran"* ]]
+}
+
+@test "excludes meta and compact-summary Claude records" {
+  local dir="$BATS_TEST_TMPDIR/claude-projects/-Users-tester-dev-widget"
+  mkdir -p "$dir"
+  cat > "$dir/session.jsonl" <<-EOF
+	{"type":"user","isMeta":true,"timestamp":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","sessionId":"abc123","cwd":"/Users/tester/dev/widget","message":{"content":"meta fivetran record"}}
+	{"type":"user","isCompactSummary":true,"timestamp":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","sessionId":"abc123","cwd":"/Users/tester/dev/widget","message":{"content":"summary fivetran record"}}
+	EOF
+
+  run search_claude_projects "fivetran" 30 "$BATS_TEST_TMPDIR/claude-projects"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"fivetran"* ]]
 }
 
 @test "excludes Claude prompts outside the day window" {

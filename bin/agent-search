@@ -39,14 +39,19 @@ usage() {
 
 search_claude_projects() {
   # Search Claude Code's ~/.claude/projects/*/*.jsonl transcripts.
+  # The isMeta / isCompactSummary tests go through fields(this) rather than
+  # has(): super resolves a bare field reference at compile time against the
+  # input types it has inferred so far, and errors "no such field" when no
+  # record it has read carries that name. isCompactSummary appears only on a
+  # compact boundary, so most transcripts never mention it.
   local term="$1" days="$2" projects_dir="$3"
   local files=("$projects_dir"/*/*.jsonl)
   [[ ${#files[@]} -eq 0 ]] && return 0
 
   super -j -c "
     where type=='user'
-      and not has(isMeta)
-      and not has(isCompactSummary)
+      and not (['isMeta'] in fields(this))
+      and not (['isCompactSummary'] in fields(this))
       and typeof(message.content) == <string>
       and cast(timestamp, <time>) >= now() - '${days}d'::duration
       and grep('(?i)${term}', cast(message.content, <string>))
