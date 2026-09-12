@@ -432,6 +432,21 @@ Row 1 was confirmed **from the receiving end** as well: a `success` tool result
 only proves the socket accepted the bytes, so the peer was asked, and reported
 both probes arriving in its model context in full.
 
+**RE-VERIFIED unchanged on 2.1.269.** Three sends, chosen to cover the rule
+without repeating row 2's confound:
+
+| # | `to` | result |
+|---|---|---|
+| 1 | `Review` — prefix, three live rows | rejected sender-side, error named all three refs |
+| 2 | `claude-rig-64` — bare, unique, no pin held | **delivered** |
+| 3 | `claude-rig-64 [0c4a0f]` — ref | delivered |
+
+Rows 2 and 3 were confirmed from the receiving end rather than from their own
+`success` results: both probes appear in claude-rig-64's transcript, and it
+described the first one back correctly. Row 1 went first on purpose — a refused
+send never reaches anyone, so the ambiguity gate is the half that costs no peer
+a turn.
+
 Worth knowing from the receiving end: the peer cannot tell which of these it
 got. Addressing is resolved entirely sender-side, so a bare-name send and a ref
 send arrive byte-identical.
