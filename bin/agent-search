@@ -37,14 +37,27 @@ usage() {
 	EOF
 }
 
+# Escape a value for interpolation into a SuperSQL single-quoted literal:
+# backslash first, then the quote. Without this, a term as ordinary as
+# "don't" closes the literal early and the search dies with a parse error
+# instead of searching.
+sq_escape() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\'/\\\'}"
+  printf '%s' "$s"
+}
+
 search_claude_projects() {
   # Search Claude Code's ~/.claude/projects/*/*.jsonl transcripts.
-  # The isMeta / isCompactSummary tests go through fields(this) rather than
-  # has(): super resolves a bare field reference at compile time against the
-  # input types it has inferred so far, and errors "no such field" when no
-  # record it has read carries that name. isCompactSummary appears only on a
-  # compact boundary, so most transcripts never mention it.
-  local term="$1" days="$2" projects_dir="$3"
+  #
+  # Every optional field is tested through fields(this) rather than has():
+  # super resolves a bare field reference at compile time against the input
+  # types it has inferred so far, and errors "no such field" when no record it
+  # has read carries that name. isCompactSummary appears only on a compact
+  # boundary, so most transcripts never mention it.
+  local term days projects_dir
+  term="$(sq_escape "$1")" days="$2" projects_dir="$3"
   local files=("$projects_dir"/*/*.jsonl)
   [[ ${#files[@]} -eq 0 ]] && return 0
 
@@ -52,6 +65,8 @@ search_claude_projects() {
     where type=='user'
       and not (['isMeta'] in fields(this))
       and not (['isCompactSummary'] in fields(this))
+      and ['cwd'] in fields(this)
+      and ['sessionId'] in fields(this)
       and typeof(message.content) == <string>
       and cast(timestamp, <time>) >= now() - '${days}d'::duration
       and grep('(?i)${term}', cast(message.content, <string>))
@@ -65,58 +80,114 @@ search_claude_projects() {
   " "${files[@]}"
 }
 
+# The project label for a pi transcript. pi's session header carries the real
+# cwd, so prefer it; the directory name is only a fallback, and a lossy one —
+# pi encodes a path by replacing '/' with '-' and wrapping the result in a
+# double dash (/Users/x/claude-rig → --Users-x-claude-rig--), so a project
+# whose own name contains a dash can't be recovered from it.
+pi_project_label() {
+  local cwd="$1" dir="$2"
+  if [[ -n "$cwd" ]]; then
+    basename "$cwd"
+    return 0
+  fi
+  local encoded="${dir##*/}"
+  encoded="${encoded#--}"
+  encoded="${encoded%--}"
+  printf '%s' "${encoded##*-}"
+}
+
 search_pi_sessions() {
   # Search pi's ~/.pi/agent/sessions/*/*.jsonl transcripts. Schema differs
-  # from Claude Code's: session id lives on a single type=session record, and
-  # user prompt text is message.content[0].text (an array), not a plain
-  # string. See memory: pi-agent-session-format.
-  local term="$1" days="$2" sessions_dir="$3"
+  # from Claude Code's: session id and cwd live on a single type=session
+  # header record, and prompt text is in message.content blocks — an array of
+  # {type, text}, never a bare string. See memory: pi-agent-session-format.
+  #
+  # The blocks are unnested and filtered on this.type == 'text' rather than
+  # matched against an exact array type: a user turn can carry other block
+  # kinds, and an exact typeof() match drops every record the moment one
+  # appears (or the moment pi adds a field to the block).
+  local term days sessions_dir
+  term="$(sq_escape "$1")" days="$2" sessions_dir="$3"
   local files=("$sessions_dir"/*/*.jsonl)
   [[ ${#files[@]} -eq 0 ]] && return 0
 
-  local f session_id project
+  local f header session_id cwd project
   for f in "${files[@]}"; do
-    session_id=$(super -f line -c "where type=='session' | values id" "$f" 2>/dev/null | head -1)
-    project=$(basename "$(dirname "$f")" | sed 's/.*-dev-//' | sed "s/-Users-$(whoami)$//")
+    # One header line: id<TAB>cwd. Older headers may predate cwd, so fall back
+    # to the id alone rather than letting the whole file drop out.
+    header="$(super -f line -c "where type=='session' | values f'{id}\t{cwd}'" "$f" 2>/dev/null)" || header=""
+    if [[ -z "$header" ]]; then
+      header="$(super -f line -c "where type=='session' | values id" "$f" 2>/dev/null)" || header=""
+    fi
+    header="${header%%$'\n'*}"
+    session_id="${header%%$'\t'*}"
+    cwd=""
+    [[ "$header" == *$'\t'* ]] && cwd="${header#*$'\t'}"
+    [[ -n "$session_id" ]] || continue
+    project="$(pi_project_label "$cwd" "$(dirname "$f")")"
 
     super -j -c "
       where type=='message' and message.role=='user'
-        and typeof(message.content) == <[({text:string})]>
+        and ['message','content'] in fields(this)
         and cast(timestamp, <time>) >= now() - '${days}d'::duration
-        and grep('(?i)${term}', message.content[0].text)
+      | put _text := (unnest message.content
+          | where this.type == 'text'
+          | values this.text | collect(this))
+      | where len(_text) > 0
+      | put _prompt := join(_text, ' ')
+      | where grep('(?i)${term}', _prompt)
       | values {
           date: strftime('%Y-%m-%d %H:%M', cast(timestamp, <time>)),
           source: 'pi',
-          project: '${project}',
-          sessionId: '${session_id}',
-          prompt: replace(message.content[0].text[0:89], '\n', ' ')
+          project: '$(sq_escape "$project")',
+          sessionId: '$(sq_escape "$session_id")',
+          prompt: replace(_prompt[0:89], '\n', ' ')
         }
     " "$f"
   done
 }
 
-claude_search_main() {
+agent_search_main() {
   local term="$1" days="${2:-30}"
   local projects_dir="${CLAUDE_SEARCH_PROJECTS_DIR:-$HOME/.claude/projects}"
   local pi_sessions_dir="${CLAUDE_SEARCH_PI_SESSIONS_DIR:-$HOME/.pi/agent/sessions}"
+
+  if [[ ! "$days" =~ ^[0-9]+$ ]]; then
+    echo "agent-search: days must be a whole number, got: $days" >&2
+    return 2
+  fi
 
   if [[ ! -d "$projects_dir" && ! -d "$pi_sessions_dir" ]]; then
     echo "No session files found under $projects_dir or $pi_sessions_dir" >&2
     return 1
   fi
 
-  {
-    search_claude_projects "$term" "$days" "$projects_dir"
-    search_pi_sessions "$term" "$days" "$pi_sessions_dir"
-  } | super -j -c "sort -r date" - | grdy
+  # Each source is collected on its own so one failing reader reports itself
+  # and the other's results still print — inside a single pipeline component,
+  # errexit would abort the group and erase both.
+  local claude_rows="" pi_rows=""
+  claude_rows="$(search_claude_projects "$term" "$days" "$projects_dir")" ||
+    echo "agent-search: reading Claude transcripts failed" >&2
+  pi_rows="$(search_pi_sessions "$term" "$days" "$pi_sessions_dir")" ||
+    echo "agent-search: reading pi transcripts failed" >&2
+
+  if [[ -z "$claude_rows" && -z "$pi_rows" ]]; then
+    echo "agent-search: no prompts matching '$term' in the last ${days}d" >&2
+    return 0
+  fi
+
+  printf '%s\n%s\n' "$claude_rows" "$pi_rows" |
+    super -j -c "where ['date'] in fields(this) | sort -r date" - | grdy
 }
 
 # Allow bats to source this file (for unit-testing the search_* functions)
-# without running main or exiting the shell.
+# without running main or exiting the shell. Note that sourcing also imports
+# this script's `set -euo pipefail` and `shopt -s nullglob` into the caller.
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   if [[ "${1:-}" == "-h" || "${1:-}" == "--help" || -z "${1:-}" ]]; then
     usage
     exit 0
   fi
-  claude_search_main "$1" "${2:-30}"
+  agent_search_main "$1" "${2:-30}"
 fi
