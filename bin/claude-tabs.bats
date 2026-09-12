@@ -16,6 +16,49 @@ setup() {
   source "$TABS"
 }
 
+# ── REGISTRY_TO_TSV ───────────────────────────────────────────────────────────
+
+# registry_tsv <ndjson> → the cwd<TAB>sessionId lines the filter keeps.
+registry_tsv() {
+  printf '%s\n' "$1" | super -i json -f line -c "$REGISTRY_TO_TSV" -
+}
+
+@test "registry filter keeps an entry whose records never declare 'kind'" {
+  run registry_tsv '{"cwd":"/tmp/widget","sessionId":"abc123"}'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"/tmp/widget"* ]] || false
+  [[ "$output" == *"abc123"* ]]
+}
+
+@test "registry filter drops non-interactive entries and keeps interactive ones" {
+  run registry_tsv '{"kind":"sdk","cwd":"/tmp/bot","sessionId":"bot1"}
+{"kind":"interactive","cwd":"/tmp/widget","sessionId":"abc123"}'
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"/tmp/bot"* ]] || false
+  [[ "$output" == *"/tmp/widget"* ]]
+}
+
+@test "registry filter drops entries missing cwd or sessionId" {
+  run registry_tsv '{"kind":"interactive","sessionId":"nocwd"}
+{"kind":"interactive","cwd":"/tmp/nosid"}
+{"kind":"interactive","cwd":"/tmp/widget","sessionId":"abc123"}'
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"nocwd"* ]] || false
+  [[ "$output" != *"nosid"* ]] || false
+  [[ "$output" == *"abc123"* ]]
+}
+
+@test "registry filter compiles against a file input with no 'kind' anywhere" {
+  # super resolves field references at compile time when it can infer the
+  # input schema up front — which it does for a file and not for a pipe. The
+  # filter must not name a field the input never declares.
+  local f="$BATS_TEST_TMPDIR/registry.json"
+  printf '%s\n' '{"cwd":"/tmp/widget","sessionId":"abc123"}' > "$f"
+  run super -i json -f line -c "$REGISTRY_TO_TSV" "$f"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"abc123"* ]]
+}
+
 # ── build_restore_applescript ─────────────────────────────────────────────────
 
 @test "applescript targets specific terminals, not focus-routed keystrokes" {

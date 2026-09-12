@@ -326,7 +326,7 @@ load_sid_name_map() {
   [[ -e "${files[0]:-}" ]] || return 0
   SID_NAME_MAP_TSV=$(
     super -i json -f line -c \
-      "where has(name) and has(sessionId) | values f'{sessionId}\t{name}'" \
+      "where ['name'] in fields(this) and ['sessionId'] in fields(this) | values f'{sessionId}\t{name}'" \
       "${files[@]}" 2>/dev/null
   ) || true
 }
@@ -368,8 +368,11 @@ sid_from_live_sessions() {
 # the name in `content` wrapped in <local-command-stdout>…</local-command-stdout>
 # tags. Filtering on type+subtype prevents false matches from tool results,
 # code reads, or assistant turns that contain the literal phrase
-# "Session renamed to:". `has(subtype)` guards against records whose schema
-# lacks the field (super errors on direct missing-field access).
+# "Session renamed to:". The subtype test goes through fields(this) rather
+# than has(subtype): super resolves a bare field reference at compile time
+# against the input types it has inferred so far, and errors "no such field"
+# when no record it has read declares that name. Same reason the isMeta
+# filters in the render pipelines are written that way.
 SID_NAME_DISK_MAP_TSV=""
 SID_NAME_DISK_MAP_LOADED=0
 
@@ -380,7 +383,7 @@ load_sid_name_disk_map() {
   [[ -e "${files[0]:-}" ]] || return 0
   SID_NAME_DISK_MAP_TSV=$(
     super -i json -f line -c "
-      where type == 'system' and has(subtype) and subtype == 'local_command'
+      where type == 'system' and ['subtype'] in fields(this) and subtype == 'local_command'
         and grep('Session renamed to:', this)
       | put _name := regexp('Session renamed to: ([^<]+)', cast(this, <string>))[1]
       | sort -r timestamp
@@ -607,7 +610,8 @@ codex_sid_for() {
 # never has to be interpolated into a super program. Subagent rollouts are
 # dropped by string-matching the stringified payload for "subagent" — older Codex
 # builds omit payload.source entirely, and has(payload.source) would error at
-# schema resolution when the field appears in no header at all.
+# schema resolution when the field appears in no header at all (the same trap
+# the isMeta / subtype filters avoid via fields(this)).
 codex_files_for_cwd() {
   local cwd="$1"
   # A worktree under a symlinked parent (/tmp, /var on macOS) has a logical path
@@ -871,7 +875,7 @@ filter_pipeline_claude() {
   local since_clause
   since_clause="$(since_and_cursor_clause)"
   cat <<EOF
-where type in ['user','assistant'] and not has(isMeta)${since_clause}
+where type in ['user','assistant'] and not (['isMeta'] in fields(this))${since_clause}
 | put _arr := case
     when typeof(message.content) == <string>
       then [{type: 'text', text: cast(message.content, <string>)}]
@@ -950,7 +954,7 @@ render_historical() {
 # reader actually saw even when a window (--turns) clipped the render.
 last_turn_ts() {
   local file="$1"
-  local where_clause="type in ['user','assistant'] and not has(isMeta)"
+  local where_clause="type in ['user','assistant'] and not (['isMeta'] in fields(this))"
   if [[ "$SOURCE" == codex ]]; then
     where_clause="type == 'response_item' and payload.type == 'message' and payload.role in ['user','assistant']"
   elif [[ "$SOURCE" == pi ]]; then
@@ -1027,7 +1031,7 @@ filter_pipeline_with_sid() {
     since_clause=" and cast(timestamp, <time>) >= $(since_expr "$SINCE")"
   fi
   cat <<EOF
-where type in ['user','assistant'] and not has(isMeta)${since_clause}
+where type in ['user','assistant'] and not (['isMeta'] in fields(this))${since_clause}
 | put _arr := case
     when typeof(message.content) == <string>
       then [{type: 'text', text: cast(message.content, <string>)}]

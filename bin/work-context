@@ -52,7 +52,7 @@ if [[ -n "$wc_config" ]] && [[ -f "$wc_config" ]]; then
     # Read github_orgs array (optional)
     while IFS= read -r org; do
         [[ -n "$org" ]] && github_orgs+=("$org")
-    done < <(super -f line -c "where has(github_orgs) | unnest github_orgs" "$wc_config" 2>/dev/null)
+    done < <(super -f line -c "where ['github_orgs'] in fields(this) | unnest github_orgs" "$wc_config" 2>/dev/null)
 fi
 
 # Fallback defaults if no config or empty repos
@@ -467,8 +467,10 @@ function search() {
 function diag() {
     # Quick canary check of Claude internals assumptions.
     # Prints warnings only when something unexpected is found.
-    local projects_dir="$HOME/.claude/projects"
-    local history_file="$HOME/.claude/history.jsonl"
+    # Overridable so the suite can point the canaries at a fixture ~/.claude
+    # (CLAUDE_PROJECTS_DIR is already the override collect_session_data uses).
+    local projects_dir="${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
+    local history_file="${CLAUDE_HISTORY_FILE:-$HOME/.claude/history.jsonl}"
     local warnings=0
 
     # 1. Projects dir exists
@@ -507,7 +509,8 @@ function diag() {
             has_fields=$(super -f line -c "
               where type == 'user'
               | head 1
-              | values has(sessionId) and has(timestamp) and has(message) and has(gitBranch)
+              | values ['sessionId'] in fields(this) and ['timestamp'] in fields(this)
+                  and ['message','content'] in fields(this) and ['gitBranch'] in fields(this)
             " "$newest_jsonl" 2>/dev/null) || true
             if [[ "$has_fields" != "true" ]]; then
                 echo -e "${BOLD}⚠ DIAG:${RESET} Newest JSONL user message missing expected fields (sessionId/timestamp/message/gitBranch)" >&2
@@ -529,7 +532,7 @@ function diag() {
     # 6. history.jsonl canary: check for sessionId field (added ~Feb 2026)
     if [[ -f "$history_file" ]]; then
         local has_session_id
-        has_session_id=$(super -f line -c "tail 1 | values has(sessionId)" "$history_file" 2>/dev/null) || true
+        has_session_id=$(super -f line -c "tail 1 | values ['sessionId'] in fields(this)" "$history_file" 2>/dev/null) || true
         if [[ "$has_session_id" != "true" ]]; then
             echo -e "${BOLD}⚠ DIAG:${RESET} history.jsonl latest entry missing sessionId field" >&2
             warnings=$((warnings + 1))

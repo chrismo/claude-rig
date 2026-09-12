@@ -33,6 +33,34 @@ setup() {
   repos_to_check=("$REPO")
 }
 
+# ── diag: Claude-internals canaries ─────────────────────────────────────────
+
+# fake_claude_state USER_RECORD_JSON
+#   Points diag's canaries at a throwaway projects dir and history.jsonl.
+#   (HOME itself can't be redirected here — the asdf shim that provides
+#   `super` reads $HOME/.asdf and fails to exec without it.)
+fake_claude_state() {
+  local user_record="$1"
+  export CLAUDE_PROJECTS_DIR="$BATS_TEST_TMPDIR/fake/projects"
+  export CLAUDE_HISTORY_FILE="$BATS_TEST_TMPDIR/fake/history.jsonl"
+  mkdir -p "$CLAUDE_PROJECTS_DIR/-tmp-widget"
+  printf '%s\n' "$user_record" > "$CLAUDE_PROJECTS_DIR/-tmp-widget/s1.jsonl"
+  printf '%s\n' '{"display":"hi","sessionId":"s1","timestamp":1}' > "$CLAUDE_HISTORY_FILE"
+}
+
+@test "diag passes the transcript field check when every expected field is present" {
+  fake_claude_state '{"type":"user","sessionId":"s1","timestamp":"2026-09-12T00:00:00Z","message":{"content":"hi"},"gitBranch":"main"}'
+  run diag
+  [[ "$output" != *"missing expected fields"* ]] || false
+  [[ "$output" != *"missing sessionId field"* ]]
+}
+
+@test "diag warns when the transcript's user record is missing a field" {
+  fake_claude_state '{"type":"user","sessionId":"s1","timestamp":"2026-09-12T00:00:00Z","message":{"content":"hi"}}'
+  run diag
+  [[ "$output" == *"missing expected fields"* ]]
+}
+
 # ── collect_worktree_data ───────────────────────────────────────────────────
 
 @test "emits a record for the main repo" {

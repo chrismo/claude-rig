@@ -90,8 +90,15 @@ encode_project_path() {
 # Keep only the sessions that are terminal tabs, and reduce each to the two
 # fields the manifest needs. `kind` predates nothing else we read, so entries
 # written before it existed are kept rather than dropped.
+#
+# Presence is tested through fields(this) rather than has(): super resolves a
+# bare field reference at compile time whenever it can infer the input schema
+# up front, and errors "no such field" when no record declares that name. It
+# defers to runtime for stdin, which is how this filter is fed today — so the
+# has() form worked here, but only by way of the input being a pipe.
 REGISTRY_TO_TSV='
-  where (kind == "interactive" or !has(kind)) and has(cwd) and has(sessionId)
+  where (["kind"] in fields(this) ? kind == "interactive" : true)
+    and ["cwd"] in fields(this) and ["sessionId"] in fields(this)
   | values f"{cwd}\t{sessionId}"
 '
 

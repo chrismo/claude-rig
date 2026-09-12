@@ -75,6 +75,22 @@ EOF
   echo "$file"
 }
 
+# write_session_bare WORKTREE SID
+#   A session whose records declare neither isMeta nor subtype — the shape of
+#   a real transcript that has not yet produced a meta or system record. The
+#   filters must not name a field no record in the file declares.
+write_session_bare() {
+  local wt="$1" sid="$2"
+  local dir
+  dir=$(session_dir_for "$wt")
+  local file="$dir/$sid.jsonl"
+  cat > "$file" <<EOF
+{"type":"user","sessionId":"$sid","timestamp":"2026-05-17T00:00:01Z","message":{"content":"bare-hello"}}
+{"type":"assistant","sessionId":"$sid","timestamp":"2026-05-17T00:00:02Z","message":{"content":[{"type":"text","text":"bare-hi"}]}}
+EOF
+  echo "$file"
+}
+
 # rename_event WORKTREE SID NAME
 #   Appends a real /rename system event.
 rename_event() {
@@ -289,6 +305,27 @@ EOF
   run "$POD" --all "$wt"
   [ "$status" -eq 0 ]
   [[ "$output" == *"galahad"* ]]
+}
+
+# ── Optional-field filters against a transcript that lacks them ────────────────
+
+@test "renders a session whose records declare neither isMeta nor subtype" {
+  wt=$(make_worktree wt1)
+  sid="dddd0000-1111-2222-3333-555555555555"
+  write_session_bare "$wt" "$sid" >/dev/null
+  run "$POD" --session "$sid" "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"bare-hello"* ]] || false
+  [[ "$output" == *"bare-hi"* ]]
+}
+
+@test "--all lists a session whose records declare neither isMeta nor subtype" {
+  wt=$(make_worktree wt1)
+  sid="dddd0000-1111-2222-3333-666666666666"
+  write_session_bare "$wt" "$sid" >/dev/null
+  run "$POD" --all "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dddd0000"* ]]
 }
 
 # ── SuperDB content-coercion quirk regression ──────────────────────────────────
