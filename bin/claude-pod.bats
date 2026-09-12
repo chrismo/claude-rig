@@ -58,10 +58,10 @@ session_dir_for() {
 }
 
 # write_session WORKTREE SID
-#   Writes a minimal user+assistant jsonl, plus one meta record so the file's
-#   inferred schema includes `isMeta` and `subtype` — the script's filters
-#   reference those fields, and super errors at schema-resolution time if no
-#   record in the file declares them. Real Claude sessions always have these.
+#   Writes a minimal user+assistant jsonl, plus one meta record — the shape a
+#   real session takes once it has produced any system record. The bare
+#   variant below covers a transcript that declares neither isMeta nor
+#   subtype, which the filters must also handle.
 write_session() {
   local wt="$1" sid="$2"
   local dir
@@ -215,6 +215,12 @@ EOF
   touch -t 202401010000 "$file"
   run "$POD" --since 1s "$wt"
   [ "$status" -eq 0 ]
+  [[ "$output" != *"hello"* ]] || false
+  # Same session, no window: proves the silence above is the filter and not a
+  # reader that renders nothing either way.
+  run "$POD" "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"hello"* ]]
 }
 
 # ── --all listing ──────────────────────────────────────────────────────────────
@@ -258,8 +264,12 @@ EOF
   wt=$(make_worktree wt1)
   sid="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
   write_session "$wt" "$sid" >/dev/null
-  run "$POD" --session "$sid" --turns 0 "$wt"
+  # No --turns 0 here: that skips rendering entirely, leaving nothing but the
+  # exit status to assert on.
+  run "$POD" --session "$sid" "$wt"
   [ "$status" -eq 0 ]
+  [[ "$output" == *"hello"* ]] || false
+  [[ "$output" == *"hi"* ]]
 }
 
 @test "--session by name from live sessions metadata" {
@@ -269,6 +279,23 @@ EOF
   live_session "$sid" "merlin" 99999 "$wt"
   run "$POD" --session merlin --turns 0
   [ "$status" -eq 0 ]
+}
+
+@test "--session by name still resolves when another live session has no name" {
+  # ~/.claude/sessions/<pid>.json only carries `name` once a session has been
+  # renamed, so the everyday state is files with no name field at all — what
+  # the live-session map's filter has to tolerate. Like the disk-map test
+  # above, this pins the mixed case; the old form's failure needed every file
+  # to lack the field, and load_sid_name_map swallows the error either way.
+  wt=$(make_worktree wt1)
+  sid="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+  write_session "$wt" "$sid" >/dev/null
+  printf '%s\n' "{\"sessionId\":\"ffffffff-0000-0000-0000-000000000000\",\"pid\":88888,\"projectPath\":\"$wt\"}" \
+    > "$CLAUDE_SESSIONS_META_DIR/88888.json"
+  live_session "$sid" "merlin" 99999 "$wt"
+  run "$POD" --session merlin "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"hello"* ]]
 }
 
 @test "--session by name resolves cross-worktree from disk rename event" {
@@ -319,13 +346,41 @@ EOF
   [[ "$output" == *"bare-hi"* ]]
 }
 
-@test "--all lists a session whose records declare neither isMeta nor subtype" {
+@test "--all resolves a name while a bare transcript sits in the same dir" {
+  # Asserts the name, not just the sid: --all prints the sid whether or not
+  # load_sid_name_disk_map survived, so a sid-only assertion can't see that
+  # query die. It still can't force the old failure — super resolves fields
+  # against the types it has read, and the renamed session's own record
+  # declares subtype — so what this pins is that a bare transcript sharing the
+  # directory doesn't disturb name resolution. The old form only broke when
+  # NO transcript anywhere declared subtype, and its single visible effect was
+  # an empty name column, indistinguishable from "nothing was renamed".
   wt=$(make_worktree wt1)
-  sid="dddd0000-1111-2222-3333-666666666666"
-  write_session_bare "$wt" "$sid" >/dev/null
+  write_session_bare "$wt" "dddd0000-1111-2222-3333-666666666666" >/dev/null
+  named="eeee0000-1111-2222-3333-777777777777"
+  write_session "$wt" "$named" >/dev/null
+  rename_event "$wt" "$named" "percival"
   run "$POD" --all "$wt"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"dddd0000"* ]]
+  [[ "$output" == *"dddd0000"* ]] || false
+  [[ "$output" == *"percival"* ]]
+}
+
+@test "--new advances the cursor on a bare transcript (last_turn_ts survives it)" {
+  # last_turn_ts runs the unfiltered stream through its own isMeta filter and
+  # swallows errors, so a broken query reads as "no cursor" and --new hands
+  # back the same turns forever. Reading twice is what makes that visible.
+  wt=$(make_worktree wt1)
+  sid="dddd0000-1111-2222-3333-888888888888"
+  write_session_bare "$wt" "$sid" >/dev/null
+  export CLAUDE_CODE_SESSION_ID="aaaaaaaa-9999-9999-9999-aaaaaaaaaaaa"
+  run "$POD" --session "$sid" --new "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"bare-hello"* ]] || false
+
+  run "$POD" --session "$sid" --new "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"bare-hello"* ]]
 }
 
 # ── SuperDB content-coercion quirk regression ──────────────────────────────────
@@ -669,7 +724,7 @@ two_consoles() {
   run "$POD" --console --new --tail 5 "$wt"
   [ "$status" -eq 0 ]
   [[ "$output" == *"flood-line-500"* ]] || false
-  [[ "$output" != *"flood-line-1 "* ]] || false
+  [[ "$output" != *"flood-line-1"$'\n'* ]] || false
   [[ "$output" != *"flood-line-100"* ]]
 }
 
@@ -908,7 +963,12 @@ write_codex_subagent() {
   touch -t 202401010000 "$file"
   run "$POD" --codex --since 1s "$wt"
   [ "$status" -eq 0 ]
-  [[ "$output" != *"ancient turn"* ]]
+  [[ "$output" != *"ancient turn"* ]] || false
+  # Same fixture, no window: the exclusion above has to be the window, not a
+  # reader that renders nothing at all.
+  run "$POD" --codex "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ancient turn"* ]]
 }
 
 @test "--codex --all --new renders each codex session's new turns" {
@@ -1164,6 +1224,9 @@ write_pi_session() {
   run "$POD" --pi --since 1s "$wt"
   [ "$status" -eq 0 ]
   [[ "$output" != *"ancient turn"* ]] || false
+  run "$POD" --pi "$wt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ancient turn"* ]]
 }
 
 @test "--pi --all --new renders each pi session's new turns" {

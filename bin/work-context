@@ -49,10 +49,15 @@ if [[ -n "$wc_config" ]] && [[ -f "$wc_config" ]]; then
     # Read timezone offset (optional field)
     tz_offset_hours=$(super -f line -c "grep('tz_offset_hours', typeof(this)::string) ? tz_offset_hours : -6" "$wc_config")
 
-    # Read github_orgs array (optional)
+    # Read github_orgs array (optional). The absence is expressed inside the
+    # query — the field is only named in a branch that a config without it
+    # never takes, since super resolves a reference when it evaluates one, and
+    # `where` doesn't spare an unnest operand from that. Errors are NOT
+    # swallowed here any more: nothing ordinary reaches stderr now, so
+    # anything that does is worth seeing.
     while IFS= read -r org; do
         [[ -n "$org" ]] && github_orgs+=("$org")
-    done < <(super -f line -c "where ['github_orgs'] in fields(this) | unnest github_orgs" "$wc_config" 2>/dev/null)
+    done < <(super -f line -c "unnest (['github_orgs'] in fields(this) ? github_orgs : [])" "$wc_config")
 fi
 
 # Fallback defaults if no config or empty repos
@@ -68,6 +73,16 @@ fi
 
 function gh_available() {
     command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1
+}
+
+# Escape a value for interpolation into a SuperSQL single-quoted literal:
+# backslash first, then the quote. Without it a search for "doesn't" closes
+# the literal early and the query dies with a parse error.
+function sq_escape() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\'/\\\'}"
+    printf '%s' "$s"
 }
 
 function get_github_remote() {
@@ -436,7 +451,12 @@ function conversations() {
 function search() {
     local term="${1:?Usage: search <term> [days]}"
     local days="${2:-30}"
-    local history_file="$HOME/.claude/history.jsonl"
+    local history_file="${CLAUDE_HISTORY_FILE:-$HOME/.claude/history.jsonl}"
+
+    if [[ ! "$days" =~ ^[0-9]+$ ]]; then
+        echo "work-context: days must be a whole number, got: $days" >&2
+        return 2
+    fi
 
     echo -e "${CYAN}${BOLD}🔍 SEARCHING CONVERSATIONS: '${term}' (last ${days} days)${RESET}"
     echo -e "${DIM}───────────────────────────────────────────────────────────────${RESET}"
@@ -453,13 +473,13 @@ function search() {
     super -f json -c "
       put ts:=((timestamp - ${tz_offset_ms})*1000000)::time
       | where ts >= now() - '${days}d'::duration
-      | where grep('(?i)${term}', display)
+      | where grep('(?i)$(sq_escape "$term")', display)
       | put date:=strftime('%Y-%m-%d %H:%M', ts)
       | put project:=split(project, '/')[-1]
       | put prompt:=replace(display[0:100], '\n', ' ')
       | cut date, project, sessionId, prompt
       | sort -date
-    " "$history_file" 2>/dev/null | mlr --j2p --barred cat
+    " "$history_file" | mlr --j2p --barred cat
 
     echo
 }
@@ -634,7 +654,7 @@ function open_prs() {
     echo "$data" | super -f json -c "
       unnest this
       | put repo := headRepository.name
-      | put review := has(reviewDecision) and reviewDecision != '' ? reviewDecision : 'PENDING'
+      | put review := ['reviewDecision'] in fields(this) ? (reviewDecision != '' ? reviewDecision : 'PENDING') : 'PENDING'
       | put draft := isDraft ? 'draft' : ''
       | put pr := f'#{number}'
       | put title_short := title[0:50]
@@ -691,7 +711,7 @@ function conversations_json() {
       | put time:=strftime('%H:%M', local_updated)
       | put started:=strftime('%Y-%m-%d', created::time + '${tz_offset_hours}h'::duration)
       | put first_prompt:=replace(firstPrompt[0:300], '\\n', ' ')
-      | put conv_summary:=replace(has(summary) ? summary : '', '\\n', ' ')
+      | put conv_summary:=replace(['summary'] in fields(this) ? summary : '', '\\n', ' ')
       | sort -updatedAt
       | cut sessionId, date, time, started, project, messageCount, gitBranch, first_prompt, conv_summary, source
     " - 2>/dev/null

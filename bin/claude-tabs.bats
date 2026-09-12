@@ -75,7 +75,7 @@ registry_tsv() {
   # New approach uses Ghostty's scripting commands.
   [[ "$output" == *"input text"* ]] || false
   [[ "$output" == *"send key"* ]] || false
-  [[ "$output" == *"to terminal"* ]] || [[ "$output" == *"to term"* ]]
+  [[ "$output" == *"to terminal"* ]]
 }
 
 @test "applescript creates new tabs via Ghostty's 'new tab' command" {
@@ -119,7 +119,9 @@ registry_tsv() {
 
   [ "$status" -eq 0 ]
   [[ "$output" == *"/my/cmd/dir"* ]] || false
-  [[ "$output" == *"7"* ]]
+  # The count as the script actually carries it — a bare "7" matches any stray
+  # digit in the generated AppleScript.
+  [[ "$output" == *"set sessionCount to 7"* ]]
 }
 
 # ── history helpers ───────────────────────────────────────────────────────────
