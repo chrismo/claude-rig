@@ -156,6 +156,7 @@ See `tab-status/tab-status.md` for detailed flow diagrams.
 ### `pi/`
 
 - **`packages.txt`** — the pi packages this rig expects, one `pi install` source per line.
+- **`mcp.json`** — shared MCP servers in the tool-agnostic format, symlinked to `~/.config/mcp/mcp.json`.
 
 pi records what it has in `~/.pi/agent/settings.json`, in the same record as
 machine-local settings (theme, last-seen changelog) and next to its credentials,
@@ -174,6 +175,33 @@ cue to add it if it belongs on every machine.
 `install.sh` only symlinks `pi-sync` — it never runs it. `pi install` reaches the
 network and pi isn't on every machine, and the installer stays a fast offline
 settings merge (same split as `bin/lemma-install` and the lemmalog engine).
+
+Two more things cross over into pi, both from `install.sh`:
+
+**Skills.** pi discovers any directory with a `SKILL.md` under `~/.pi/agent/skills/`,
+so the harness-agnostic skills here are symlinked there too — `autopilot`,
+`dialogue`, `kaomoji`, `work-context`. It's an allowlist, not a glob: most skills
+in this repo instruct Claude-only tools (`goal-compose` drives `/goal`, `pod-peer`
+needs `SendMessage`, the `lemma-*` skills call `lemmalog_*` MCP tools by name), and
+a skill telling pi to use a tool pi doesn't have is worse than no skill at all.
+
+**MCP servers.** pi has no native MCP — that's a stated design position, not a gap —
+so `pi-mcp-adapter` supplies it and reads `~/.config/mcp/mcp.json` as its
+lowest-precedence source. `pi/mcp.json` is tracked here and symlinked there, which
+makes it a default that `~/.pi/agent/mcp.json`, a project `.mcp.json` and
+`.pi/mcp.json` can all override. Only portable servers belong in it: the adapter
+interpolates `${VAR}` in args and env values but takes `command` literally, so
+anything launched from a per-machine build path (lemmalog) gets registered locally
+instead. An existing real file at that path is reported, never overwritten.
+
+Claude Code's own user-scope servers stay in `~/.claude.json` where `claude mcp add`
+put them; `pi-mcp-adapter init` imports those into pi separately. A *project*
+`.mcp.json` needs neither step — Claude Code and the adapter both read it, so a
+repo's servers are declared once.
+
+Both sections are skipped entirely when `~/.pi/agent` doesn't exist. This repo is
+deployed to machines that will never run pi, and an installer that invents `~/.pi`
+on them is claiming a tool that isn't installed.
 
 ### `docs/`
 

@@ -350,6 +350,76 @@ if [[ -d "$SKILLS_SRC" ]]; then
   fi
 fi
 
+# Serve the harness-agnostic skills to pi as well
+#
+# pi discovers any directory containing a SKILL.md under <agent dir>/skills/
+# (docs/skills.md in the pi package), so one source can feed both harnesses.
+#
+# An allowlist, not a glob, and a short one. Most skills here instruct tools that
+# exist only in Claude Code — goal-compose drives /goal, pod-peer needs
+# SendMessage, the lemma-* skills call lemmalog_* MCP tools by name — and a skill
+# that tells pi to use a tool pi does not have is worse than an absent skill.
+# When a skill stops depending on Claude-only tools, add it here.
+#
+# Gated on pi's agent dir already existing: this repo is deployed to machines
+# that will never run pi, and an installer that invents ~/.pi on them is
+# claiming ownership of a tool that is not installed.
+PI_SKILLS=(autopilot dialogue kaomoji work-context)
+if [[ -d "$PI_AGENT_DIR" ]]; then
+  mkdir -p "$PI_SKILLS_DEST"
+  for skill in "${PI_SKILLS[@]}"; do
+    src="$SKILLS_SRC/$skill"
+    dest="$PI_SKILLS_DEST/$skill"
+    [[ -d "$src" ]] || continue
+    if [[ -L "$dest" ]] || [[ -e "$dest" ]]; then
+      rm -rf "$dest"
+    fi
+    ln -s "$src" "$dest"
+  done
+
+  # Retire links this installer made for skills no longer on the allowlist.
+  # Scoped to symlinks pointing into $SKILLS_SRC, so pi skills from anywhere
+  # else — the user's own, another tool's, a pi package's — are never touched.
+  for dest in "$PI_SKILLS_DEST"/*; do
+    [[ -L "$dest" ]] || continue
+    [[ "$(readlink "$dest")" == "$SKILLS_SRC/"* ]] || continue
+    name=$(basename "$dest")
+    keep=0
+    for skill in "${PI_SKILLS[@]}"; do
+      [[ "$name" == "$skill" ]] && keep=1 && break
+    done
+    ((keep)) || rm -rf "$dest"
+  done
+
+  echo "✓ Installed ${#PI_SKILLS[@]} skill(s) for pi -> $PI_SKILLS_DEST"
+  echo ""
+fi
+
+# Share the tracked MCP servers with pi
+#
+# pi has no native MCP (an explicit "No MCP" stance in its README); pi-mcp-adapter
+# supplies it and reads ~/.config/mcp/mcp.json as the LOWEST-precedence source, so
+# what this repo tracks acts as a default that ~/.pi/agent/mcp.json, a project
+# .mcp.json and .pi/mcp.json can all still override. Claude Code keeps its own
+# user-scope registrations in ~/.claude.json, managed by `claude mcp add` — those
+# are imported into pi with `pi-mcp-adapter init`, not from here.
+#
+# A real file is never overwritten: this path is shared with any other tool that
+# reads the standard location, and whatever is already there was not ours to
+# replace.
+if [[ -d "$PI_AGENT_DIR" ]] && [[ -f "$MCP_SHARED_SRC" ]]; then
+  if [[ -e "$MCP_SHARED_DEST" ]] && [[ ! -L "$MCP_SHARED_DEST" ]]; then
+    echo "⚠ $MCP_SHARED_DEST already exists and is not a symlink — leaving it alone."
+    echo "  claude-rig tracks its own copy at $MCP_SHARED_SRC; merge by hand if you want it."
+  else
+    mkdir -p "$(dirname "$MCP_SHARED_DEST")"
+    [[ -L "$MCP_SHARED_DEST" ]] && rm "$MCP_SHARED_DEST"
+    ln -s "$MCP_SHARED_SRC" "$MCP_SHARED_DEST"
+    echo "✓ Linked shared MCP config -> $MCP_SHARED_DEST"
+  fi
+  echo ""
+fi
+
 # Install user-level agents
 if [[ -d "$AGENTS_SRC" ]]; then
   mkdir -p "$AGENTS_DEST"

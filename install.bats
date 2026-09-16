@@ -13,6 +13,14 @@ setup() {
   # Keep bin symlinks hermetic — otherwise the installer writes into the real
   # ~/.local/bin during tests.
   export LOCAL_BIN="$TEST_DIR/local-bin"
+  # pi's own env var for its config dir. Unset by default here so the pi section
+  # is a no-op unless a test opts in by creating the dir - the installer must not
+  # invent ~/.pi on a machine that does not run pi.
+  export PI_CODING_AGENT_DIR="$TEST_DIR/.pi/agent"
+  # The tool-agnostic shared MCP config. pi's adapter hardcodes
+  # ~/.config/mcp/mcp.json (it does not honour XDG_CONFIG_HOME), so the seam is
+  # an explicit override rather than XDG.
+  export CLAUDE_RIG_MCP_SHARED_CONFIG="$TEST_DIR/.config/mcp/mcp.json"
   mkdir -p "$CLAUDE_DIR"
 }
 
@@ -337,6 +345,116 @@ EOF
   local count
   count=$(find "$CLAUDE_DIR/rules" -maxdepth 1 -name "*.md" -type l | wc -l | tr -d ' ')
   [ "$count" -gt 0 ]
+}
+
+# ── Symlinks: pi skills ─────────────────────────────────────────────────────
+#
+# pi discovers any directory containing a SKILL.md under its agent dir's skills/
+# (docs/skills.md), so the skills in this repo can serve both harnesses from one
+# source. Allowlisted, not globbed: most skills here instruct Claude-only tools
+# (goal-compose's /goal, pod-peer's SendMessage, the lemma-* skills' lemmalog_*
+# MCP tools) and would be dead weight or actively misleading inside pi.
+
+@test "pi: skills are not installed when pi is not set up on this machine" {
+  run_installer
+  [ "$status" -eq 0 ]
+  [ ! -d "$PI_CODING_AGENT_DIR" ]
+}
+
+@test "pi: harness-agnostic skills are symlinked into pi's skills dir" {
+  mkdir -p "$PI_CODING_AGENT_DIR"
+  run_installer
+  [ "$status" -eq 0 ]
+  [ -L "$PI_CODING_AGENT_DIR/skills/dialogue" ]
+  local target
+  target=$(readlink "$PI_CODING_AGENT_DIR/skills/dialogue")
+  [[ "$target" == "$BATS_TEST_DIRNAME/skills/dialogue" ]]
+}
+
+@test "pi: Claude-only skills are not symlinked into pi" {
+  mkdir -p "$PI_CODING_AGENT_DIR"
+  run_installer
+  [ "$status" -eq 0 ]
+  [ ! -e "$PI_CODING_AGENT_DIR/skills/goal-compose" ]
+  [ ! -e "$PI_CODING_AGENT_DIR/skills/pod-peer" ]
+  [ ! -e "$PI_CODING_AGENT_DIR/skills/lemma-drain" ]
+}
+
+@test "pi: a skill dropped from the allowlist is unlinked on the next install" {
+  mkdir -p "$PI_CODING_AGENT_DIR/skills"
+  ln -s "$BATS_TEST_DIRNAME/skills/lemma-drain" "$PI_CODING_AGENT_DIR/skills/lemma-drain"
+  run_installer
+  [ "$status" -eq 0 ]
+  [ ! -e "$PI_CODING_AGENT_DIR/skills/lemma-drain" ]
+}
+
+@test "pi: skills from other sources are left alone" {
+  mkdir -p "$PI_CODING_AGENT_DIR/skills/somebody-elses"
+  echo "---" > "$PI_CODING_AGENT_DIR/skills/somebody-elses/SKILL.md"
+  ln -s "/some/other/repo/skills/theirs" "$PI_CODING_AGENT_DIR/skills/theirs"
+  run_installer
+  [ "$status" -eq 0 ]
+  [ -f "$PI_CODING_AGENT_DIR/skills/somebody-elses/SKILL.md" ]
+  [ -L "$PI_CODING_AGENT_DIR/skills/theirs" ]
+}
+
+@test "pi: re-running the installer is idempotent" {
+  mkdir -p "$PI_CODING_AGENT_DIR"
+  run_installer
+  [ "$status" -eq 0 ]
+  run_installer
+  [ "$status" -eq 0 ]
+  [ -L "$PI_CODING_AGENT_DIR/skills/dialogue" ]
+}
+
+# ── Shared MCP config ───────────────────────────────────────────────────────
+#
+# pi has no native MCP; pi-mcp-adapter supplies it and reads
+# ~/.config/mcp/mcp.json as the lowest-precedence shared source, so a config
+# tracked here is a default every pi-owned file can still override.
+#
+# Only portable servers belong in it. The adapter interpolates ${VAR} in args and
+# env values but takes `command` literally, so a server whose command is a
+# per-machine build path (lemmalog) cannot be expressed portably and stays out.
+
+@test "mcp: the shared config is not created when pi is not set up" {
+  run_installer
+  [ "$status" -eq 0 ]
+  [ ! -e "$CLAUDE_RIG_MCP_SHARED_CONFIG" ]
+}
+
+@test "mcp: the shared config is symlinked to the repo's copy" {
+  mkdir -p "$PI_CODING_AGENT_DIR"
+  run_installer
+  [ "$status" -eq 0 ]
+  [ -L "$CLAUDE_RIG_MCP_SHARED_CONFIG" ]
+  local target
+  target=$(readlink "$CLAUDE_RIG_MCP_SHARED_CONFIG")
+  [[ "$target" == "$BATS_TEST_DIRNAME/pi/mcp.json" ]]
+}
+
+@test "mcp: a real config file is never clobbered, only reported" {
+  mkdir -p "$PI_CODING_AGENT_DIR" "$(dirname "$CLAUDE_RIG_MCP_SHARED_CONFIG")"
+  echo '{"mcpServers":{"theirs":{"command":"foo"}}}' > "$CLAUDE_RIG_MCP_SHARED_CONFIG"
+  run_installer
+  [ "$status" -eq 0 ]
+  [ ! -L "$CLAUDE_RIG_MCP_SHARED_CONFIG" ]
+  grep -q "theirs" "$CLAUDE_RIG_MCP_SHARED_CONFIG"
+  [[ "$output" == *"$CLAUDE_RIG_MCP_SHARED_CONFIG"* ]]
+}
+
+@test "mcp: re-running the installer keeps the symlink" {
+  mkdir -p "$PI_CODING_AGENT_DIR"
+  run_installer
+  run_installer
+  [ "$status" -eq 0 ]
+  [ -L "$CLAUDE_RIG_MCP_SHARED_CONFIG" ]
+}
+
+@test "mcp: the tracked config parses and declares servers" {
+  run super -f line -c 'values flatten(this.mcpServers) | unnest this | values key[0]' "$BATS_TEST_DIRNAME/pi/mcp.json"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"superdb"* ]]
 }
 
 # ── Symlinks: bin commands ──────────────────────────────────────────────────

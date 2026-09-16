@@ -29,3 +29,15 @@ SKILLS_DEST="$CLAUDE_DIR/skills"
 AGENTS_DEST="$CLAUDE_DIR/agents"
 RULES_SRC="$REPO_DIR/rules"
 RULES_DEST="$CLAUDE_DIR/rules"
+
+# pi (@earendil-works/pi-coding-agent) discovers skills under its own agent dir.
+# PI_CODING_AGENT_DIR is pi's variable, not ours — a machine that relocates pi's
+# config for pi relocates it here too, for free.
+PI_AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
+PI_SKILLS_DEST="$PI_AGENT_DIR/skills"
+
+# The tool-agnostic shared MCP config. pi-mcp-adapter hardcodes
+# ~/.config/mcp/mcp.json — it does not honour XDG_CONFIG_HOME — so this path is
+# literal, with an override for the test suite.
+MCP_SHARED_SRC="$REPO_DIR/pi/mcp.json"
+MCP_SHARED_DEST="${CLAUDE_RIG_MCP_SHARED_CONFIG:-$HOME/.config/mcp/mcp.json}"
