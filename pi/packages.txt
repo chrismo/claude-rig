@@ -18,3 +18,10 @@ npm:pi-web-access
 
 # Single-agent delegation and scripted multi-agent workflows.
 npm:pi-subagents
+
+# MCP client for pi, which has no native MCP support (an explicit "No MCP"
+# stance in its README). Registers one proxy tool instead of every server's
+# definitions, and starts servers lazily. Reads .mcp.json / ~/.config/mcp/mcp.json;
+# Claude Code's ~/.claude.json servers are NOT picked up automatically —
+# `/mcp setup` imports them deliberately.
+npm:pi-mcp-adapter
