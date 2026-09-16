@@ -32,6 +32,7 @@ CLI tools symlinked into `~/.local/bin/`:
 - **claude-src** — search Claude Code's own source, extracted from the installed binary. `claude-src '[uds-messaging]'`. See [docs/reading-the-claude-binary.md](docs/reading-the-claude-binary.md).
 - **wt-new** — `wt-new <branch>` creates a git worktree beside the current one and runs the repo's setup hook. Prints the new path on stdout. See [docs/worktree-setup-hook.md](docs/worktree-setup-hook.md).
 - **wt** — fuzzy-select a worktree of the current repo and print its path.
+- **pi-sync** — install the [pi](https://github.com/earendil-works/pi) packages listed in `pi/packages.txt` on this machine. `pi-sync --check` reports drift without touching the network.
 
 Both `wt` commands print a path rather than changing directory, because a subprocess cannot `cd` its caller's shell. The `cd` half lives in `shell/rig.zsh`.
 
@@ -151,6 +152,28 @@ See `tab-status/tab-status.md` for detailed flow diagrams.
 ### `install/`
 
 - **`claude-bundle-spec.md`** — design spec for a future `claude-bundle init` CLI that sets up new repos with common settings, templates, and preferences
+
+### `pi/`
+
+- **`packages.txt`** — the pi packages this rig expects, one `pi install` source per line.
+
+pi records what it has in `~/.pi/agent/settings.json`, in the same record as
+machine-local settings (theme, last-seen changelog) and next to its credentials,
+so that file can't be owned or symlinked by this repo. `packages.txt` is the
+portable half of it, and `pi-sync` applies it:
+
+```bash
+pi-sync            # install whatever this machine is missing
+pi-sync --check    # report drift only — no installs, no network
+```
+
+The flow is one-way, manifest → machine. `pi-sync` never removes anything; a
+package installed here but absent from the manifest is *reported*, which is the
+cue to add it if it belongs on every machine.
+
+`install.sh` only symlinks `pi-sync` — it never runs it. `pi install` reaches the
+network and pi isn't on every machine, and the installer stays a fast offline
+settings merge (same split as `bin/lemma-install` and the lemmalog engine).
 
 ### `docs/`
 

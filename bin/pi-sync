@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+#
+# pi-sync - install the pi packages this rig expects on this machine
+#
+# Usage:
+#   pi-sync            install anything in pi/packages.txt that pi does not have
+#   pi-sync --check    report drift only; no installs, no network
+#
+# Why a manifest and not a symlinked config:
+#
+# pi keeps its package list in ~/.pi/agent/settings.json, in the same record as
+# settings that are properly machine-local (theme, lastChangelogVersion) and
+# beside the credentials in auth.json. There is no portable file to symlink, so
+# the portable half — the list of sources — lives in pi/packages.txt and this
+# script applies it.
+#
+# The flow is one-way, manifest -> machine. Nothing is ever removed: the
+# manifest is claude-rig's opinion, and a package installed on a machine may be
+# there for a reason this repo knows nothing about. Those are reported instead,
+# so adopting one into the manifest stays a deliberate act.
+#
+# Why install.sh does not run this: `pi install` reaches the network and pi is
+# not on every machine. install.sh is a fast offline settings merge and stays
+# that way — same split as bin/lemma-install. It only links this script.
+#
+# Human-invoked, so it fails loudly and exits non-zero, the inverse of the
+# hooks' silent exit 0.
+
+set -uo pipefail
+
+# install.sh links this script into ~/.local/bin, so on a real run $BASH_SOURCE
+# is the symlink. Walk the link chain to the file in the repo — resolving only
+# the link's directory would look for the manifest under ~/.local/bin.
+SELF="${BASH_SOURCE[0]}"
+while [[ -L "$SELF" ]]; do
+  link="$(readlink "$SELF")"
+  [[ "$link" == /* ]] && SELF="$link" || SELF="$(dirname "$SELF")/$link"
+done
+SCRIPT_DIR="$(cd "$(dirname "$SELF")" && pwd -P)"
+
+# Test seams. Both are the real defaults on a real machine.
+SETTINGS="${CLAUDE_RIG_PI_SETTINGS:-$HOME/.pi/agent/settings.json}"
+MANIFEST="${CLAUDE_RIG_PI_MANIFEST:-$SCRIPT_DIR/../pi/packages.txt}"
+
+CHECK=0
+case "${1:-}" in
+  --check|-n) CHECK=1 ;;
+  "") ;;
+  *) echo "Usage: pi-sync [--check]" >&2; exit 2 ;;
+esac
+
+die() { echo "Error: $*" >&2; exit 1; }
+
+# --- preflight -----------------------------------------------------------
+#
+# pi first: a machine without pi is the common case for this failing, and its
+# message is the actionable one.
+
+if ! command -v pi &>/dev/null; then
+  die "pi not found. Install the agent first:
+  npm install -g @earendil-works/pi-coding-agent"
+fi
+command -v super &>/dev/null || die "super not found. Install it first:
+  brew install super"
+[[ -f "$MANIFEST" ]] || die "manifest not found at $MANIFEST"
+
+# --- what the manifest asks for ------------------------------------------
+#
+# Strip comments (whole-line and trailing) and surrounding whitespace. A source
+# never contains whitespace, so cutting at the first # or space is safe.
+
+wanted=()
+while IFS= read -r line; do
+  line="${line%%#*}"
+  line="${line//[$'\t\r']/ }"
+  line="${line#"${line%%[![:space:]]*}"}"
+  line="${line%%[[:space:]]*}"
+  [[ -n "$line" ]] || continue
+  wanted+=("$line")
+done < "$MANIFEST"
+
+((${#wanted[@]})) || die "$MANIFEST lists no packages"
+
+# --- what the machine has ------------------------------------------------
+#
+# A missing settings.json means pi has never been configured here, which is
+# exactly "no packages" — the fresh-machine case this script exists for, not an
+# error. Same for a settings.json with no packages field.
+
+have=()
+if [[ -r "$SETTINGS" ]]; then
+  while IFS= read -r pkg; do
+    [[ -n "$pkg" ]] && have+=("$pkg")
+  done < <(super -f line -c 'values this.packages | unnest this' "$SETTINGS" 2>/dev/null)
+fi
+
+has() {
+  local needle="$1" p
+  for p in "${have[@]+"${have[@]}"}"; do
+    [[ "$p" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
+in_manifest() {
+  local needle="$1" p
+  for p in "${wanted[@]}"; do
+    [[ "$p" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
+missing=()
+for src in "${wanted[@]}"; do
+  has "$src" || missing+=("$src")
+done
+
+# --- report drift the other way ------------------------------------------
+
+untracked=()
+for pkg in "${have[@]+"${have[@]}"}"; do
+  in_manifest "$pkg" || untracked+=("$pkg")
+done
+
+report_untracked() {
+  ((${#untracked[@]})) || return 0
+  echo
+  echo "Installed here but not in $MANIFEST:"
+  printf '  %s\n' "${untracked[@]}"
+  echo "Add the ones you want on every machine — pi-sync will not remove them."
+}
+
+# --- check mode ----------------------------------------------------------
+
+if ((CHECK)); then
+  if ((${#missing[@]})); then
+    echo "Missing on this machine:"
+    printf '  %s\n' "${missing[@]}"
+    report_untracked
+    exit 1
+  fi
+  echo "✓ all ${#wanted[@]} manifest packages installed"
+  report_untracked
+  exit 0
+fi
+
+# --- install -------------------------------------------------------------
+#
+# Each source is attempted even if an earlier one failed: one unreachable
+# package should not hide the state of the rest. Failures are collected and
+# named at the end, and the run exits non-zero.
+
+if ((${#missing[@]} == 0)); then
+  echo "✓ all ${#wanted[@]} manifest packages installed"
+  report_untracked
+  exit 0
+fi
+
+failed=()
+for src in "${missing[@]}"; do
+  echo "==> pi install $src"
+  pi install "$src" || failed+=("$src")
+done
+
+report_untracked
+
+if ((${#failed[@]})); then
+  echo
+  echo "Failed to install:"
+  printf '  %s\n' "${failed[@]}"
+  exit 1
+fi
+
+echo
+echo "✓ installed ${#missing[@]} package(s). Restart pi to pick them up."

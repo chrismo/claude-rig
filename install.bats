@@ -359,6 +359,15 @@ EOF
   [[ "$target" == "$BATS_TEST_DIRNAME/bin/ticket-sort" ]]
 }
 
+@test "bin: pi-sync is symlinked from bin/" {
+  run_installer
+  [ "$status" -eq 0 ]
+  [ -L "$LOCAL_BIN/pi-sync" ]
+  local target
+  target=$(readlink "$LOCAL_BIN/pi-sync")
+  [[ "$target" == "$BATS_TEST_DIRNAME/bin/pi-sync" ]]
+}
+
 @test "bin: claude-src is symlinked from bin/" {
   run_installer
   [ "$status" -eq 0 ]

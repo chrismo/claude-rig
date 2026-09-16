@@ -1,0 +1,20 @@
+# pi packages this rig expects, one `pi install` source per line.
+#
+# pi records what it has in ~/.pi/agent/settings.json, next to machine-local
+# settings (theme, lastChangelogVersion) and credentials (auth.json) — so that
+# file cannot be owned or symlinked by this repo. This list is the portable
+# half of it. `pi-sync` applies it to a machine; `pi-sync --check` reports drift
+# without touching the network.
+#
+# Sources take any form `pi install` accepts: npm:<pkg>, git:<host>/<user>/<repo>,
+# an https:// or ssh:// URL, or a local path. Blank lines and # comments ignored.
+#
+# After adding a line here, run pi-sync. After installing something with
+# `pi install` directly, run pi-sync — it reports packages the machine has that
+# this file does not, which is the cue to add them.
+
+# Web search, URL fetching, repo cloning, PDF/YouTube extraction.
+npm:pi-web-access
+
+# Single-agent delegation and scripted multi-agent workflows.
+npm:pi-subagents
