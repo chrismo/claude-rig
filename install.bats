@@ -494,7 +494,7 @@ EOF
   [ -L "$PI_CODING_AGENT_DIR/skills/dialogue" ]
   local target
   target=$(readlink "$PI_CODING_AGENT_DIR/skills/dialogue")
-  [[ "$target" == "$BATS_TEST_DIRNAME/skills/dialogue" ]]
+  [[ "$target" == "$BATS_TEST_DIRNAME/skills/dialogue" ]] || false
   # simplify is pure code-style guidance - no tool names, no harness concepts.
   [ -L "$PI_CODING_AGENT_DIR/skills/simplify" ]
 }
@@ -514,6 +514,29 @@ EOF
   run_installer
   [ "$status" -eq 0 ]
   [ ! -e "$PI_CODING_AGENT_DIR/skills/lemma-drain" ]
+}
+
+@test "pi: a real directory with a colliding name is never clobbered" {
+  # The allowlist names are ordinary skill names. If pi already has a real
+  # skill directory called dialogue - chrismo's own, or one a pi package
+  # shipped - replacing it with a symlink deletes their work silently. The
+  # cleanup loop below already refuses to touch anything that is not our
+  # symlink; the write path has to hold the same line.
+  mkdir -p "$PI_CODING_AGENT_DIR/skills/dialogue"
+  echo "theirs" > "$PI_CODING_AGENT_DIR/skills/dialogue/SKILL.md"
+  run_installer
+  [ "$status" -eq 0 ]
+  [ -f "$PI_CODING_AGENT_DIR/skills/dialogue/SKILL.md" ]
+  grep -q theirs "$PI_CODING_AGENT_DIR/skills/dialogue/SKILL.md"
+  [[ "$output" == *"dialogue"* ]] || false
+}
+
+@test "pi: a symlink pointing somewhere else is never replaced" {
+  mkdir -p "$PI_CODING_AGENT_DIR/skills"
+  ln -s "/some/other/repo/skills/dialogue" "$PI_CODING_AGENT_DIR/skills/dialogue"
+  run_installer
+  [ "$status" -eq 0 ]
+  [ "$(readlink "$PI_CODING_AGENT_DIR/skills/dialogue")" = "/some/other/repo/skills/dialogue" ]
 }
 
 @test "pi: skills from other sources are left alone" {

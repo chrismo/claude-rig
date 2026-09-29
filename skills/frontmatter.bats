@@ -17,7 +17,12 @@ bats_require_minimum_version 1.5.0
 #
 # Parser preference: pi's own `yaml`, so the check is exactly what pi will do.
 # Ruby's Psych is the fallback — spec-compliant, and it rejects the same shape.
-# With neither, the suite skips rather than passing on no evidence.
+# It is not equivalent, though: safe_load also rejects aliases and non-permitted
+# classes (an unquoted date, &anchor/*ref) that pi's parser accepts, so on a
+# machine without pi this can fail for something pi would load happily. No
+# SKILL.md here trips that today; if one ever does, widen the safe_load call
+# rather than deleting the check.
+# With neither parser, the suite skips rather than passing on no evidence.
 
 REPO="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
 
@@ -55,13 +60,17 @@ check_frontmatter() {
       end
     ' "$@"
   else
-    return 2
+    # 77, not 2: the node branch could exit 2 for its own reasons, and an
+    # unrelated node failure read as "no parser" would turn this suite green by
+    # skipping - silent degradation in the one test whose job is to catch a
+    # parse bug. 77 is conventionally "skipped" and nothing else here returns it.
+    return 77
   fi
 }
 
 @test "every SKILL.md has frontmatter a strict YAML parser accepts" {
   run check_frontmatter "$REPO"/skills/*/SKILL.md
-  [ "$status" -ne 2 ] || skip "no strict YAML parser available (pi or ruby)"
+  [ "$status" -ne 77 ] || skip "no strict YAML parser available (pi or ruby)"
   [ "$status" -eq 0 ]
   [ -z "$output" ]
 }

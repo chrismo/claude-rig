@@ -68,7 +68,7 @@ installed_sources() {
   manifest 'npm:pi-web-access'
   only_stubs
   run -1 "$S"
-  [[ "$output" == *"pi"* ]]
+  [[ "$output" == *"pi"* ]] || false
   [[ "$output" == *"npm"* || "$output" == *"install"* ]]
 }
 
@@ -83,9 +83,11 @@ installed_sources() {
   stub_pi
   unset CLAUDE_RIG_PI_MANIFEST
   settings '{"packages":[]}'
-  run "$S" --check
-  # Whatever the repo manifest lists, the script found it rather than dying.
-  [[ "$output" != *"manifest not found"* ]]
+  # Exit 1 because this temp settings file lists nothing: every package in the
+  # repo manifest reads as missing. Naming one of them is what proves the repo
+  # file was actually read, rather than merely not-not-found.
+  run -1 "$S" --check
+  [[ "$output" == *"npm:pi-web-access"* ]] || false
 }
 
 @test "finds the repo manifest when invoked through a symlink" {
@@ -96,8 +98,9 @@ installed_sources() {
   unset CLAUDE_RIG_PI_MANIFEST
   settings '{"packages":[]}'
   ln -s "$S" "$BATS_TEST_TMPDIR/pi-sync"
-  run "$BATS_TEST_TMPDIR/pi-sync" --check
-  [[ "$output" != *"manifest not found"* ]]
+  run -1 "$BATS_TEST_TMPDIR/pi-sync" --check
+  # A positive assertion: landing in the wrong directory cannot produce this.
+  [[ "$output" == *"npm:pi-web-access"* ]] || false
 }
 
 # ── Applying the manifest ───────────────────────────────────────────────────
@@ -146,6 +149,35 @@ npm:pi-web-access   # trailing note
   [[ "$(installed_sources)" == "npm:pi-web-access" ]]
 }
 
+@test "treats a settings file with no packages key as no packages" {
+  stub_pi
+  manifest 'npm:pi-web-access'
+  settings '{"theme":"dark"}'
+  run -0 "$S"
+  [[ "$(installed_sources)" == "npm:pi-web-access" ]]
+}
+
+@test "refuses when the settings file exists but cannot be read" {
+  # A missing settings.json genuinely means "no packages installed". A corrupt
+  # one means "unknown", and answering it as "none" is the fail-open direction:
+  # --check would call every manifest package missing, and a plain run would
+  # reinstall all of them over the network on the strength of a bad read.
+  stub_pi
+  manifest 'npm:pi-web-access'
+  settings 'not json at all'
+  run -1 "$S"
+  [[ "$output" == *"$CLAUDE_RIG_PI_SETTINGS"* ]] || false
+  [ ! -s "$STUB_LOG" ]
+}
+
+@test "reads a manifest whose last line has no trailing newline" {
+  stub_pi
+  printf 'npm:pi-web-access' > "$CLAUDE_RIG_PI_MANIFEST"
+  settings '{"packages":[]}'
+  run -0 "$S"
+  [[ "$(installed_sources)" == "npm:pi-web-access" ]]
+}
+
 # ── Drift the other way ─────────────────────────────────────────────────────
 
 @test "reports packages installed on the machine but absent from the manifest" {
@@ -161,7 +193,7 @@ npm:pi-web-access   # trailing note
   manifest 'npm:pi-web-access'
   settings '{"packages":["npm:pi-web-access","npm:pi-something-local"]}'
   run -0 "$S"
-  [[ "$output" != *"pi remove"* ]]
+  [[ "$output" != *"pi remove"* ]] || false
   ! grep -q 'pi remove\|pi uninstall' "$STUB_LOG" 2>/dev/null
 }
 
@@ -172,7 +204,7 @@ npm:pi-web-access   # trailing note
   manifest 'npm:pi-web-access'
   settings '{"packages":[]}'
   run -1 "$S" --check
-  [[ "$output" == *"npm:pi-web-access"* ]]
+  [[ "$output" == *"npm:pi-web-access"* ]] || false
   [ ! -s "$STUB_LOG" ]
 }
 
@@ -191,6 +223,6 @@ npm:pi-web-access   # trailing note
 npm:pi-subagents'
   settings '{"packages":[]}'
   run -1 "$S"
-  [[ "$(installed_sources)" == *"npm:pi-subagents"* ]]
+  [[ "$(installed_sources)" == *"npm:pi-subagents"* ]] || false
   [[ "$output" == *"npm:pi-web-access"* ]]
 }

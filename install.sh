@@ -367,14 +367,32 @@ fi
 PI_SKILLS=(autopilot dialogue kaomoji simplify work-context)
 if [[ -d "$PI_AGENT_DIR" ]]; then
   mkdir -p "$PI_SKILLS_DEST"
+  pi_linked=0
   for skill in "${PI_SKILLS[@]}"; do
     src="$SKILLS_SRC/$skill"
     dest="$PI_SKILLS_DEST/$skill"
-    [[ -d "$src" ]] || continue
-    if [[ -L "$dest" ]] || [[ -e "$dest" ]]; then
-      rm -rf "$dest"
+    if [[ ! -d "$src" ]]; then
+      echo "⚠ $skill is on the pi list but not in $SKILLS_SRC — skipped."
+      continue
+    fi
+    # These are ordinary skill names, and the destination is pi's own directory.
+    # Anything there that is not a link of ours belongs to someone else — the
+    # user, another tool, a pi package — and replacing it destroys their work
+    # silently. Same line the cleanup loop below holds, and the MCP block after
+    # it. `rm` and not `rm -rf`: once only a symlink is ever removed, the -rf
+    # buys nothing and is the part that makes a mistake unrecoverable.
+    if [[ -L "$dest" ]]; then
+      if [[ "$(readlink "$dest")" != "$SKILLS_SRC/"* ]]; then
+        echo "⚠ $dest links outside this repo — leaving it alone."
+        continue
+      fi
+      rm "$dest"
+    elif [[ -e "$dest" ]]; then
+      echo "⚠ $dest already exists and is not a claude-rig symlink — leaving it alone."
+      continue
     fi
     ln -s "$src" "$dest"
+    pi_linked=$((pi_linked + 1))
   done
 
   # Retire links this installer made for skills no longer on the allowlist.
@@ -386,12 +404,12 @@ if [[ -d "$PI_AGENT_DIR" ]]; then
     name=$(basename "$dest")
     keep=0
     for skill in "${PI_SKILLS[@]}"; do
-      [[ "$name" == "$skill" ]] && keep=1 && break
+      if [[ "$name" == "$skill" ]]; then keep=1; break; fi
     done
     ((keep)) || rm -rf "$dest"
   done
 
-  echo "✓ Installed ${#PI_SKILLS[@]} skill(s) for pi -> $PI_SKILLS_DEST"
+  echo "✓ Installed $pi_linked skill(s) for pi -> $PI_SKILLS_DEST"
   echo ""
 fi
 

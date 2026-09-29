@@ -31,25 +31,31 @@ set -uo pipefail
 # install.sh links this script into ~/.local/bin, so on a real run $BASH_SOURCE
 # is the symlink. Walk the link chain to the file in the repo — resolving only
 # the link's directory would look for the manifest under ~/.local/bin.
+die() { echo "Error: $*" >&2; exit 1; }
+
 SELF="${BASH_SOURCE[0]}"
+# Capped rather than `while [[ -L ]]`: a symlink cycle would otherwise spin here
+# forever with no output at all.
+hops=0
 while [[ -L "$SELF" ]]; do
+  ((++hops <= 40)) || die "symlink cycle resolving $SELF"
   link="$(readlink "$SELF")"
   [[ "$link" == /* ]] && SELF="$link" || SELF="$(dirname "$SELF")/$link"
 done
-SCRIPT_DIR="$(cd "$(dirname "$SELF")" && pwd -P)"
+SCRIPT_DIR="$(cd "$(dirname "$SELF")" && pwd -P)" ||
+  die "cannot resolve the directory of $SELF"
 
 # Test seams. Both are the real defaults on a real machine.
 SETTINGS="${CLAUDE_RIG_PI_SETTINGS:-$HOME/.pi/agent/settings.json}"
 MANIFEST="${CLAUDE_RIG_PI_MANIFEST:-$SCRIPT_DIR/../pi/packages.txt}"
 
 CHECK=0
+[[ $# -le 1 ]] || { echo "Usage: pi-sync [--check]" >&2; exit 2; }
 case "${1:-}" in
   --check|-n) CHECK=1 ;;
   "") ;;
   *) echo "Usage: pi-sync [--check]" >&2; exit 2 ;;
 esac
-
-die() { echo "Error: $*" >&2; exit 1; }
 
 # --- preflight -----------------------------------------------------------
 #
@@ -70,7 +76,7 @@ command -v super &>/dev/null || die "super not found. Install it first:
 # never contains whitespace, so cutting at the first # or space is safe.
 
 wanted=()
-while IFS= read -r line; do
+while IFS= read -r line || [[ -n "$line" ]]; do
   line="${line%%#*}"
   line="${line//[$'\t\r']/ }"
   line="${line#"${line%%[![:space:]]*}"}"
@@ -85,13 +91,24 @@ done < "$MANIFEST"
 #
 # A missing settings.json means pi has never been configured here, which is
 # exactly "no packages" — the fresh-machine case this script exists for, not an
-# error. Same for a settings.json with no packages field.
+# error. Same for a settings.json with no packages field — which is why the query
+# goes through flatten instead of naming this.packages: against a file input super
+# knows the schema at compile time and rejects a field that is not there, so the
+# straightforward query would refuse a pi install that has never added a package.
+#
+# A settings.json that exists but cannot be parsed is a different fact, and
+# reading it as "none" fails open — --check would call every manifest package
+# missing, and a plain run would reinstall all of them over the network on the
+# strength of a bad read. So super's failure is fatal here, and its stderr is
+# left alone to say why.
 
 have=()
 if [[ -r "$SETTINGS" ]]; then
+  packages_out=$(super -f line -c 'unnest flatten(this) | where key[0]=="packages" | unnest value' "$SETTINGS") ||
+    die "could not read packages from $SETTINGS — fix or remove it, then re-run"
   while IFS= read -r pkg; do
     [[ -n "$pkg" ]] && have+=("$pkg")
-  done < <(super -f line -c 'values this.packages | unnest this' "$SETTINGS" 2>/dev/null)
+  done <<<"$packages_out"
 fi
 
 has() {
