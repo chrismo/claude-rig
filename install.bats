@@ -495,6 +495,8 @@ EOF
   local target
   target=$(readlink "$PI_CODING_AGENT_DIR/skills/dialogue")
   [[ "$target" == "$BATS_TEST_DIRNAME/skills/dialogue" ]]
+  # simplify is pure code-style guidance - no tool names, no harness concepts.
+  [ -L "$PI_CODING_AGENT_DIR/skills/simplify" ]
 }
 
 @test "pi: Claude-only skills are not symlinked into pi" {
