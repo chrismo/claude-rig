@@ -51,6 +51,11 @@ source ~/modev/claude-rig/shell/rig.zsh
 User-level skills symlinked into `~/.claude/skills/`:
 
 - **/goal-compose** — turn a rough intent into a paste-ready condition for the built-in `/goal` command (measurable, self-verifying, self-terminating)
+- **/simplify** — simplify changes, especially by removing comments that merely narrate code
+
+`/simplify` is linked into `~/.agents/skills/` (discovered by Pi and OpenCode)
+and `~/.codex/skills/` (Codex's user skill directory). Claude Code gets the same
+skill through its `~/.claude/skills/` link.
 
 **Tip:** Skills support inline shell execution with `` !`command` `` syntax in the markdown body. The command runs at invocation time and its output is injected as context before Claude sees the prompt. The built-in `/commit` skill uses this to pre-load `git status`, `git diff HEAD`, etc. Useful for building skills that need live system state.
 

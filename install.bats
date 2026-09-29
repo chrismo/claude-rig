@@ -21,6 +21,8 @@ setup() {
   # ~/.config/mcp/mcp.json (it does not honour XDG_CONFIG_HOME), so the seam is
   # an explicit override rather than XDG.
   export CLAUDE_RIG_MCP_SHARED_CONFIG="$TEST_DIR/.config/mcp/mcp.json"
+  export AGENT_SKILLS_DIR="$TEST_DIR/.agents/skills"
+  export CODEX_SKILLS_DIR="$TEST_DIR/.codex/skills"
   mkdir -p "$CLAUDE_DIR"
 }
 
@@ -257,6 +259,25 @@ EOF
 }
 
 # ── Symlinks: skills ──────────────────────────────────────────────────────────
+
+@test "skills: simplify is linked into the shared Agent Skills directory" {
+  run_installer
+  [ "$status" -eq 0 ]
+  [ -L "$AGENT_SKILLS_DIR/simplify" ]
+  [ "$(readlink "$AGENT_SKILLS_DIR/simplify")" = "$BATS_TEST_DIRNAME/skills/simplify" ]
+  [ -f "$AGENT_SKILLS_DIR/simplify/SKILL.md" ]
+  [ -L "$CODEX_SKILLS_DIR/simplify" ]
+  [ "$(readlink "$CODEX_SKILLS_DIR/simplify")" = "$BATS_TEST_DIRNAME/skills/simplify" ]
+}
+
+@test "skills: simplify shared link is refreshed on re-install" {
+  mkdir -p "$AGENT_SKILLS_DIR"
+  ln -s "$BATS_TEST_DIRNAME/skills/deleted-skill" "$AGENT_SKILLS_DIR/simplify"
+  run_installer
+  [ "$status" -eq 0 ]
+  [ -L "$AGENT_SKILLS_DIR/simplify" ]
+  [ "$(readlink "$AGENT_SKILLS_DIR/simplify")" = "$BATS_TEST_DIRNAME/skills/simplify" ]
+}
 
 @test "skills: directory-based skills are symlinked" {
   run_installer

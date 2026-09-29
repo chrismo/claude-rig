@@ -364,7 +364,7 @@ fi
 # Gated on pi's agent dir already existing: this repo is deployed to machines
 # that will never run pi, and an installer that invents ~/.pi on them is
 # claiming ownership of a tool that is not installed.
-PI_SKILLS=(autopilot dialogue kaomoji work-context)
+PI_SKILLS=(autopilot dialogue kaomoji simplify work-context)
 if [[ -d "$PI_AGENT_DIR" ]]; then
   mkdir -p "$PI_SKILLS_DEST"
   for skill in "${PI_SKILLS[@]}"; do
@@ -418,6 +418,36 @@ if [[ -d "$PI_AGENT_DIR" ]] && [[ -f "$MCP_SHARED_SRC" ]]; then
     echo "✓ Linked shared MCP config -> $MCP_SHARED_DEST"
   fi
   echo ""
+fi
+
+# Install the portable simplify skill where Codex, Pi, and OpenCode discover
+# Agent Skills. Other skills may depend on Claude-specific tools or behavior.
+shared_skill="$SKILLS_SRC/simplify"
+if [[ -d "$shared_skill" ]]; then
+  mkdir -p "$AGENT_SKILLS_DEST"
+  dest_subdir="$AGENT_SKILLS_DEST/simplify"
+  if [[ -L "$dest_subdir" ]] && [[ "$(readlink "$dest_subdir")" == "$shared_skill" ]]; then
+    :
+  elif [[ -L "$dest_subdir" ]] && [[ "$(readlink "$dest_subdir")" == "$SKILLS_SRC/"* ]]; then
+    rm "$dest_subdir"
+    ln -s "$shared_skill" "$dest_subdir"
+  elif [[ ! -e "$dest_subdir" ]] && [[ ! -L "$dest_subdir" ]]; then
+    ln -s "$shared_skill" "$dest_subdir"
+  fi
+fi
+
+# Codex currently uses its own user skill directory.
+if [[ -d "$SKILLS_SRC/simplify" ]]; then
+  mkdir -p "$CODEX_SKILLS_DEST"
+  dest_subdir="$CODEX_SKILLS_DEST/simplify"
+  if [[ -L "$dest_subdir" ]] && [[ "$(readlink "$dest_subdir")" == "$SKILLS_SRC/simplify" ]]; then
+    :
+  elif [[ -L "$dest_subdir" ]] && [[ "$(readlink "$dest_subdir")" == "$SKILLS_SRC/"* ]]; then
+    rm "$dest_subdir"
+    ln -s "$SKILLS_SRC/simplify" "$dest_subdir"
+  elif [[ ! -e "$dest_subdir" ]] && [[ ! -L "$dest_subdir" ]]; then
+    ln -s "$SKILLS_SRC/simplify" "$dest_subdir"
+  fi
 fi
 
 # Install user-level agents
