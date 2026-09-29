@@ -27,6 +27,7 @@ setup() {
   run /bin/bash "$TS" --help
   [ "$status" -eq 0 ]
   [[ "$output" != *'invalid option'* ]]
+  [[ "$output" == *'prune    forget comparisons for input tickets with finished statuses.'* ]]
 }
 
 # ── quicksort ─────────────────────────────────────────────────────────────────

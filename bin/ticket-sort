@@ -20,7 +20,7 @@
 #   report   show the current ranking from stored comparisons. Asks nothing,
 #            needs no input, works offline.
 #
-#   prune    forget comparisons about tickets the input says are finished.
+#   prune    forget comparisons for input tickets with finished statuses.
 #
 # Options:
 #   --top N     rank only the top N (full, place, report)
