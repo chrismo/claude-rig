@@ -30,6 +30,7 @@
 # Status prefixes (set via tab-status command):
 #   🟡 waiting  - waiting on external (data team, PR review)
 #   🟢 active   - actively working
+#   🟣 pr       - PR is open; return after review/merge to clean up
 #   🔵 paused   - paused, will return later
 #   🔴 blocked  - blocked, needs attention
 
@@ -53,6 +54,7 @@ __ghostty_status_prefix() {
       waiting) echo "🟡 " ;;
       active)  echo "🟢 " ;;
       idle)    echo "⚪ " ;;
+      pr)      echo "🟣 " ;;
       paused)  echo "🔵 " ;;
       blocked) echo "🔴 " ;;
     esac

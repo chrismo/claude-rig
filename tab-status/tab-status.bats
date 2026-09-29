@@ -134,6 +134,30 @@ make_transcript() {
   [[ "$output" == *"(some-feature)"* ]]
 }
 
+@test "PR status uses a purple prefix" {
+  init_repo some-feature
+  printf 'pr\n' > "$STATUS_DIR/$(basename "$REPO")"
+  run compute_title </dev/null
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"🟣 "* ]] || false
+  [[ "$output" == *"(some-feature)"* ]]
+}
+
+@test "manual pr status can be set and shown" {
+  init_repo some-feature
+  local wt; wt=$(basename "$REPO")
+
+  run "$TAB_STATUS" pr </dev/null
+  [ "$status" -eq 0 ]
+  [ "$(cat "$STATUS_DIR/$wt")" = "pr" ]
+  [ -f "$STATUS_DIR/$wt.manual" ]
+  [[ "$output" == *"🟣 "* ]] || false
+
+  run "$TAB_STATUS" </dev/null
+  [[ "$output" == *"🟣 pr"* ]]
+}
+
 @test "transcript_path is read from the hook JSON on stdin" {
   init_repo main
   make_transcript find-difficult-words-script

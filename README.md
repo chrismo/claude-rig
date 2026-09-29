@@ -147,6 +147,7 @@ Visual status indicators in Ghostty terminal tab titles for multi-Claude workflo
 | active | 🟢 | Claude is working |
 | waiting | 🟡 | Needs your input (permission prompt) |
 | idle | ⚪ | Done, your turn |
+| pr | 🟣 | PR is open; return after review/merge to clean up |
 | paused | 🔵 | Parked manually |
 | blocked | 🔴 | Can't proceed |
 

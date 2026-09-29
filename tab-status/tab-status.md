@@ -144,5 +144,6 @@ flowchart LR
 | active | 🟢 | Claude is working — or idle with a background command still cooking | Hook (UserPromptSubmit, PostToolUse, Stop-with-bg) |
 | waiting | 🟡 | Permission prompt, need your input now | Hook (PermissionRequest) |
 | idle | ⚪ | Your turn, no rush (no background command running) | Hook (Stop) |
+| pr | 🟣 | PR is open; return after review/merge to clean up | Manual |
 | paused | 🔵 | Parked, will return later | Manual |
 | blocked | 🔴 | Can't proceed, external dependency | Manual |

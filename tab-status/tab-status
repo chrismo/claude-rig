@@ -5,6 +5,7 @@
 # Usage:
 #   tab-status waiting   # 🟡 waiting on external (data team, PR review, etc.)
 #   tab-status active    # 🟢 actively working
+#   tab-status pr        # 🟣 PR is open; return after review/merge to clean up
 #   tab-status paused    # 🔵 paused, will return later
 #   tab-status blocked   # 🔴 blocked, needs attention
 #   tab-status clear     # remove status (and manual hold)
@@ -32,6 +33,7 @@ status_emoji() {
     waiting) echo "🟡" ;;
     active)  echo "🟢" ;;
     idle)    echo "⚪" ;;
+    pr)      echo "🟣" ;;
     paused)  echo "🔵" ;;
     blocked) echo "🔴" ;;
     *)       echo "" ;;
@@ -319,7 +321,7 @@ main() {
       rm -f "$status_file" "$manual_file" "$reminder_file"
       echo "Status cleared for $worktree"
       ;;
-    waiting|active|idle|paused|blocked)
+    waiting|active|idle|pr|paused|blocked)
       # In hook mode, respect manual hold
       if [[ "$hook_mode" == true ]] && [[ -f "$manual_file" ]]; then
         return 1
@@ -342,11 +344,12 @@ main() {
       echo "$(status_emoji "$action") $worktree → $action"
       ;;
     *)
-      echo "Usage: tab-status [--hook] [waiting|active|paused|blocked|clear]"
+      echo "Usage: tab-status [--hook] [waiting|active|pr|paused|blocked|clear]"
       echo ""
       echo "  waiting  🟡  permission prompt / urgent input needed"
       echo "  active   🟢  actively working"
       echo "  idle     ⚪  your turn, no rush"
+      echo "  pr       🟣  PR open; return after review/merge to clean up"
       echo "  paused   🔵  parked, will return later"
       echo "  blocked  🔴  can't proceed, external dependency"
       echo "  clear       remove status and manual hold"
