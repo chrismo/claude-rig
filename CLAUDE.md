@@ -20,13 +20,37 @@ bats hooks/use-dedicated-tools.bats
 
 **Important:** The hook writes logs to `~/.claude/logs/`, which is outside the sandbox write-allow list. Bats tests must run with sandbox disabled (`dangerouslyDisableSandbox: true`) or they will all fail because the hook crashes on the blocked log writes.
 
-**`bin/ticket-sort` needs bash 4.1+**, so its suite must run with a newer bash ahead of `bats` on `PATH`:
+**`bin/ticket-sort` needs bash 4.1+**, and its suite *sources* the script instead of
+running it, so the bash running the suite is the one that has to be new enough.
+`bats` is `#!/usr/bin/env bash` — that means whichever bash comes first on `PATH`,
+which differs per machine. Check rather than assume:
+
+```bash
+bash --version | head -1     # this is what bats will run the test bodies under
+```
+
+With Homebrew's bash first (`/opt/homebrew/bin` ahead of `/usr/bin`), a plain run
+works — verified 2026-09-29 on bash 5.3.8, 150/150:
+
+```bash
+bats bin/ticket-sort.bats
+```
+
+Where Apple's `/bin/bash` 3.2 comes first instead, every test fails at `source`, and
+the suite needs a newer bash put ahead of it:
 
 ```bash
 PATH="/opt/homebrew/opt/bash/bin:$PATH" bats bin/ticket-sort.bats
 ```
 
-`bats` is `#!/usr/bin/env bash` and the suite sources the script, so a plain `bats` run picks up macOS 3.2 and every test fails at `source`. The script itself re-execs under a newer bash when *run*, so `ticket-sort` works normally from the shell — it's only the sourcing test suite that needs this.
+The script re-execs under a newer bash when *run*, so `ticket-sort` itself works from
+the shell either way — only the sourcing suite cares.
+
+That same PATH question decides whether **any** suite here is actually asserting
+anything. Under bash 3.2 a `[[ ]]` or `(( ))` that is not the last statement of a
+test body does not propagate its failure under `set -e`: the test passes no matter
+what it claims. Bash 5 fails it correctly (probed both ways, 2026-09-29). So a green
+suite on a 3.2-first machine is not evidence — check the version before trusting it.
 
 ## The lemmalog loop is opt-in
 
