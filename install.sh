@@ -496,6 +496,44 @@ if [[ -d "$AGENTS_SRC" ]]; then
   fi
 fi
 
+# The subagent extension discovers <agent dir>/agents/*.md, not Claude's agents.
+if [[ -d "$PI_AGENT_DIR" ]] && [[ -d "$AGENTS_SRC" ]]; then
+  mkdir -p "$PI_AGENTS_DEST"
+  count=0
+  for agent_file in "$AGENTS_SRC"/*.md; do
+    [[ -f "$agent_file" ]] || continue
+    dest_file="$PI_AGENTS_DEST/$(basename "$agent_file")"
+    tmp_file=$(mktemp "$PI_AGENTS_DEST/.agent.XXXXXX")
+    if awk '
+      NR == 1 && /^---$/ { frontmatter = 1; print; next }
+      frontmatter && /^---$/ { frontmatter = 0 }
+      frontmatter && /^tools:/ {
+        sub(/^tools:[[:space:]]*/, "")
+        n = split($0, tools, /,[[:space:]]*/)
+        line = "tools: "
+        for (i = 1; i <= n; i++) {
+          tool = tolower(tools[i])
+          if (tool == "glob") tool = "find"
+          if (tool == "webfetch") tool = "bash"
+          line = line (i > 1 ? ", " : "") tool
+        }
+        print line
+        next
+      }
+      { print }
+    ' "$agent_file" > "$tmp_file"; then
+      # Replace rather than follow a pre-existing symlink into another source.
+      mv -f "$tmp_file" "$dest_file"
+    else
+      rm -f "$tmp_file"
+      exit 1
+    fi
+    count=$((count + 1))
+  done
+  echo "✓ Installed $count agent(s) for pi -> $PI_AGENTS_DEST (requires subagent extension)"
+  echo ""
+fi
+
 # Install user-level rules
 if [[ -d "$RULES_SRC" ]]; then
   mkdir -p "$RULES_DEST"

@@ -37,6 +37,7 @@ RULES_DEST="$CLAUDE_DIR/rules"
 # config for pi relocates it here too, for free.
 PI_AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
 PI_SKILLS_DEST="$PI_AGENT_DIR/skills"
+PI_AGENTS_DEST="$PI_AGENT_DIR/agents"
 
 # The tool-agnostic shared MCP config. pi-mcp-adapter hardcodes
 # ~/.config/mcp/mcp.json — it does not honour XDG_CONFIG_HOME — so this path is

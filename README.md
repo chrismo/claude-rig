@@ -183,7 +183,7 @@ cue to add it if it belongs on every machine.
 network and pi isn't on every machine, and the installer stays a fast offline
 settings merge (same split as `bin/lemma-install` and the lemmalog engine).
 
-Three more things cross over into pi, all from `install.sh`:
+Four more things cross over into pi, all from `install.sh`:
 
 **Skills.** pi discovers any directory with a `SKILL.md` under `~/.pi/agent/skills/`,
 so the harness-agnostic skills here are symlinked there too — `autopilot`,
@@ -191,6 +191,16 @@ so the harness-agnostic skills here are symlinked there too — `autopilot`,
 in this repo instruct Claude-only tools (`goal-compose` drives `/goal`, `pod-peer`
 needs `SendMessage`, the `lemma-*` skills call `lemmalog_*` MCP tools by name), and
 a skill telling pi to use a tool pi doesn't have is worse than no skill at all.
+
+**Agents.** When Pi's agent directory already exists, `install.sh` generates
+Pi-compatible copies of `agents/*.md` in `~/.pi/agent/agents/` (or under
+`PI_CODING_AGENT_DIR`). Claude tool names become lowercase Pi names; `Glob`
+becomes `find` and `WebFetch` becomes `bash` for fetching via shell commands.
+The prompt bodies are unchanged. Re-installing refreshes the repo's named agents
+and leaves other agents alone. This requires Pi's **subagent extension** (the
+installer does not install it), not built-in agent discovery. Invoke one with
+“Use the bash-reviewer subagent to review the current diff”; agent files do not
+create slash commands.
 
 **Personal footer.** `install.sh` symlinks `pi/extensions/personal-footer.ts` into
 `~/.pi/agent/extensions/`. It renders the current branch's PR URL (from

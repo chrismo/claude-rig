@@ -358,6 +358,47 @@ EOF
   done
 }
 
+@test "pi agents: all repo agents are installed with Pi tool names" {
+  mkdir -p "$PI_CODING_AGENT_DIR"
+  run_installer
+  [ "$status" -eq 0 ]
+  for source in "$BATS_TEST_DIRNAME/agents"/*.md; do
+    local dest="$PI_CODING_AGENT_DIR/agents/$(basename "$source")"
+    [ -f "$dest" ]
+    diff <(awk 'NR > 1 && /^---$/ { body=1; next } body' "$source") \
+         <(awk 'NR > 1 && /^---$/ { body=1; next } body' "$dest")
+  done
+  grep -qx 'tools: read, grep, find' "$PI_CODING_AGENT_DIR/agents/bash-reviewer.md"
+  grep -qx 'tools: read, edit, grep' "$PI_CODING_AGENT_DIR/agents/design-reviewer.md"
+  grep -qx 'tools: read, grep, find, bash' "$PI_CODING_AGENT_DIR/agents/architecture-reviewer.md"
+  grep -qx 'tools: read, grep, bash' "$PI_CODING_AGENT_DIR/agents/superdb-expert.md"
+}
+
+@test "pi agents: re-install refreshes definitions and preserves unrelated agents" {
+  mkdir -p "$PI_CODING_AGENT_DIR/agents"
+  printf 'old definition\n' > "$PI_CODING_AGENT_DIR/agents/bash-reviewer.md"
+  printf 'my agent\n' > "$PI_CODING_AGENT_DIR/agents/custom.md"
+  run_installer
+  [ "$status" -eq 0 ]
+  grep -qx 'name: bash-reviewer' "$PI_CODING_AGENT_DIR/agents/bash-reviewer.md"
+  [ "$(< "$PI_CODING_AGENT_DIR/agents/custom.md")" = 'my agent' ]
+  cp "$PI_CODING_AGENT_DIR/agents/bash-reviewer.md" "$TEST_DIR/first-agent.md"
+  run_installer
+  [ "$status" -eq 0 ]
+  cmp "$TEST_DIR/first-agent.md" "$PI_CODING_AGENT_DIR/agents/bash-reviewer.md"
+}
+
+@test "pi agents: replacing a symlink does not modify its source" {
+  mkdir -p "$PI_CODING_AGENT_DIR/agents"
+  printf 'external agent\n' > "$TEST_DIR/external.md"
+  ln -s "$TEST_DIR/external.md" "$PI_CODING_AGENT_DIR/agents/bash-reviewer.md"
+  run_installer
+  [ "$status" -eq 0 ]
+  [ ! -L "$PI_CODING_AGENT_DIR/agents/bash-reviewer.md" ]
+  grep -qx 'name: bash-reviewer' "$PI_CODING_AGENT_DIR/agents/bash-reviewer.md"
+  [ "$(< "$TEST_DIR/external.md")" = 'external agent' ]
+}
+
 # ── Symlinks: rules ──────────────────────────────────────────────────────────
 
 @test "rules: .md files are symlinked" {
