@@ -163,6 +163,7 @@ See `tab-status/tab-status.md` for detailed flow diagrams.
 
 - **`packages.txt`** — the pi packages this rig expects, one `pi install` source per line.
 - **`mcp.json`** — shared MCP servers in the tool-agnostic format, symlinked to `~/.config/mcp/mcp.json`.
+- **`extensions/personal-footer.ts`** — personal hud and current-branch PR status for pi's footer.
 
 pi records what it has in `~/.pi/agent/settings.json`, in the same record as
 machine-local settings (theme, last-seen changelog) and next to its credentials,
@@ -182,7 +183,7 @@ cue to add it if it belongs on every machine.
 network and pi isn't on every machine, and the installer stays a fast offline
 settings merge (same split as `bin/lemma-install` and the lemmalog engine).
 
-Two more things cross over into pi, both from `install.sh`:
+Three more things cross over into pi, all from `install.sh`:
 
 **Skills.** pi discovers any directory with a `SKILL.md` under `~/.pi/agent/skills/`,
 so the harness-agnostic skills here are symlinked there too — `autopilot`,
@@ -190,6 +191,15 @@ so the harness-agnostic skills here are symlinked there too — `autopilot`,
 in this repo instruct Claude-only tools (`goal-compose` drives `/goal`, `pod-peer`
 needs `SendMessage`, the `lemma-*` skills call `lemmalog_*` MCP tools by name), and
 a skill telling pi to use a tool pi doesn't have is worse than no skill at all.
+
+**Personal footer.** `install.sh` symlinks `pi/extensions/personal-footer.ts` into
+`~/.pi/agent/extensions/`. It renders the current branch's PR URL (from
+`gh pr view`, not a hardcoded remote) alongside other extension statuses such
+as dscout's Ganglia budget, with `hud bar` on the **bottommost** line. Pi has
+no widget slot after the footer, so this extension replaces the default footer
+and reproduces its directory/branch and basic usage/model lines. Missing
+`hud`/`gh` simply omit their entries; PR refreshes at the end of each turn,
+hud every 30 seconds. Reload pi after changes.
 
 **MCP servers.** pi has no native MCP — that's a stated design position, not a gap —
 so `pi-mcp-adapter` supplies it and reads `~/.config/mcp/mcp.json` as its

@@ -395,6 +395,19 @@ if [[ -d "$PI_AGENT_DIR" ]]; then
   echo ""
 fi
 
+if [[ -d "$PI_AGENT_DIR" ]]; then
+  src="$REPO_DIR/pi/extensions/personal-footer.ts"
+  dest="$PI_AGENT_DIR/extensions/personal-footer.ts"
+  mkdir -p "$(dirname "$dest")"
+  if [[ -L "$dest" ]] && [[ "$(readlink "$dest")" == "$src" ]]; then
+    :
+  elif [[ ! -e "$dest" ]] && [[ ! -L "$dest" ]]; then
+    ln -s "$src" "$dest"
+  else
+    echo "⚠ $dest already exists — leaving it alone."
+  fi
+fi
+
 # Share the tracked MCP servers with pi
 #
 # pi has no native MCP (an explicit "No MCP" stance in its README); pi-mcp-adapter

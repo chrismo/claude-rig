@@ -428,6 +428,25 @@ EOF
   [ -L "$PI_CODING_AGENT_DIR/skills/dialogue" ]
 }
 
+@test "pi: personal footer extension is linked only when pi is set up" {
+  run_installer
+  [ "$status" -eq 0 ]
+  [ ! -e "$PI_CODING_AGENT_DIR/extensions/personal-footer.ts" ]
+  mkdir -p "$PI_CODING_AGENT_DIR"
+  run_installer
+  [ "$status" -eq 0 ]
+  [ -L "$PI_CODING_AGENT_DIR/extensions/personal-footer.ts" ]
+  [ "$(readlink "$PI_CODING_AGENT_DIR/extensions/personal-footer.ts")" = "$BATS_TEST_DIRNAME/pi/extensions/personal-footer.ts" ]
+}
+
+@test "pi: personal footer does not overwrite an unrelated extension" {
+  mkdir -p "$PI_CODING_AGENT_DIR/extensions"
+  echo 'mine' > "$PI_CODING_AGENT_DIR/extensions/personal-footer.ts"
+  run_installer
+  [ "$status" -eq 0 ]
+  [ "$(< "$PI_CODING_AGENT_DIR/extensions/personal-footer.ts")" = 'mine' ]
+}
+
 # ── Shared MCP config ───────────────────────────────────────────────────────
 #
 # pi has no native MCP; pi-mcp-adapter supplies it and reads
