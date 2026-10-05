@@ -39,6 +39,14 @@ PI_AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
 PI_SKILLS_DEST="$PI_AGENT_DIR/skills"
 PI_AGENTS_DEST="$PI_AGENT_DIR/agents"
 
+# OpenCode discovers markdown agents only under its own config dir (docs/
+# agents.md) — it does not read Claude's ~/.claude/agents, so install.sh
+# transforms the repo agents into OpenCode format rather than symlinking.
+# OPENCODE_CONFIG_DIR is OpenCode's own env var — a machine that relocates
+# opencode's config for opencode relocates this install too, for free.
+OPENCODE_CONFIG_DIR="${OPENCODE_CONFIG_DIR:-$HOME/.config/opencode}"
+OPENCODE_AGENTS_DEST="$OPENCODE_CONFIG_DIR/agents"
+
 # The tool-agnostic shared MCP config. pi-mcp-adapter hardcodes
 # ~/.config/mcp/mcp.json — it does not honour XDG_CONFIG_HOME — so this path is
 # literal, with an override for the test suite.

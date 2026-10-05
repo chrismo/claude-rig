@@ -534,6 +534,77 @@ if [[ -d "$PI_AGENT_DIR" ]] && [[ -d "$AGENTS_SRC" ]]; then
   echo ""
 fi
 
+# OpenCode discovers markdown agents only under its own config dir (docs/
+# agents.md) — it does not read Claude's ~/.claude/agents — so this is a
+# transformation, not a symlink like the Claude install:
+#
+#   name:   dropped; OpenCode names an agent by its file name.
+#   mode:   subagent added — the frontmatter default `all` would also list
+#           them as primary agents in the Tab-cycling UI. An explicit mode
+#           in the repo agent wins.
+#   tools:  Claude's `tools:` is a bare allowlist, but OpenCode `permission:`
+#           entries only override the user's global defaults (often allow).
+#           Keeping "nothing beyond the list" means allowing listed tools and
+#           denying the permission-gated action tools that were not listed.
+#
+# Gated on the config dir existing, like the pi install: don't invent a config
+# dir on machines that do not run OpenCode.
+if [[ -d "$OPENCODE_CONFIG_DIR" ]] && [[ -d "$AGENTS_SRC" ]]; then
+  mkdir -p "$OPENCODE_AGENTS_DEST"
+  count=0
+  for agent_file in "$AGENTS_SRC"/*.md; do
+    [[ -f "$agent_file" ]] || continue
+    dest_file="$OPENCODE_AGENTS_DEST/$(basename "$agent_file")"
+    tmp_file=$(mktemp "$OPENCODE_AGENTS_DEST/.agent.XXXXXX")
+    if awk '
+      NR == 1 && /^---$/ { frontmatter = 1; print; next }
+      frontmatter && /^---$/ {
+        frontmatter = 0
+        if (!saw_mode) print "mode: subagent"
+        if (tools_seen) {
+          print "permission:"
+          m = split("read glob grep bash edit webfetch task", order, " ")
+          for (i = 1; i <= m; i++)
+            if (order[i] in perm) print "  " order[i] ": " perm[order[i]]
+        }
+        print
+        next
+      }
+      frontmatter && /^name:/ { next }
+      frontmatter && /^mode:/ { saw_mode = 1; print; next }
+      frontmatter && /^tools:/ {
+        sub(/^tools:[[:space:]]*/, "")
+        n = split($0, tools, /,[[:space:]]*/)
+        for (i = 1; i <= n; i++) {
+          tool = tolower(tools[i])
+          # write maps to edit: that permission gates write, edit and
+          # apply_patch alike.
+          if (tool == "edit" || tool == "write") perm["edit"] = "allow"
+          else if (tool == "read" || tool == "grep" || tool == "glob" ||
+                   tool == "bash" || tool == "webfetch" || tool == "task")
+            perm[tool] = "allow"
+        }
+        if (!("edit" in perm))     perm["edit"] = "deny"
+        if (!("bash" in perm))     perm["bash"] = "deny"
+        if (!("webfetch" in perm)) perm["webfetch"] = "deny"
+        if (!("task" in perm))     perm["task"] = "deny"
+        tools_seen = 1
+        next
+      }
+      { print }
+    ' "$agent_file" > "$tmp_file"; then
+      # Replace rather than follow a pre-existing symlink into another source.
+      mv -f "$tmp_file" "$dest_file"
+    else
+      rm -f "$tmp_file"
+      exit 1
+    fi
+    count=$((count + 1))
+  done
+  echo "✓ Installed $count agent(s) for OpenCode -> $OPENCODE_AGENTS_DEST"
+  echo ""
+fi
+
 # Install user-level rules
 if [[ -d "$RULES_SRC" ]]; then
   mkdir -p "$RULES_DEST"

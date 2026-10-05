@@ -17,6 +17,9 @@ setup() {
   # is a no-op unless a test opts in by creating the dir - the installer must not
   # invent ~/.pi on a machine that does not run pi.
   export PI_CODING_AGENT_DIR="$TEST_DIR/.pi/agent"
+  # opencode's own env var for its config dir; the installer section is a
+  # no-op unless a test opts in by creating the dir.
+  export OPENCODE_CONFIG_DIR="$TEST_DIR/.config/opencode"
   # The tool-agnostic shared MCP config. pi's adapter hardcodes
   # ~/.config/mcp/mcp.json (it does not honour XDG_CONFIG_HOME), so the seam is
   # an explicit override rather than XDG.
@@ -396,6 +399,67 @@ EOF
   [ "$status" -eq 0 ]
   [ ! -L "$PI_CODING_AGENT_DIR/agents/bash-reviewer.md" ]
   grep -qx 'name: bash-reviewer' "$PI_CODING_AGENT_DIR/agents/bash-reviewer.md"
+  [ "$(< "$TEST_DIR/external.md")" = 'external agent' ]
+}
+
+# ── OpenCode agents ──────────────────────────────────────────────────────────
+
+@test "opencode agents: not installed unless opencode config dir exists" {
+  run_installer
+  [ "$status" -eq 0 ]
+  [ ! -e "$OPENCODE_CONFIG_DIR" ]
+}
+
+@test "opencode agents: installed in opencode format when config dir exists" {
+  mkdir -p "$OPENCODE_CONFIG_DIR"
+  run_installer
+  [ "$status" -eq 0 ]
+  for source in "$BATS_TEST_DIRNAME/agents"/*.md; do
+    local dest="$OPENCODE_CONFIG_DIR/agents/$(basename "$source")"
+    [ -f "$dest" ]
+    diff <(awk 'NR > 1 && /^---$/ { body = 1; next } body' "$source") \
+         <(awk 'NR > 1 && /^---$/ { body = 1; next } body' "$dest")
+  done
+
+  ! grep -qx 'name: bash-reviewer' \
+      <(awk '/^---$/ { fm = !fm; next } fm' "$OPENCODE_CONFIG_DIR/agents/bash-reviewer.md")
+  grep -qx 'mode: subagent' "$OPENCODE_CONFIG_DIR/agents/bash-reviewer.md"
+
+  grep -qx '  read: allow'    "$OPENCODE_CONFIG_DIR/agents/bash-reviewer.md"
+  grep -qx '  grep: allow'    "$OPENCODE_CONFIG_DIR/agents/bash-reviewer.md"
+  grep -qx '  glob: allow'    "$OPENCODE_CONFIG_DIR/agents/bash-reviewer.md"
+  grep -qx '  bash: deny'     "$OPENCODE_CONFIG_DIR/agents/bash-reviewer.md"
+  grep -qx '  edit: deny'     "$OPENCODE_CONFIG_DIR/agents/bash-reviewer.md"
+  grep -qx '  webfetch: deny' "$OPENCODE_CONFIG_DIR/agents/bash-reviewer.md"
+  grep -qx '  task: deny'     "$OPENCODE_CONFIG_DIR/agents/bash-reviewer.md"
+
+  grep -qx '  webfetch: allow' "$OPENCODE_CONFIG_DIR/agents/architecture-reviewer.md"
+  grep -qx '  bash: allow'     "$OPENCODE_CONFIG_DIR/agents/superdb-expert.md"
+  grep -qx '  edit: allow'     "$OPENCODE_CONFIG_DIR/agents/design-reviewer.md"
+}
+
+@test "opencode agents: re-install refreshes definitions and preserves unrelated agents" {
+  mkdir -p "$OPENCODE_CONFIG_DIR/agents"
+  printf 'old definition\n' > "$OPENCODE_CONFIG_DIR/agents/bash-reviewer.md"
+  printf 'my agent\n' > "$OPENCODE_CONFIG_DIR/agents/custom.md"
+  run_installer
+  [ "$status" -eq 0 ]
+  grep -qx 'mode: subagent' "$OPENCODE_CONFIG_DIR/agents/bash-reviewer.md"
+  [ "$(< "$OPENCODE_CONFIG_DIR/agents/custom.md")" = 'my agent' ]
+  cp "$OPENCODE_CONFIG_DIR/agents/bash-reviewer.md" "$TEST_DIR/first-agent.md"
+  run_installer
+  [ "$status" -eq 0 ]
+  cmp "$TEST_DIR/first-agent.md" "$OPENCODE_CONFIG_DIR/agents/bash-reviewer.md"
+}
+
+@test "opencode agents: replacing a symlink does not modify its source" {
+  mkdir -p "$OPENCODE_CONFIG_DIR/agents"
+  printf 'external agent\n' > "$TEST_DIR/external.md"
+  ln -s "$TEST_DIR/external.md" "$OPENCODE_CONFIG_DIR/agents/bash-reviewer.md"
+  run_installer
+  [ "$status" -eq 0 ]
+  [ ! -L "$OPENCODE_CONFIG_DIR/agents/bash-reviewer.md" ]
+  grep -qx 'mode: subagent' "$OPENCODE_CONFIG_DIR/agents/bash-reviewer.md"
   [ "$(< "$TEST_DIR/external.md")" = 'external agent' ]
 }
 

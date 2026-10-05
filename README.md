@@ -229,6 +229,26 @@ Both sections are skipped entirely when `~/.pi/agent` doesn't exist. This repo i
 deployed to machines that will never run pi, and an installer that invents `~/.pi`
 on them is claiming a tool that isn't installed.
 
+### OpenCode
+
+OpenCode already reads Claude-compatible skill paths (`~/.claude/skills/` and
+`~/.agents/skills/`, per its [skills docs](https://opencode.ai/docs/skills/)), so
+the skills installed for Claude are discovered by OpenCode with no extra wiring.
+
+Agents are different: OpenCode does not read `~/.claude/agents/`. When
+`~/.config/opencode` already exists, `install.sh` generates OpenCode-format copies
+of `agents/*.md` in `~/.config/opencode/agents/` (or under `OPENCODE_CONFIG_DIR`).
+`name:` is dropped (the file name names the agent), `mode: subagent` is added
+(OpenCode's default would also put them in the primary Tab-cycling UI), and
+Claude's allowlist `tools:` becomes an OpenCode `permission:` map — listed tools
+allowed, and the action tools the agent did not list denied, so the review agents
+stay read-only instead of inheriting OpenCode's permissive global defaults. Prompt
+bodies are unchanged; re-installing refreshes the repo's named agents and leaves
+other agents alone.
+
+This section is skipped when `~/.config/opencode` doesn't exist, for the same
+reason the pi install is gated.
+
 ### `docs/`
 
 - **`claude-rig-breakout-spec.md`** — how this repo was extracted from a monorepo
