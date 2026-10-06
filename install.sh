@@ -406,24 +406,26 @@ if [[ -d "$PI_AGENT_DIR" ]]; then
     for skill in "${PI_SKILLS[@]}"; do
       if [[ "$name" == "$skill" ]]; then keep=1; break; fi
     done
-    ((keep)) || rm -rf "$dest"
+    ((keep)) || rm "$dest"
   done
+
+  # The personal footer extension, from the same gate: pi loads
+  # <agent dir>/extensions/*.ts. Distinct variable names because the cleanup
+  # loop above owns $dest. Same rule as the skills — anything already at this
+  # path that is not our own link belongs to someone else and is reported.
+  footer_src="$REPO_DIR/pi/extensions/personal-footer.ts"
+  footer_dest="$PI_AGENT_DIR/extensions/personal-footer.ts"
+  mkdir -p "$(dirname "$footer_dest")"
+  if [[ -L "$footer_dest" ]] && [[ "$(readlink "$footer_dest")" == "$footer_src" ]]; then
+    :
+  elif [[ ! -e "$footer_dest" ]] && [[ ! -L "$footer_dest" ]]; then
+    ln -s "$footer_src" "$footer_dest"
+  else
+    echo "⚠ $footer_dest already exists — leaving it alone."
+  fi
 
   echo "✓ Installed $pi_linked skill(s) for pi -> $PI_SKILLS_DEST"
   echo ""
-fi
-
-if [[ -d "$PI_AGENT_DIR" ]]; then
-  src="$REPO_DIR/pi/extensions/personal-footer.ts"
-  dest="$PI_AGENT_DIR/extensions/personal-footer.ts"
-  mkdir -p "$(dirname "$dest")"
-  if [[ -L "$dest" ]] && [[ "$(readlink "$dest")" == "$src" ]]; then
-    :
-  elif [[ ! -e "$dest" ]] && [[ ! -L "$dest" ]]; then
-    ln -s "$src" "$dest"
-  else
-    echo "⚠ $dest already exists — leaving it alone."
-  fi
 fi
 
 # Share the tracked MCP servers with pi

@@ -20,6 +20,19 @@ bats hooks/use-dedicated-tools.bats
 
 **Important:** The hook writes logs to `~/.claude/logs/`, which is outside the sandbox write-allow list. Bats tests must run with sandbox disabled (`dangerouslyDisableSandbox: true`) or they will all fail because the hook crashes on the blocked log writes.
 
+**Not every suite here is bats.** `pi/footer.test.mjs` covers
+`pi/extensions/personal-footer.ts` and runs under `node:test`, because the
+extension is TypeScript loaded by pi rather than a shell script. A bats-only run
+skips it silently, so run it too when touching anything under `pi/extensions/`:
+
+```bash
+cd pi && node --test footer.test.mjs     # 6/6 on node v24.3.0, 2026-10-04
+```
+
+It needs two things the bats suites do not: `pi` on `PATH` (the test resolves
+`@earendil-works/pi-tui` out of the installed pi bundle, or `$PI_BIN` if set),
+and a node new enough to import `.ts` directly.
+
 **`bin/ticket-sort` needs bash 4.1+**, and its suite *sources* the script instead of
 running it, so the bash running the suite is the one that has to be new enough.
 `bats` is `#!/usr/bin/env bash` — that means whichever bash comes first on `PATH`,
