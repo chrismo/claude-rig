@@ -17,7 +17,8 @@ bats_require_minimum_version 1.5.0
 CS="$BATS_TEST_DIRNAME/agent-search"
 
 setup() {
-  source "$CS"
+  source "$CS" 2>/dev/null
+  set +x
 }
 
 # ── search_claude_projects ──────────────────────────────────────────────────
@@ -161,6 +162,105 @@ setup() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"fix the fivetran connector"* ]] || false
   [[ "$output" == *'"sessionId":"pi-session-3"'* ]]
+}
+
+@test "pi sessions are searched in one super invocation without mixing headers" {
+  local root="$BATS_TEST_TMPDIR/pi-sessions"
+  local first="$root/--Users-tester-first-project--"
+  local second="$root/--Users-tester-second-project--"
+  mkdir -p "$first" "$second"
+  cat > "$first/first.jsonl" <<-EOF
+	{"type":"session","id":"first-id","cwd":"/tmp/first-project"}
+	{"type":"message","message":{"role":"user","content":[{"type":"text","text":"fivetran first"}]},"timestamp":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+	EOF
+  cat > "$second/second.jsonl" <<-EOF
+	{"type":"session","id":"second-id","cwd":"/tmp/second-project"}
+	{"type":"message","message":{"role":"user","content":[{"type":"text","text":"fivetran second"}]},"timestamp":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+	EOF
+  printf 'not json\n' > "$second/broken.jsonl"
+  local calls="$BATS_TEST_TMPDIR/super-calls"
+  super() {
+    printf 'call\n' >> "$calls"
+    command super "$@"
+  }
+
+  run search_pi_sessions fivetran 30 "$root"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"project":"first-project","sessionId":"first-id","prompt":"fivetran first"'* ]]
+  [[ "$output" == *'"project":"second-project","sessionId":"second-id","prompt":"fivetran second"'* ]]
+  [ "$(wc -l < "$calls")" -eq 1 ]
+}
+
+@test "pi headers without cwd fall back to the encoded directory" {
+  local dir="$BATS_TEST_TMPDIR/pi-sessions/--Users-tester-widget--"
+  mkdir -p "$dir"
+  cat > "$dir/old.jsonl" <<-EOF
+	{"type":"session","id":"old-id"}
+	{"type":"message","message":{"role":"user","content":[{"type":"text","text":"fivetran old header"}]},"timestamp":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+	EOF
+
+  run search_pi_sessions fivetran 30 "$BATS_TEST_TMPDIR/pi-sessions"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"project":"widget","sessionId":"old-id"'* ]]
+}
+
+@test "pi paths and metadata containing quotes and backslashes survive batching" {
+  local dir="$BATS_TEST_TMPDIR/pi-sessions/--tester's-widget--"
+  mkdir -p "$dir"
+  cat > "$dir/session's.jsonl" <<-EOF
+	{"type":"session","id":"quoted-id","cwd":"/tmp/tester's-widget"}
+	{"type":"message","message":{"role":"user","content":[{"type":"text","text":"doesn't match ENG-4218"}]},"timestamp":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+	EOF
+
+  run search_pi_sessions "doesn't.*ENG-\\d+" 30 "$BATS_TEST_TMPDIR/pi-sessions"
+  [ "$status" -eq 0 ]
+  local expected="\"project\":\"tester's-widget\""
+  [[ "$output" == *"$expected"* ]]
+  [[ "$output" == *'"sessionId":"quoted-id"'* ]]
+}
+
+@test "pi reader skips malformed records without dropping later prompts" {
+  local dir="$BATS_TEST_TMPDIR/pi-sessions/--tester-widget--"
+  mkdir -p "$dir"
+  cat > "$dir/mixed.jsonl" <<-EOF
+	{"type":"session","id":"mixed-id","cwd":"/tmp/widget"}
+	{"type":"message","message":null}
+	{"type":"message","message":{"role":"user","content":null}}
+	EOF
+  printf '\377\n' >> "$dir/mixed.jsonl"
+  cat >> "$dir/mixed.jsonl" <<-EOF
+	{"type":"message","message":{"role":"user","content":[{"type":"text","text":"FIVETRAN first"},{"type":"image","data":"ignored"},{"type":"text","text":"second"}]},"timestamp":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+	EOF
+  cat > "$dir/no-header.jsonl" <<-EOF
+	{"type":"message","message":{"role":"user","content":[{"type":"text","text":"fivetran orphan"}]},"timestamp":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+	EOF
+
+  run search_pi_sessions fivetran 30 "$BATS_TEST_TMPDIR/pi-sessions"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"prompt":"FIVETRAN first second"'* ]]
+  [[ "$output" != *orphan* ]]
+  [[ "$output" != *Traceback* ]]
+}
+
+@test "resolves an asdf super shim to its installed binary once" {
+  local shim="$BATS_TEST_TMPDIR/asdf/shims/super"
+  local actual="$BATS_TEST_TMPDIR/asdf/installs/superdb/0.3.0/bin/super"
+  local calls="$BATS_TEST_TMPDIR/asdf-calls"
+  mkdir -p "${shim%/*}" "${actual%/*}"
+  printf '#!/bin/sh\nexit 99\n' > "$shim"
+  printf '#!/bin/sh\nexit 0\n' > "$actual"
+  chmod +x "$shim" "$actual"
+  asdf() {
+    printf '%s\n' "$*" >> "$calls"
+    printf '%s\n' "$actual"
+  }
+  PATH="${shim%/*}:$PATH"
+
+  resolve_super
+  [ "$AGENT_SEARCH_SUPER_BIN" = "$actual" ]
+  super -version
+  super -version
+  [ "$(wc -l < "$calls")" -eq 1 ]
 }
 
 # ── Term escaping ────────────────────────────────────────────────────────────

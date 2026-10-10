@@ -16,7 +16,7 @@
 # Date filter uses UTC. Excludes meta entries, compact-summary continuations,
 # and tool-result messages so only real user prompts are returned.
 #
-# Requires: super (SuperDB), grdy.
+# Requires: super (SuperDB), grdy, python3.
 #
 # Formerly claude-search; bin/claude-search is a symlink kept for muscle memory.
 
@@ -46,6 +46,22 @@ sq_escape() {
   s="${s//\\/\\\\}"
   s="${s//\'/\\\'}"
   printf '%s' "$s"
+}
+
+resolve_super() {
+  [[ -n "${AGENT_SEARCH_SUPER_BIN:-}" ]] && return 0
+  local executable
+  executable="$(type -P super)" || return 1
+  if [[ "$executable" == */shims/super ]]; then
+    executable="$(asdf which super)" || return 1
+  fi
+  [[ -x "$executable" ]] || return 1
+  AGENT_SEARCH_SUPER_BIN="$executable"
+}
+
+super() {
+  resolve_super || return 1
+  "$AGENT_SEARCH_SUPER_BIN" "$@"
 }
 
 search_claude_projects() {
@@ -80,72 +96,60 @@ search_claude_projects() {
   " "${files[@]}"
 }
 
-# The project label for a pi transcript. pi's session header carries the real
-# cwd, so prefer it; the directory name is only a fallback, and a lossy one —
-# pi encodes a path by replacing '/' with '-' and wrapping the result in a
-# double dash (/Users/x/claude-rig → --Users-x-claude-rig--), so a project
-# whose own name contains a dash can't be recovered from it.
-pi_project_label() {
-  local cwd="$1" dir="$2"
-  if [[ -n "$cwd" ]]; then
-    basename "$cwd"
-    return 0
-  fi
-  local encoded="${dir##*/}"
-  encoded="${encoded#--}"
-  encoded="${encoded%--}"
-  printf '%s' "${encoded##*-}"
-}
-
 search_pi_sessions() {
-  # Search pi's ~/.pi/agent/sessions/*/*.jsonl transcripts. Schema differs
-  # from Claude Code's: session id and cwd live on a single type=session
-  # header record, and prompt text is in message.content blocks — an array of
-  # {type, text}, never a bare string. See memory: pi-agent-session-format.
-  #
-  # The blocks are unnested and filtered on this.type == 'text' rather than
-  # matched against an exact array type: a user turn can carry other block
-  # kinds, and an exact typeof() match drops every record the moment one
-  # appears (or the moment pi adds a field to the block).
   local term days sessions_dir
   term="$(sq_escape "$1")" days="$2" sessions_dir="$3"
   local files=("$sessions_dir"/*/*.jsonl)
   [[ ${#files[@]} -eq 0 ]] && return 0
 
-  local f header session_id cwd project
-  for f in "${files[@]}"; do
-    # One header line: id<TAB>cwd. Older headers may predate cwd, so fall back
-    # to the id alone rather than letting the whole file drop out.
-    header="$(super -f line -c "where type=='session' | values f'{id}\t{cwd}'" "$f" 2>/dev/null)" || header=""
-    if [[ -z "$header" ]]; then
-      header="$(super -f line -c "where type=='session' | values id" "$f" 2>/dev/null)" || header=""
-    fi
-    header="${header%%$'\n'*}"
-    session_id="${header%%$'\t'*}"
-    cwd=""
-    [[ "$header" == *$'\t'* ]] && cwd="${header#*$'\t'}"
-    [[ -n "$session_id" ]] || continue
-    project="$(pi_project_label "$cwd" "$(dirname "$f")")"
+  python3 - "${files[@]}" <<'PY' | super -j -c "
+    where cast(timestamp, <time>) >= now() - '${days}d'::duration
+      and grep('(?i)${term}', prompt)
+    | values {
+        date: strftime('%Y-%m-%d %H:%M', cast(timestamp, <time>)),
+        source: 'pi',
+        project,
+        sessionId,
+        prompt: replace(prompt[0:89], '\n', ' ')
+      }
+  " -
+import json
+import os
+import sys
 
-    super -j -c "
-      where type=='message' and message.role=='user'
-        and ['message','content'] in fields(this)
-        and cast(timestamp, <time>) >= now() - '${days}d'::duration
-      | put _text := (unnest message.content
-          | where this.type == 'text'
-          | values this.text | collect(this))
-      | where len(_text) > 0
-      | put _prompt := join(_text, ' ')
-      | where grep('(?i)${term}', _prompt)
-      | values {
-          date: strftime('%Y-%m-%d %H:%M', cast(timestamp, <time>)),
-          source: 'pi',
-          project: '$(sq_escape "$project")',
-          sessionId: '$(sq_escape "$session_id")',
-          prompt: replace(_prompt[0:89], '\n', ' ')
-        }
-    " "$f"
-  done
+for path in sys.argv[1:]:
+    with open(path, "rb") as transcript:
+        header = None
+        for line in transcript:
+            try:
+                record = json.loads(line)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
+            if not isinstance(record, dict):
+                continue
+            if header is None and record.get("type") == "session":
+                header = record
+                cwd = header.get("cwd", "")
+                project = (os.path.basename(cwd.rstrip("/")) if cwd else
+                           os.path.basename(os.path.dirname(path)).removeprefix("--")
+                           .removesuffix("--").rsplit("-", 1)[-1])
+            if not header or not header.get("id") or record.get("type") != "message":
+                continue
+            message = record.get("message")
+            if not isinstance(message, dict) or message.get("role") != "user":
+                continue
+            content = message.get("content")
+            if not isinstance(content, list):
+                continue
+            texts = [block["text"] for block in content
+                     if isinstance(block, dict) and block.get("type") == "text"
+                     and isinstance(block.get("text"), str)]
+            if not texts:
+                continue
+            print(json.dumps({"timestamp": record.get("timestamp"),
+                              "project": project, "sessionId": header["id"],
+                              "prompt": " ".join(texts)}, ensure_ascii=False))
+PY
 }
 
 agent_search_main() {
@@ -162,6 +166,8 @@ agent_search_main() {
     echo "No session files found under $projects_dir or $pi_sessions_dir" >&2
     return 1
   fi
+
+  resolve_super || { echo "agent-search: super binary not found" >&2; return 1; }
 
   # Each source is collected on its own so one failing reader reports itself
   # and the other's results still print — inside a single pipeline component,
